@@ -6,15 +6,6 @@ MONORYX is a lightweight, native Minecraft Java Edition launcher written in Rust
 
 By **DemonZDevelopment**. Licensed under **Apache-2.0**.
 
-## Screenshots
-
-> Placeholder. Add screenshots here:
->
-> - `docs/screenshots/home.png`
-> - `docs/screenshots/discover.png`
-> - `docs/screenshots/library.png`
-> - `docs/screenshots/instances.png`
-
 ## Features
 
 - Native Rust GUI (egui/eframe), responsive during downloads and installs
