@@ -1,0 +1,27 @@
+name: Release installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - run: choco install innosetup --no-progress -y
+      - shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "0.1.0-alpha" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
+      - shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" --title "MONORYX ${{ github.ref_name }} (Alpha)" --notes "Alpha build. Download the setup exe below." installer\dist\*.exe

@@ -1,0 +1,8 @@
+pub mod discover;
+pub mod downloads;
+pub mod home;
+pub mod instances;
+pub mod library;
+pub mod logs;
+pub mod onboarding;
+pub mod settings;
