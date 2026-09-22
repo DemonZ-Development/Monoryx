@@ -1,5 +1,6 @@
 use crate::app::events::AppEvent;
 use crate::app::state::AppState;
+use crate::content::ContentKind;
 use crate::downloads::{DownloadJob, DownloadManager};
 use crate::instance::config::LoaderKind;
 use crate::modrinth::install::{install_project, InstallRequest};
@@ -148,8 +149,10 @@ pub fn play_instance(state: &mut AppState, instance_id: String) {
     let instances = state.instances.clone();
     let config = state.config.clone();
     let java_list = state.java_list.clone();
+    let egui_ctx = state.egui_ctx.clone();
     state.runtime.spawn(async move {
         let _ = tx.send(AppEvent::PlayStarted(instance_id.clone()));
+        egui_ctx.request_repaint();
         match play_inner(
             &dm,
             &http,
@@ -159,18 +162,28 @@ pub fn play_instance(state: &mut AppState, instance_id: String) {
             &java_list,
             &instance_id,
             &tx,
+            &egui_ctx,
         )
         .await
         {
-            Ok(code) => {
-                let _ = tx.send(AppEvent::PlayFinished(instance_id, code));
+            Ok((code, log_file, launched_at)) => {
+                crate::utils::system::show_window_for_current_process(true);
+                let _ = tx.send(AppEvent::PlayFinished {
+                    id: instance_id,
+                    code,
+                    log_file: Some(log_file),
+                    launched_at: Some(launched_at),
+                });
             }
             Err(e) => {
+                crate::utils::system::show_window_for_current_process(true);
                 let _ = tx.send(AppEvent::OperationFinished(operation_id, Err(e.clone())));
                 let _ = tx.send(AppEvent::Error(e));
-                let _ = tx.send(AppEvent::PlayFinished(instance_id, -1));
+                let _ = tx.send(AppEvent::PlayFailed(instance_id));
             }
         }
+        crate::utils::system::show_window_for_current_process(true);
+        egui_ctx.request_repaint();
     });
 }
 
@@ -184,7 +197,8 @@ async fn play_inner(
     java_list: &[crate::java::runtime::JavaRuntime],
     instance_id: &str,
     tx: &std::sync::mpsc::Sender<AppEvent>,
-) -> std::result::Result<i32, String> {
+    egui_ctx: &egui::Context,
+) -> std::result::Result<(i32, std::path::PathBuf, std::time::SystemTime), String> {
     use crate::java::runtime::{required_major_for_version, select_runtime, JavaMode};
     let operation_id = format!("launch-{instance_id}");
     let phase = |label: &str| {
@@ -313,7 +327,14 @@ async fn play_inner(
         uuid: profile.uuid,
         access_token: "0".to_string(),
         memory_min_mb: cfg.memory_min_mb,
-        memory_max_mb: cfg.memory_max_mb,
+        memory_max_mb: {
+            let is_boost = cfg.boost_mode.unwrap_or(config.boost_mode);
+            if is_boost && cfg.memory_max_mb == crate::utils::system::default_max_memory_mb() {
+                crate::utils::system::default_boost_max_memory_mb()
+            } else {
+                cfg.memory_max_mb
+            }
+        },
         resolution: match (cfg.width, cfg.height) {
             (Some(w), Some(h)) => Some((w, h)),
             _ => None,
@@ -330,6 +351,8 @@ async fn play_inner(
             cfg.game_args.clone()
         },
         log_file: log_file.clone(),
+        boost_mode: cfg.boost_mode.unwrap_or(config.boost_mode),
+        skins_restorer_compat: config.skins_restorer_compat,
     };
     let plan = crate::minecraft::launcher::build_launch_plan(&ctx).map_err(|e| e.user_message())?;
     let _ = tx.send(AppEvent::PlayLog(format!(
@@ -347,12 +370,19 @@ async fn play_inner(
             e.user_message()
         )));
     }
+    let start_time = std::time::SystemTime::now();
     let mut proc = crate::minecraft::launcher::SupervisedProcess::spawn(&plan, &log_file)
         .await
         .map_err(|e| e.user_message())?;
     let _ = tx.send(AppEvent::OperationFinished(operation_id.clone(), Ok(())));
     let _ = tx.send(AppEvent::PlaySpawned);
-    let code = proc.wait().await.map_err(|e| e.user_message())?;
+    if config.close_action == crate::config::CloseAction::Hide {
+        crate::utils::system::show_window_for_current_process(false);
+    }
+    egui_ctx.request_repaint();
+    let wait_res = proc.wait().await;
+    crate::utils::system::show_window_for_current_process(true);
+    let code = wait_res.map_err(|e| e.user_message())?;
     if code != 0 {
         let _ = tx.send(AppEvent::PlayLog(format!(
             "Minecraft exited with code {code}. Log: {}",
@@ -360,7 +390,7 @@ async fn play_inner(
         )));
     }
     let _ = http;
-    Ok(code)
+    Ok((code, log_file, start_time))
 }
 
 pub fn install_mod(
@@ -377,7 +407,12 @@ pub fn install_mod(
             .ok();
         return;
     };
-    if cfg.loader == LoaderKind::Vanilla {
+    let kind = match state.discover_tab {
+        crate::modrinth::search::DiscoverTab::ResourcePacks => ContentKind::Resourcepack,
+        crate::modrinth::search::DiscoverTab::Shaders => ContentKind::Shader,
+        _ => ContentKind::Mod,
+    };
+    if kind == ContentKind::Mod && cfg.loader == LoaderKind::Vanilla {
         state
             .tx
             .send(AppEvent::Error(
@@ -390,7 +425,6 @@ pub fn install_mod(
     let mr = state.mr.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
-    let kind = state.discover_tab;
     let loader_str = match cfg.loader {
         LoaderKind::Fabric => "fabric",
         LoaderKind::Quilt => "quilt",
@@ -525,6 +559,40 @@ pub fn install_pack_file(state: &AppState, path: std::path::PathBuf) {
     });
 }
 
+pub fn install_modpack(state: &AppState, slug: String, title: String) {
+    let dm = state.dm.clone();
+    let mr = state.mr.clone();
+    let paths = state.paths.clone();
+    let instances = state.instances.clone();
+    let tx = state.tx.clone();
+    let ctx = state.egui_ctx.clone();
+    state.runtime.spawn(async move {
+        let res: std::result::Result<String, String> = async {
+            let versions = mr.project_versions(&slug, None, None).await.map_err(|e| e.user_message())?;
+            let latest = versions.into_iter().next().ok_or_else(|| "No versions found for this modpack.".to_string())?;
+            let pack_file = latest.files.into_iter().find(|f| f.filename.ends_with(".mrpack"))
+                .ok_or_else(|| "No .mrpack file found in latest modpack release.".to_string())?;
+            let temp_dir = paths.cache_dir().join("modpacks");
+            let _ = tokio::fs::create_dir_all(&temp_dir).await;
+            let dest = temp_dir.join(&pack_file.filename);
+            let sha1 = pack_file.hashes.get("sha1").cloned();
+            let mut job = DownloadJob::new(format!("Modpack: {title}"), pack_file.url, dest.clone())
+                .with_size(pack_file.size);
+            if let Some(h) = sha1 {
+                job = job.with_sha1(h);
+            }
+            dm.download(&job, None).await.map_err(|e| e.user_message())?;
+            let rep = crate::modrinth::modpack::install_mrpack(
+                &dm, &paths, &instances, &dest, Some(title), None
+            ).await.map_err(|e| e.user_message())?;
+            let _ = tokio::fs::remove_file(&dest).await;
+            Ok(rep.instance_id)
+        }.await;
+        let _ = tx.send(AppEvent::PackDone(res));
+        ctx.request_repaint();
+    });
+}
+
 pub fn open_project_page(state: &AppState, slug: String) {
     let mr = state.mr.clone();
     let tx = state.tx.clone();
@@ -549,5 +617,16 @@ pub fn download_with_tracking(state: &AppState, job: DownloadJob) {
     let dm = state.dm.clone();
     state.runtime.spawn(async move {
         let _ = dm.download(&job, None).await;
+    });
+}
+
+pub fn check_launcher_update(state: &AppState) {
+    let http = state.http.clone();
+    let tx = state.tx.clone();
+    let ctx = state.egui_ctx.clone();
+    state.runtime.spawn(async move {
+        let r = crate::app::updater::check_launcher_update(&http).await;
+        let _ = tx.send(AppEvent::LauncherUpdate(r));
+        ctx.request_repaint();
     });
 }

@@ -80,11 +80,17 @@ pub async fn install_project(
                 .cloned()
                 .collect::<Vec<_>>()
         } else {
-            versions
+            let matched = versions
                 .iter()
-                .filter(|v| v.game_versions.iter().any(|g| g == &req.minecraft_version))
+                .filter(|v| v.game_versions.is_empty() || v.game_versions.iter().any(|g| g == &req.minecraft_version))
                 .cloned()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            if matched.is_empty() {
+
+                versions.clone()
+            } else {
+                matched
+            }
         };
         if game_versions.is_empty() {
             return Err(MonoryxError::DependencyConflict(format!(
@@ -94,7 +100,7 @@ pub async fn install_project(
         }
         pick_best_version(&game_versions, &req.minecraft_version, &loader_id)
             .cloned()
-            .unwrap_or(game_versions[0].clone())
+            .unwrap_or_else(|| game_versions[0].clone())
     };
     if req.kind == ContentKind::Mod {
         let loader_id = loader_id_outer.clone();

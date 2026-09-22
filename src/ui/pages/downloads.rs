@@ -69,9 +69,13 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.label(RichText::new("History").strong().color(TEXT));
         for h in state.downloads_history.clone().into_iter().take(20) {
             ui.horizontal(|ui| {
-                let icon = if h.state == "completed" { "OK" } else { "FAIL" };
+                if h.state == "completed" {
+                    crate::ui::components::badge_ok(ui, "Completed");
+                } else {
+                    crate::ui::components::badge(ui, "Failed");
+                }
                 ui.label(
-                    RichText::new(format!("{icon} {}", h.label))
+                    RichText::new(&h.label)
                         .size(12.0)
                         .color(TEXT),
                 );

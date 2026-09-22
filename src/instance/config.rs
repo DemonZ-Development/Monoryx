@@ -109,13 +109,15 @@ pub struct InstanceConfig {
     pub total_plays: u64,
     #[serde(default)]
     pub play_time_secs: u64,
+    #[serde(default)]
+    pub boost_mode: Option<bool>,
 }
 
 fn default_min() -> u64 {
     512
 }
 fn default_max() -> u64 {
-    2048
+    crate::utils::system::default_max_memory_mb()
 }
 
 impl InstanceConfig {
@@ -147,6 +149,7 @@ impl InstanceConfig {
             last_played_at: None,
             total_plays: 0,
             play_time_secs: 0,
+            boost_mode: None,
         }
     }
 
@@ -191,5 +194,20 @@ mod tests {
         assert_eq!(LoaderKind::parse("FABRIC"), LoaderKind::Fabric);
         assert_eq!(LoaderKind::parse("neo-forge"), LoaderKind::Neoforge);
         assert_eq!(LoaderKind::parse("unknown"), LoaderKind::Vanilla);
+    }
+
+    #[test]
+    fn instance_boost_mode_roundtrip() {
+        let mut c = InstanceConfig::new(
+            "Test".into(),
+            "1.21".into(),
+            LoaderKind::Vanilla,
+            String::new(),
+        );
+        assert_eq!(c.boost_mode, None);
+        c.boost_mode = Some(true);
+        let s = toml::to_string_pretty(&c).unwrap();
+        let back: InstanceConfig = toml::from_str(&s).unwrap();
+        assert_eq!(back.boost_mode, Some(true));
     }
 }

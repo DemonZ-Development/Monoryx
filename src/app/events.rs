@@ -13,6 +13,7 @@ pub enum Page {
     Discover,
     Library,
     Downloads,
+    Accounts,
     Settings,
     Logs,
 }
@@ -26,17 +27,19 @@ impl Page {
             Self::Discover => "Discover",
             Self::Library => "Library",
             Self::Downloads => "Downloads",
+            Self::Accounts => "Accounts",
             Self::Settings => "Settings",
             Self::Logs => "Logs",
         }
     }
-    pub const fn all() -> [Self; 7] {
+    pub const fn all() -> [Self; 8] {
         [
             Self::Home,
             Self::Instances,
             Self::Discover,
             Self::Library,
             Self::Downloads,
+            Self::Accounts,
             Self::Settings,
             Self::Logs,
         ]
@@ -47,6 +50,7 @@ impl Page {
             "discover" => Self::Discover,
             "library" => Self::Library,
             "downloads" => Self::Downloads,
+            "accounts" => Self::Accounts,
             "settings" => Self::Settings,
             "logs" => Self::Logs,
             _ => Self::Home,
@@ -60,9 +64,28 @@ impl Page {
             Self::Discover => "discover",
             Self::Library => "library",
             Self::Downloads => "downloads",
+            Self::Accounts => "accounts",
             Self::Settings => "settings",
             Self::Logs => "logs",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_roundtrip_and_accounts_page() {
+        for page in Page::all() {
+            let s = page.as_str();
+            let parsed = Page::from_page_str(s);
+            assert_eq!(page, parsed);
+            assert!(!page.label().is_empty());
+        }
+        assert_eq!(Page::from_page_str("accounts"), Page::Accounts);
+        assert_eq!(Page::Accounts.label(), "Accounts");
+        assert_eq!(Page::Accounts.as_str(), "accounts");
     }
 }
 
@@ -87,9 +110,17 @@ pub enum AppEvent {
     PackDone(std::result::Result<String, String>),
     UpdatesFound(Vec<UpdateInfo>),
     PlayStarted(String),
-    PlayFinished(String, i32),
+    PlayFailed(String),
+    PlayFinished {
+        id: String,
+        code: i32,
+        log_file: Option<std::path::PathBuf>,
+        launched_at: Option<std::time::SystemTime>,
+    },
     PlaySpawned,
     PlayLog(String),
     Download(crate::downloads::job::DownloadEvent),
     RepairDone(std::result::Result<Vec<String>, String>),
+    LauncherUpdate(std::result::Result<crate::app::updater::LauncherUpdateInfo, String>),
+    RestoreWindow,
 }

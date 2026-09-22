@@ -18,7 +18,18 @@ pub fn default_max_memory_mb() -> u64 {
     if total == 0 {
         return 2048;
     }
-    (total / 4).clamp(1024, 4096)
+
+    (total / 4).clamp(1024, 3072)
+}
+
+#[must_use]
+pub fn default_boost_max_memory_mb() -> u64 {
+    let total = total_memory_mb();
+    if total == 0 {
+        return 2048;
+    }
+
+    (total / 5).clamp(1024, 2560)
 }
 
 #[must_use]
@@ -109,10 +120,21 @@ pub fn is_dedicated_gpu_name(name: &str) -> bool {
     false
 }
 
+static GPU_CACHE: std::sync::RwLock<Option<Vec<GpuInfo>>> = std::sync::RwLock::new(None);
+
 pub async fn detect_gpus() -> Vec<GpuInfo> {
+    if let Ok(guard) = GPU_CACHE.read() {
+        if let Some(list) = guard.as_ref() {
+            return list.clone();
+        }
+    }
+    detect_gpus_force().await
+}
+
+pub async fn detect_gpus_force() -> Vec<GpuInfo> {
     #[cfg(target_os = "windows")]
     {
-        match query_windows_gpus().await {
+        let list = match query_windows_gpus().await {
             Ok(names) => names
                 .into_iter()
                 .map(|name| {
@@ -121,13 +143,153 @@ pub async fn detect_gpus() -> Vec<GpuInfo> {
                 })
                 .collect(),
             Err(_) => Vec::new(),
+        };
+        if let Ok(mut guard) = GPU_CACHE.write() {
+            *guard = Some(list.clone());
         }
+        list
     }
     #[cfg(not(target_os = "windows"))]
     {
         Vec::new()
     }
 }
+
+pub const SINGLE_INSTANCE_PORT: u16 = 41928;
+pub const SINGLE_INSTANCE_PORT_FALLBACK: u16 = 41929;
+
+pub enum SingleInstanceStatus {
+    Primary(std::net::TcpListener),
+    AlreadyRunning,
+    Standalone,
+}
+
+pub fn try_acquire_single_instance() -> SingleInstanceStatus {
+    match std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT)) {
+        Ok(listener) => {
+            let _ = listener.set_nonblocking(true);
+            SingleInstanceStatus::Primary(listener)
+        }
+        Err(_) => {
+
+            if let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], SINGLE_INSTANCE_PORT)),
+                std::time::Duration::from_millis(600),
+            ) {
+                use std::io::{Read, Write};
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(600)));
+                let _ = stream.write_all(b"MONORYX_RESTORE\n");
+                let _ = stream.flush();
+                let mut buf = [0u8; 32];
+                if let Ok(n) = stream.read(&mut buf) {
+                    if let Ok(resp) = std::str::from_utf8(&buf[..n]) {
+                        if resp.contains("MONORYX_ACK") {
+                            #[cfg(target_os = "windows")]
+                            restore_any_running_monoryx_window();
+                            return SingleInstanceStatus::AlreadyRunning;
+                        }
+                    }
+                }
+            }
+
+            if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT_FALLBACK)) {
+                let _ = listener.set_nonblocking(true);
+                return SingleInstanceStatus::Primary(listener);
+            }
+
+            SingleInstanceStatus::Standalone
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn find_monoryx_windows(target_pid: Option<u32>) -> Vec<windows_sys::Win32::Foundation::HWND> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId,
+        GWL_STYLE, GW_OWNER, WS_CAPTION,
+    };
+
+    struct SearchCtx {
+        target_pid: Option<u32>,
+        found: Vec<HWND>,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &mut *(lparam as *mut SearchCtx);
+        let mut proc_id = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut proc_id);
+        if let Some(target) = ctx.target_pid {
+            if proc_id != target {
+                return 1;
+            }
+        }
+        let owner = GetWindow(hwnd, GW_OWNER);
+        if owner.is_null() {
+            let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+            if (style & WS_CAPTION) == WS_CAPTION {
+                let mut title = [0u16; 64];
+                let len = GetWindowTextW(hwnd, title.as_mut_ptr(), 64);
+                if len > 0 {
+                    let title_str = String::from_utf16_lossy(&title[..len as usize]);
+                    if title_str.starts_with("MONORYX") {
+                        ctx.found.push(hwnd);
+                    }
+                }
+            }
+        }
+        1
+    }
+
+    let mut ctx = SearchCtx {
+        target_pid,
+        found: Vec::new(),
+    };
+    unsafe {
+        EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM);
+    }
+    ctx.found
+}
+
+#[cfg(target_os = "windows")]
+pub fn show_window_for_current_process(show: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW,
+    };
+    let hwnds = find_monoryx_windows(Some(std::process::id()));
+    for hwnd in hwnds {
+        unsafe {
+            if show {
+                ShowWindow(hwnd, SW_SHOW);
+                ShowWindow(hwnd, SW_RESTORE);
+                SetForegroundWindow(hwnd);
+            } else {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn restore_any_running_monoryx_window() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+    let hwnds = find_monoryx_windows(None);
+    for hwnd in hwnds {
+        unsafe {
+            ShowWindow(hwnd, SW_SHOW);
+            ShowWindow(hwnd, SW_RESTORE);
+            SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn show_window_for_current_process(_show: bool) {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn restore_any_running_monoryx_window() {}
 
 #[cfg(target_os = "windows")]
 async fn query_windows_gpus() -> Result<Vec<String>, String> {
@@ -193,5 +355,11 @@ mod tests {
     fn default_max_in_range() {
         let v = default_max_memory_mb();
         assert!((1024..=8192).contains(&v) || v == 2048);
+    }
+
+    #[test]
+    fn default_boost_max_in_range() {
+        let v = default_boost_max_memory_mb();
+        assert!((1024..=2560).contains(&v) || v == 2048);
     }
 }

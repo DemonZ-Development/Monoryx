@@ -51,6 +51,10 @@ impl LaunchSubstitutions {
         );
         m.insert("primary_jar".into(), self.primary_jar.clone());
         m.insert("auth_uuid_undashed".into(), self.auth_uuid_undashed.clone());
+        m.insert("user_properties".into(), "{}".into());
+        m.insert("profileProperties".into(), "{}".into());
+        m.insert("auth_xuid".into(), "0".into());
+        m.insert("clientid".into(), "0".into());
         if let Some(v) = &self.resolution_width {
             m.insert("resolution_width".into(), v.clone());
         }

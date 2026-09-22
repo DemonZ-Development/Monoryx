@@ -9,7 +9,15 @@ pub enum CloseAction {
     Never,
     Minimize,
     #[default]
-    #[serde(alias = "close")]
+    #[serde(
+        alias = "close",
+        alias = "Close",
+        alias = "Hide",
+        alias = "hide",
+        alias = "keep_open",
+        alias = "keepopen",
+        alias = "keep-open"
+    )]
     Hide,
 }
 
@@ -19,7 +27,7 @@ impl CloseAction {
         match self {
             Self::Never => "Never",
             Self::Minimize => "Minimize",
-            Self::Hide => "Hide and restore after game exits",
+            Self::Hide => "Close / Hide (restore after game exits)",
         }
     }
 }
@@ -101,6 +109,12 @@ pub struct LauncherConfig {
     pub parallel_downloads: usize,
     #[serde(default)]
     pub show_snapshots: bool,
+    #[serde(default = "default_true")]
+    pub boost_mode: bool,
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
+    #[serde(default = "default_true")]
+    pub skins_restorer_compat: bool,
 }
 
 fn default_true() -> bool {
@@ -140,6 +154,9 @@ impl Default for LauncherConfig {
             completed_onboarding: false,
             parallel_downloads: 6,
             show_snapshots: false,
+            boost_mode: true,
+            auto_check_updates: true,
+            skins_restorer_compat: true,
         }
     }
 }
@@ -150,7 +167,11 @@ impl LauncherConfig {
             return Ok(Self::default());
         }
         let text = std::fs::read_to_string(path)?;
-        toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))
+        let config: Self = toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))?;
+        if text.contains("keep_open") || text.contains("keepopen") || text.contains("keep-open") {
+            let _ = config.save(path);
+        }
+        Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -224,5 +245,74 @@ mod tests {
         assert_eq!(back.gpu_preference, GpuPreference::HighPerformance);
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(text.contains("gpu_preference = \"high_performance\""));
+    }
+
+    #[test]
+    fn boost_and_update_defaults() {
+        let def = LauncherConfig::default();
+        assert!(def.boost_mode);
+        assert!(def.auto_check_updates);
+        assert!(def.skins_restorer_compat);
+
+        let parsed: LauncherConfig = toml::from_str("").unwrap();
+        assert!(parsed.boost_mode);
+        assert!(parsed.auto_check_updates);
+        assert!(parsed.skins_restorer_compat);
+    }
+
+    #[test]
+    fn close_action_defaults_to_hide() {
+        assert_eq!(CloseAction::default(), CloseAction::Hide);
+        assert_eq!(LauncherConfig::default().close_action, CloseAction::Hide);
+
+        let parsed: LauncherConfig = toml::from_str("").unwrap();
+        assert_eq!(parsed.close_action, CloseAction::Hide);
+
+        let parsed_empty_table: LauncherConfig = toml::from_str("[memory]\n").unwrap();
+        assert_eq!(parsed_empty_table.close_action, CloseAction::Hide);
+
+        let parsed_legacy_close: LauncherConfig =
+            toml::from_str("close_action = \"close\"\n").unwrap();
+        assert_eq!(parsed_legacy_close.close_action, CloseAction::Hide);
+
+        let parsed_legacy_close_cap: LauncherConfig =
+            toml::from_str("close_action = \"Close\"\n").unwrap();
+        assert_eq!(parsed_legacy_close_cap.close_action, CloseAction::Hide);
+
+        let parsed_hide: LauncherConfig = toml::from_str("close_action = \"hide\"\n").unwrap();
+        assert_eq!(parsed_hide.close_action, CloseAction::Hide);
+
+        let parsed_hide_cap: LauncherConfig = toml::from_str("close_action = \"Hide\"\n").unwrap();
+        assert_eq!(parsed_hide_cap.close_action, CloseAction::Hide);
+
+        let parsed_never: LauncherConfig = toml::from_str("close_action = \"never\"\n").unwrap();
+        assert_eq!(parsed_never.close_action, CloseAction::Never);
+
+        let parsed_minimize: LauncherConfig =
+            toml::from_str("close_action = \"minimize\"\n").unwrap();
+        assert_eq!(parsed_minimize.close_action, CloseAction::Minimize);
+
+        let parsed_keep_open: LauncherConfig =
+            toml::from_str("close_action = \"keep_open\"\n").unwrap();
+        assert_eq!(parsed_keep_open.close_action, CloseAction::Hide);
+
+        let parsed_keepopen: LauncherConfig =
+            toml::from_str("close_action = \"keepopen\"\n").unwrap();
+        assert_eq!(parsed_keepopen.close_action, CloseAction::Hide);
+
+        let parsed_keep_dash_open: LauncherConfig =
+            toml::from_str("close_action = \"keep-open\"\n").unwrap();
+        assert_eq!(parsed_keep_dash_open.close_action, CloseAction::Hide);
+    }
+
+    #[test]
+    fn keep_open_migrates_on_load() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("config.toml");
+        std::fs::write(&p, "close_action = \"keep_open\"\n").unwrap();
+        let loaded = LauncherConfig::load(&p).unwrap();
+        assert_eq!(loaded.close_action, CloseAction::Hide);
+        let migrated_text = std::fs::read_to_string(&p).unwrap();
+        assert!(migrated_text.contains("close_action = \"hide\""));
     }
 }

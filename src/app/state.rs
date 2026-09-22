@@ -9,7 +9,7 @@ use crate::java::runtime::JavaRuntime;
 use crate::minecraft::manifest::VersionManifest;
 use crate::modrinth::api::ModrinthClient;
 use crate::modrinth::models::{Project, ProjectVersion};
-use crate::modrinth::search::{SearchFilters, SortOrder};
+use crate::modrinth::search::{DiscoverTab, SearchFilters, SortOrder};
 use crate::modrinth::updates::UpdateInfo;
 use crate::storage::paths::MonoryxPaths;
 use std::collections::HashMap;
@@ -81,7 +81,7 @@ pub struct AppState {
     pub search_loading: bool,
     pub search_error: String,
     pub search_debounce: Option<Instant>,
-    pub discover_tab: ContentKind,
+    pub discover_tab: DiscoverTab,
     pub detail_project: Option<Project>,
     pub detail_versions: Vec<ProjectVersion>,
     pub detail_loading: bool,
@@ -128,6 +128,11 @@ pub struct AppState {
     pub settings_mem_max: String,
     pub settings_width: String,
     pub settings_height: String,
+    pub launcher_update: Option<crate::app::updater::LauncherUpdateInfo>,
+    pub launcher_update_loading: bool,
+    pub launcher_update_error: Option<String>,
+    pub show_update_banner: bool,
+    pub crash_report: Option<crate::minecraft::crash::CrashInfo>,
 }
 
 impl AppState {
@@ -152,6 +157,7 @@ impl AppState {
         let mr = ModrinthClient::new(http.clone());
         let instances = InstanceManager::new(paths.clone());
         let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(3)
             .enable_all()
             .thread_name("monoryx-bg")
             .build()
@@ -197,7 +203,7 @@ impl AppState {
             search_loading: false,
             search_error: String::new(),
             search_debounce: None,
-            discover_tab: ContentKind::Mod,
+            discover_tab: DiscoverTab::Mods,
             detail_project: None,
             detail_versions: Vec::new(),
             detail_loading: false,
@@ -244,6 +250,11 @@ impl AppState {
             settings_mem_max: String::new(),
             settings_width: String::new(),
             settings_height: String::new(),
+            launcher_update: None,
+            launcher_update_loading: false,
+            launcher_update_error: None,
+            show_update_banner: true,
+            crash_report: None,
         };
         s.settings_jvm = s.config.default_jvm_args.clone();
         s.settings_game_args = s.config.default_game_args.clone();
@@ -501,9 +512,24 @@ impl AppState {
             AppEvent::PlayStarted(id) => {
                 self.playing.insert(id, true);
             }
+            AppEvent::PlayFailed(id) => {
+                self.playing.insert(id, false);
+                self.global_status.clear();
+                self.global_frac = None;
+                self.refresh_instances();
+                self.launcher_hidden = false;
+                self.launcher_minimized = false;
+                crate::utils::system::show_window_for_current_process(true);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Critical,
+                ));
+                ctx.request_repaint();
+            }
             AppEvent::PlaySpawned => {
                 if self.config.close_action == crate::config::CloseAction::Hide {
-                    self.save_config();
                     self.launcher_hidden = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                 } else if self.config.close_action == crate::config::CloseAction::Minimize {
@@ -513,24 +539,59 @@ impl AppState {
                 self.global_status.clear();
                 self.global_frac = None;
                 self.notice.clear();
+                ctx.request_repaint();
             }
-            AppEvent::PlayFinished(id, code) => {
-                self.playing.insert(id, false);
+            AppEvent::PlayFinished {
+                id,
+                code,
+                log_file,
+                launched_at,
+            } => {
+                self.playing.insert(id.clone(), false);
                 if code == 0 {
                     self.last_exit.clear();
                 } else {
                     self.last_exit = format!("Minecraft exited with code {code}.");
+                    self.handle_game_crash(&id, code, log_file.as_deref(), launched_at);
                 }
                 self.refresh_instances();
                 if !self.playing.values().any(|p| *p) {
-                    if self.launcher_hidden {
-                        self.launcher_hidden = false;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    } else if self.launcher_minimized {
-                        self.launcher_minimized = false;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    self.launcher_hidden = false;
+                    self.launcher_minimized = false;
+                    crate::utils::system::show_window_for_current_process(true);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Critical,
+                    ));
+                    ctx.request_repaint();
+                }
+            }
+            AppEvent::RestoreWindow => {
+                self.launcher_hidden = false;
+                self.launcher_minimized = false;
+                crate::utils::system::show_window_for_current_process(true);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Critical,
+                ));
+                ctx.request_repaint();
+            }
+            AppEvent::LauncherUpdate(res) => {
+                self.launcher_update_loading = false;
+                match res {
+                    Ok(info) => {
+                        if info.has_update {
+                            self.show_update_banner = true;
+                            self.notify(format!("MONORYX v{} update available!", info.latest_version));
+                        }
+                        self.launcher_update = Some(info);
+                    }
+                    Err(e) => {
+                        self.launcher_update_error = Some(e);
                     }
                 }
             }
@@ -589,38 +650,55 @@ impl AppState {
         self.downloads_history.truncate(50);
     }
 
+    pub fn handle_game_crash(
+        &mut self,
+        instance_id: &str,
+        code: i32,
+        log_file: Option<&std::path::Path>,
+        launched_at: Option<std::time::SystemTime>,
+    ) {
+        let instance_name = self
+            .instances
+            .get(instance_id)
+            .map(|c| c.name)
+            .unwrap_or_else(|_| instance_id.to_string());
+        let game_dir = self.instances.game_dir(instance_id);
+        let crash_info = crate::minecraft::crash::detect_crash(
+            instance_id,
+            &instance_name,
+            &game_dir,
+            code,
+            log_file,
+            launched_at,
+        );
+        self.crash_report = Some(crash_info);
+    }
+
     pub fn sync_search_filters(&mut self) {
         if let Some(cfg) = self.selected() {
             if self.search.game_version.is_empty() {
                 self.search.game_version = cfg.minecraft_version.clone();
             }
-            if self.search.loader.is_empty() {
+            if (self.discover_tab == DiscoverTab::Mods || self.discover_tab == DiscoverTab::Modpacks)
+                && self.search.loader.is_empty()
+            {
                 self.search.loader = match cfg.loader {
                     LoaderKind::Fabric => "fabric".to_string(),
                     LoaderKind::Quilt => "quilt".to_string(),
                     LoaderKind::Forge => "forge".to_string(),
                     LoaderKind::Neoforge => "neoforge".to_string(),
-                    LoaderKind::Vanilla => "minecraft".to_string(),
+                    LoaderKind::Vanilla => String::new(),
                 };
             }
         }
-        self.search.project_type = match self.discover_tab {
-            ContentKind::Mod => "mod".to_string(),
-            ContentKind::Resourcepack => "resourcepack".to_string(),
-            ContentKind::Shader => "shader".to_string(),
-        };
+        self.search.project_type = self.discover_tab.project_type().to_string();
     }
 
-    pub fn queue_search(&mut self, immediate: bool) {
-        if immediate {
-            self.run_search();
-        } else {
-            self.search.loading_placeholder();
-        }
+    pub fn queue_search(&mut self, _immediate: bool) {
+        self.run_search();
     }
 
     pub fn run_search(&mut self) {
-        self.sync_search_filters();
         self.search_loading = true;
         self.search_error.clear();
         let mr = self.mr.clone();
@@ -628,8 +706,14 @@ impl AppState {
         let q = self.search.query.clone();
         let pt = self.search.project_type.clone();
         let gv = self.search.game_version.clone();
-        let loader = self.search.loader.clone();
+
+        let loader = if pt == "shader" || pt == "resourcepack" {
+            String::new()
+        } else {
+            self.search.loader.clone()
+        };
         let sort = self.search.sort.api_value().to_string();
+        let offset = self.search.offset;
         self.runtime.spawn(async move {
             let r = mr
                 .search(
@@ -643,7 +727,7 @@ impl AppState {
                     },
                     &sort,
                     24,
-                    0,
+                    offset,
                 )
                 .await
                 .map_err(|e| e.user_message());
@@ -667,6 +751,49 @@ impl AppState {
             let _ = tx.send(AppEvent::VersionsLoaded(r));
         });
         self.refresh_java();
+        if self.config.auto_check_updates {
+            self.check_launcher_update();
+        }
+    }
+
+    pub fn check_launcher_update(&mut self) {
+        if self.launcher_update_loading {
+            return;
+        }
+        self.launcher_update_loading = true;
+        self.launcher_update_error = None;
+        crate::app::tasks::check_launcher_update(self);
+    }
+
+    pub fn is_boost_active(&self) -> bool {
+        if let Some(cfg) = self.selected() {
+            cfg.boost_mode.unwrap_or(self.config.boost_mode)
+        } else {
+            self.config.boost_mode
+        }
+    }
+
+    pub fn toggle_boost(&mut self) {
+        if let Some(mut cfg) = self.selected() {
+            let current = cfg.boost_mode.unwrap_or(self.config.boost_mode);
+            let next = !current;
+            cfg.boost_mode = Some(next);
+            let _ = self.instances.save(&cfg);
+            self.refresh_instances();
+            if next {
+                self.notify("Eco Mode Enabled: Low RAM allocation & optimized GC active!");
+            } else {
+                self.notify("Eco Mode Disabled: Standard JVM flags restored.");
+            }
+        } else {
+            self.config.boost_mode = !self.config.boost_mode;
+            self.save_config();
+            if self.config.boost_mode {
+                self.notify("Eco Mode Enabled by default!");
+            } else {
+                self.notify("Eco Mode Disabled by default.");
+            }
+        }
     }
 
     pub fn refresh_gpus(&mut self) {
@@ -674,6 +801,15 @@ impl AppState {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let list = crate::utils::system::detect_gpus().await;
+            let _ = tx.send(AppEvent::GpuList(list));
+        });
+    }
+
+    pub fn refresh_gpus_force(&mut self) {
+        self.gpu_loading = true;
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let list = crate::utils::system::detect_gpus_force().await;
             let _ = tx.send(AppEvent::GpuList(list));
         });
     }
@@ -828,16 +964,6 @@ fn apply_download_event(
     );
     history.insert(0, tracked);
     history.truncate(50);
-}
-
-trait SearchExt {
-    fn loading_placeholder(&mut self);
-}
-
-impl SearchExt for SearchFilters {
-    fn loading_placeholder(&mut self) {
-        let _ = &self.query;
-    }
 }
 
 pub fn sort_options() -> [SortOrder; 4] {

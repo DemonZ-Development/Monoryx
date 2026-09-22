@@ -41,6 +41,8 @@ pub struct LaunchContext {
     pub extra_jvm_args: String,
     pub extra_game_args: String,
     pub log_file: PathBuf,
+    pub boost_mode: bool,
+    pub skins_restorer_compat: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -105,7 +107,11 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         auth_uuid: ctx.uuid.hyphenated().to_string(),
         auth_uuid_undashed: ctx.uuid.as_simple().to_string(),
         auth_access_token: ctx.access_token.clone(),
-        user_type: "legacy".to_string(),
+        user_type: if ctx.skins_restorer_compat {
+            "mojang".to_string()
+        } else {
+            "legacy".to_string()
+        },
         version_type: ctx
             .version
             .kind
@@ -130,9 +136,16 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         MonoryxError::Launch("version metadata is missing the main class".to_string())
     })?;
 
+    let max_mem = ctx.memory_max_mb.max(256);
+    let min_mem = if ctx.boost_mode {
+        ctx.memory_min_mb.clamp(256, 512).min(max_mem)
+    } else {
+        ctx.memory_min_mb.clamp(128, max_mem)
+    };
+
     let mut jvm: Vec<String> = vec![
-        format!("-Xms{}M", ctx.memory_min_mb),
-        format!("-Xmx{}M", ctx.memory_max_mb),
+        format!("-Xms{min_mem}M"),
+        format!("-Xmx{max_mem}M"),
     ];
 
     let modern = ctx.version.arguments.is_some();
@@ -160,7 +173,61 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         }
     }
 
-    jvm.extend(split_user_args(&ctx.extra_jvm_args));
+    let user_jvm_args = split_user_args(&ctx.extra_jvm_args);
+
+    if ctx.boost_mode {
+        let custom_gc = has_custom_gc_flag(&jvm) || has_custom_gc_flag(&user_jvm_args);
+        let boost_args = [
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+UseG1GC",
+            "-XX:+ParallelRefProcEnabled",
+            "-XX:MaxGCPauseMillis=50",
+            "-XX:+DisableExplicitGC",
+            "-XX:G1NewSizePercent=20",
+            "-XX:G1MaxNewSizePercent=30",
+            "-XX:G1ReservePercent=10",
+            "-XX:G1HeapWastePercent=5",
+            "-XX:G1MixedGCCountTarget=4",
+            "-XX:InitiatingHeapOccupancyPercent=15",
+            "-XX:G1MixedGCLiveThresholdPercent=90",
+            "-XX:G1RSetUpdatingPauseTimePercent=5",
+            "-XX:SurvivorRatio=32",
+            "-XX:+PerfDisableSharedMem",
+            "-XX:MaxTenuringThreshold=1",
+            "-XX:+UseStringDeduplication",
+            "-XX:+OptimizeStringConcat",
+            "-XX:+UseCompressedOops",
+            "-XX:+UseCompressedClassPointers",
+            "-XX:G1PeriodicGCInterval=10000",
+            "-XX:G1PeriodicGCSystemLoadThreshold=0",
+            "-XX:MinHeapFreeRatio=10",
+            "-XX:MaxHeapFreeRatio=20",
+            "-XX:-ShrinkHeapInSteps",
+        ];
+        for arg in boost_args {
+            let is_g1_specific = arg.contains("G1") || arg == "-XX:+UseG1GC";
+            if custom_gc && is_g1_specific {
+                continue;
+            }
+            if let Some(key) = vm_option_key(arg) {
+                if !has_matching_vm_option(&jvm, key) && !has_matching_vm_option(&user_jvm_args, key) {
+                    jvm.push(arg.to_string());
+                }
+            } else if !jvm.iter().any(|a| a == arg) && !user_jvm_args.iter().any(|a| a == arg) {
+                jvm.push(arg.to_string());
+            }
+        }
+    }
+
+    jvm.extend(user_jvm_args);
+
+    if ctx.skins_restorer_compat {
+        let skin_flag = "-Dskinsrestorer.compat=true".to_string();
+        if !jvm.contains(&skin_flag) {
+            jvm.push(skin_flag);
+        }
+    }
 
     let mut game: Vec<String> = Vec::new();
     if let Some(args) = &ctx.version.arguments {
@@ -216,6 +283,39 @@ fn logging_path(ctx: &LaunchContext) -> PathBuf {
 
 fn substitute_logging_arg(template: &str, _game_dir: &Path, path: &Path) -> String {
     template.replace("${path}", &path.display().to_string())
+}
+
+fn vm_option_key(arg: &str) -> Option<&str> {
+    if let Some(rest) = arg.strip_prefix("-XX:+") {
+        Some(rest.split('=').next().unwrap_or(rest))
+    } else if let Some(rest) = arg.strip_prefix("-XX:-") {
+        Some(rest.split('=').next().unwrap_or(rest))
+    } else if let Some(rest) = arg.strip_prefix("-XX:") {
+        Some(rest.split('=').next().unwrap_or(rest))
+    } else if let Some(rest) = arg.strip_prefix("-D") {
+        Some(rest.split('=').next().unwrap_or(rest))
+    } else if arg.starts_with("-Xms") {
+        Some("-Xms")
+    } else if arg.starts_with("-Xmx") {
+        Some("-Xmx")
+    } else {
+        None
+    }
+}
+
+fn has_matching_vm_option(args: &[String], key: &str) -> bool {
+    args.iter().any(|a| vm_option_key(a) == Some(key))
+}
+
+fn has_custom_gc_flag(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        a.contains("UseZGC")
+            || a.contains("UseParallelGC")
+            || a.contains("UseSerialGC")
+            || a.contains("UseShenandoahGC")
+            || a.contains("UseEpsilonGC")
+            || a.contains("UseConcMarkSweepGC")
+    })
 }
 
 fn gpu_preference_code(preference: GpuPreference) -> &'static str {
@@ -477,28 +577,44 @@ async fn pump_logs(
     let file = tokio::fs::File::create(log_path)
         .await
         .map_err(MonoryxError::Io)?;
-    let mut writer = tokio::io::BufWriter::new(file);
-    let mut out_lines = stdout.map(|o| BufReader::new(o).lines());
-    let mut err_lines = stderr.map(|e| BufReader::new(e).lines());
+    let writer = Arc::new(tokio::sync::Mutex::new(tokio::io::BufWriter::new(file)));
 
     use tokio::io::AsyncWriteExt as _;
-    if let Some(lines) = out_lines.as_mut() {
-        while let Ok(Some(line)) = lines.next_line().await {
-            writer
-                .write_all(format!("[STDOUT] {line}\n").as_bytes())
-                .await
-                .map_err(MonoryxError::Io)?;
+
+    let stdout_fut = {
+        let writer = writer.clone();
+        async move {
+            if let Some(stdout) = stdout {
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let mut guard = writer.lock().await;
+                    let _ = guard
+                        .write_all(format!("[STDOUT] {line}\n").as_bytes())
+                        .await;
+                }
+            }
         }
-    }
-    if let Some(lines) = err_lines.as_mut() {
-        while let Ok(Some(line)) = lines.next_line().await {
-            writer
-                .write_all(format!("[STDERR] {line}\n").as_bytes())
-                .await
-                .map_err(MonoryxError::Io)?;
+    };
+
+    let stderr_fut = {
+        let writer = writer.clone();
+        async move {
+            if let Some(stderr) = stderr {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let mut guard = writer.lock().await;
+                    let _ = guard
+                        .write_all(format!("[STDERR] {line}\n").as_bytes())
+                        .await;
+                }
+            }
         }
-    }
-    writer.flush().await.map_err(MonoryxError::Io)?;
+    };
+
+    tokio::join!(stdout_fut, stderr_fut);
+
+    let mut guard = writer.lock().await;
+    guard.flush().await.map_err(MonoryxError::Io)?;
     Ok(())
 }
 
@@ -525,13 +641,13 @@ mod tests {
             version_id: "1.21".into(),
             game_dir: PathBuf::from("/tmp/game"),
             assets_dir: PathBuf::from("/tmp/assets"),
-            libraries_dir: PathBuf::from("/tmp/libs"),
-            client_jar: PathBuf::from("/tmp/1.21.jar"),
+            libraries_dir: PathBuf::from("/tmp/libraries"),
+            client_jar: PathBuf::from("/tmp/client.jar"),
             natives_dir: PathBuf::from("/tmp/natives"),
-            java_exe: PathBuf::from("/usr/bin/java"),
+            java_exe: PathBuf::from("java"),
             username: "Steve".into(),
             uuid: uuid::Uuid::nil(),
-            access_token: "0".into(),
+            access_token: "token".into(),
             memory_min_mb: 512,
             memory_max_mb: 2048,
             resolution: None,
@@ -539,7 +655,66 @@ mod tests {
             extra_jvm_args: String::new(),
             extra_game_args: String::new(),
             log_file: PathBuf::from("/tmp/game.log"),
+            boost_mode: false,
+            skins_restorer_compat: true,
         }
+    }
+
+    #[test]
+    fn skins_restorer_compat_plan_flags() {
+        let mut c = ctx();
+        c.skins_restorer_compat = true;
+        let plan = build_launch_plan(&c).unwrap();
+        assert!(plan.args.contains(&"-Dskinsrestorer.compat=true".to_string()));
+
+        let mut c_legacy = ctx();
+        c_legacy.skins_restorer_compat = false;
+        let plan_legacy = build_launch_plan(&c_legacy).unwrap();
+        assert!(!plan_legacy.args.contains(&"-Dskinsrestorer.compat=true".to_string()));
+    }
+
+    #[test]
+    fn boost_mode_injects_ram_and_perf_flags() {
+        let mut c = ctx();
+        c.boost_mode = true;
+        let plan = build_launch_plan(&c).unwrap();
+        assert!(plan.args.contains(&"-XX:+IgnoreUnrecognizedVMOptions".to_string()));
+        assert!(plan.args.contains(&"-XX:+UseStringDeduplication".to_string()));
+        assert!(plan.args.contains(&"-XX:+UseG1GC".to_string()));
+        assert!(plan.args.contains(&"-XX:+UseCompressedOops".to_string()));
+        assert!(plan.args.contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
+        assert!(plan.args.contains(&"-XX:MinHeapFreeRatio=10".to_string()));
+        assert!(plan.args.contains(&"-XX:MaxHeapFreeRatio=20".to_string()));
+        assert!(plan.args.contains(&"-XX:-ShrinkHeapInSteps".to_string()));
+
+        assert!(!plan.args.contains(&"-XX:+AlwaysPreTouch".to_string()));
+
+        assert!(plan.args.contains(&"-Xms512M".to_string()));
+    }
+
+    #[test]
+    fn boost_mode_respects_custom_gc_and_avoids_collision() {
+        let mut c = ctx();
+        c.boost_mode = true;
+        c.extra_jvm_args = "-XX:+UseZGC -XX:MaxGCPauseMillis=100".to_string();
+        let plan = build_launch_plan(&c).unwrap();
+
+        assert!(!plan.args.contains(&"-XX:+UseG1GC".to_string()));
+        assert!(!plan.args.contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
+        assert!(plan.args.contains(&"-XX:+UseZGC".to_string()));
+
+        assert!(plan.args.contains(&"-XX:MaxGCPauseMillis=100".to_string()));
+        assert!(!plan.args.contains(&"-XX:MaxGCPauseMillis=50".to_string()));
+    }
+
+    #[test]
+    fn inverted_heap_sizes_clamped_safely() {
+        let mut c = ctx();
+        c.memory_min_mb = 4096;
+        c.memory_max_mb = 2048;
+        let plan = build_launch_plan(&c).unwrap();
+        assert!(plan.args.contains(&"-Xms2048M".to_string()));
+        assert!(plan.args.contains(&"-Xmx2048M".to_string()));
     }
 
     #[test]

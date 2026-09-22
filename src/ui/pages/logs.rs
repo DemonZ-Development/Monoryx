@@ -1,6 +1,6 @@
 use crate::app::state::AppState;
 use crate::ui::components::{card_frame, page_header};
-use crate::ui::theme::{TEXT, TEXT2};
+use crate::ui::theme::{DANGER, TEXT, TEXT2};
 use egui::RichText;
 
 pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -36,7 +36,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 if !state.last_exit.is_empty() {
                     ui.label(
                         RichText::new(&state.last_exit)
-                            .color(egui::Color32::from_rgb(0xE0, 0x5A, 0x5A)),
+                            .color(DANGER),
                     );
                 }
             });

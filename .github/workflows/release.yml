@@ -1,4 +1,4 @@
-name: Release installer
+name: Release
 
 on:
   push:
@@ -9,19 +9,68 @@ permissions:
   contents: write
 
 jobs:
-  build-windows-installer:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - run: choco install innosetup --no-progress -y
-      - shell: pwsh
+      - name: Build binary
+        run: cargo build --release
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Compile Inno Setup Installer
+        shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "0.1.0-alpha" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.0.0-beta" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
-      - shell: pwsh
+      - name: Package Windows Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item installer\dist\*.exe dist\
+          Compress-Archive -Path target\release\monoryx.exe, README.md, LICENSE -DestinationPath dist\monoryx-v1.0.0-beta-windows-x64.zip -Force
+      - name: Upload Windows Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: dist/*
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+      - name: Build release binary
+        run: cargo build --release
+      - name: Package Linux tarball
+        run: |
+          mkdir -p dist
+          tar -czf dist/monoryx-v1.0.0-beta-linux-x64.tar.gz -C target/release monoryx
+      - name: Upload Linux Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-assets
+          path: dist/*
+
+  publish-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" --title "MONORYX ${{ github.ref_name }} (Alpha)" --notes "Alpha build. Download the setup exe below." installer\dist\*.exe
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ]; then TAG="v1.0.0-beta"; fi
+          gh release upload "$TAG" release-assets/* --clobber

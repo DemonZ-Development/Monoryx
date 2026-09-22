@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod discover;
 pub mod downloads;
 pub mod home;

@@ -1,9 +1,9 @@
 use crate::app::state::AppState;
 use crate::instance::config::LoaderKind;
 use crate::ui::components::{
-    badge, card_frame, empty_state, field_label, page_header, primary_button,
+    badge, card_frame, empty_state, field_label, hover_card_frame, page_header, primary_button,
 };
-use crate::ui::theme::{BORDER, ELEVATED2, SELECTED, SELECTED_FG, TEXT, TEXT2};
+use crate::ui::theme::{BORDER, DANGER, ELEVATED2, SELECTED, SELECTED_FG, TEXT, TEXT2};
 use egui::{CornerRadius, RichText, Stroke};
 
 pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -15,6 +15,24 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if primary_button(ui, "+ New instance").clicked() {
             open_new_dialog(state);
+        }
+        if ui
+            .add(
+                egui::Button::new(RichText::new("Import .mrpack").size(13.0).color(TEXT))
+                    .fill(ELEVATED2)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .corner_radius(CornerRadius::same(8)),
+            )
+            .on_hover_text("Create a new instance from a local .mrpack file")
+            .clicked()
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Modrinth Modpack", &["mrpack"])
+                .pick_file()
+            {
+                state.global_status = "Importing modpack...".to_string();
+                crate::app::tasks::install_pack_file(state, path);
+            }
         }
         if ui
             .checkbox(&mut state.show_snapshots, "Show snapshots")
@@ -31,27 +49,44 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     }
     for inst in state.instance_list.clone() {
         let running = state.playing.get(&inst.id).copied().unwrap_or(false);
-        card_frame(ui, |ui| {
+        let is_selected = state.selected_instance.as_deref() == Some(&inst.id);
+        let boost_on = inst.boost_mode.unwrap_or(state.config.boost_mode);
+
+        hover_card_frame(ui, &inst.id, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(&inst.name).size(16.0).strong().color(TEXT));
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("Minecraft {}", inst.minecraft_version))
-                                .size(12.0)
-                                .color(TEXT2),
-                        );
+                        ui.label(RichText::new(&inst.name).size(17.0).strong().color(TEXT));
+                        if is_selected {
+                            crate::ui::components::badge_accent(ui, "Active");
+                        }
+                        if boost_on {
+                            crate::ui::components::badge_boost(ui, "Eco Mode");
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        badge(ui, &format!("MC {}", inst.minecraft_version));
                         badge(ui, inst.loader.display_name());
                         if !inst.loader_version.is_empty() {
                             badge(ui, &inst.loader_version);
                         }
                         badge(ui, &format!("{} mods", state.instances.mod_count(&inst.id)));
+                        let ram_text = if boost_on && inst.memory_max_mb == crate::utils::system::default_max_memory_mb() {
+                            format!("{} MB (Eco Mode)", crate::utils::system::default_boost_max_memory_mb())
+                        } else {
+                            format!("{} MB RAM", inst.memory_max_mb)
+                        };
+                        badge(ui, &ram_text);
                     });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if running {
-                        ui.add_enabled(false, egui::Button::new("RUNNING"));
-                    } else if ui.button("Play").clicked() {
+                        let btn = egui::Button::new(RichText::new("RUNNING").strong().color(crate::ui::theme::OK))
+                            .fill(ELEVATED2)
+                            .stroke(Stroke::new(1.0_f32, BORDER))
+                            .corner_radius(CornerRadius::same(8));
+                        ui.add_enabled(false, btn);
+                    } else if ui.add(egui::Button::new(RichText::new("Play").strong().color(SELECTED_FG)).fill(crate::ui::theme::ACCENT).corner_radius(CornerRadius::same(8))).clicked() {
                         state.selected_instance = Some(inst.id.clone());
                         state.save_config();
                         crate::app::tasks::play_instance(state, inst.id.clone());
@@ -127,7 +162,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     if ui
                         .button(
                             RichText::new("Delete")
-                                .color(egui::Color32::from_rgb(0xE0, 0x5A, 0x5A)),
+                                .color(DANGER),
                         )
                         .clicked()
                     {
@@ -232,7 +267,7 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         ui.label(
             RichText::new(&state.versions_error)
                 .size(11.0)
-                .color(egui::Color32::from_rgb(0xE0, 0x5A, 0x5A)),
+                .color(DANGER),
         );
     }
     if current != state.new_draft.version {
@@ -329,7 +364,7 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         ui.label(
             RichText::new(&state.new_draft.error)
                 .size(11.0)
-                .color(egui::Color32::from_rgb(0xE0, 0x5A, 0x5A)),
+                .color(DANGER),
         );
         ui.label(
             RichText::new("Retry with Refresh, or choose another Minecraft version or loader.")

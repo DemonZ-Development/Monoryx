@@ -1,5 +1,6 @@
 pub mod arguments;
 pub mod assets;
+pub mod crash;
 pub mod installer;
 pub mod launcher;
 pub mod libraries;

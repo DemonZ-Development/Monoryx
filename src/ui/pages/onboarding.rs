@@ -1,15 +1,15 @@
 use crate::app::state::AppState;
 use crate::ui::components::{card_frame, field_label, page_header, primary_button};
-use crate::ui::theme::{TEXT, TEXT2};
+use crate::ui::theme::{DANGER, MUTED, TEXT, TEXT2};
 use egui::RichText;
 pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        ui.label(RichText::new("MONORYX").size(34.0).strong().color(TEXT));
+        ui.label(RichText::new("MONORYX").size(32.0).strong().color(TEXT));
         ui.label(
-            RichText::new("Minecraft, without the clutter.")
-                .size(14.0)
-                .color(TEXT2),
+            RichText::new("Play. Modify. Nothing else.")
+                .size(13.0)
+                .color(MUTED),
         );
         ui.add_space(24.0);
     });
@@ -44,7 +44,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 if !state.onboarding_error.is_empty() {
                     ui.label(
                         RichText::new(&state.onboarding_error)
-                            .color(egui::Color32::from_rgb(0xE0, 0x5A, 0x5A)),
+                            .color(DANGER),
                     );
                 }
                 ui.horizontal(|ui| {
@@ -95,7 +95,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             if !state.onboarding_error.is_empty() {
                 ui.label(
                     RichText::new(&state.onboarding_error)
-                        .color(egui::Color32::from_rgb(0xE0, 0x5A, 0x5A)),
+                        .color(DANGER),
                 );
             }
             ui.add_space(8.0);

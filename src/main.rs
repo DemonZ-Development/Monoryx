@@ -64,24 +64,64 @@ fn monoryx_icon() -> egui::IconData {
 fn main() -> eframe::Result<()> {
     init_logging();
     tracing::info!("MONORYX {} starting", env!("CARGO_PKG_VERSION"));
+
+    let single_instance = match crate::utils::system::try_acquire_single_instance() {
+        crate::utils::system::SingleInstanceStatus::Primary(l) => Some(l),
+        crate::utils::system::SingleInstanceStatus::AlreadyRunning => {
+            #[cfg(target_os = "windows")]
+            crate::utils::system::restore_any_running_monoryx_window();
+            tracing::info!("MONORYX is already running. Signal sent to restore primary window; exiting duplicate.");
+            return Ok(());
+        }
+        crate::utils::system::SingleInstanceStatus::Standalone => {
+            tracing::warn!("Could not acquire single-instance lock; running standalone.");
+            None
+        }
+    };
+
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([1100.0, 700.0])
         .with_min_inner_size([850.0, 560.0])
-        .with_title("MONORYX")
+        .with_title("MONORYX v1.0.0 Beta")
         .with_icon(monoryx_icon());
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
     eframe::run_native(
-        "MONORYX",
+        "MONORYX v1.0.0 Beta",
         options,
         Box::new(|cc| {
-            crate::ui::theme::apply_monochrome(&cc.egui_ctx);
-            cc.egui_ctx.set_pixels_per_point(1.0);
-            Ok(Box::new(MonoryxApp {
-                state: AppState::new(cc),
-            }))
+            crate::ui::theme::apply_theme(&cc.egui_ctx);
+            let state = AppState::new(cc);
+
+            if let Some(listener) = single_instance {
+                let tx = state.tx.clone();
+                let ctx = cc.egui_ctx.clone();
+                std::thread::Builder::new()
+                    .name("monoryx-single-instance".to_string())
+                    .spawn(move || {
+                        let _ = listener.set_nonblocking(false);
+                        while let Ok((mut stream, _)) = listener.accept() {
+                            use std::io::{Read, Write};
+                            let mut buf = [0u8; 64];
+                            if let Ok(n) = stream.read(&mut buf) {
+                                if let Ok(msg) = std::str::from_utf8(&buf[..n]) {
+                                    if msg.contains("RESTORE") {
+                                        let _ = stream.write_all(b"MONORYX_ACK\n");
+                                        let _ = stream.flush();
+                                        crate::utils::system::show_window_for_current_process(true);
+                                        let _ = tx.send(crate::app::events::AppEvent::RestoreWindow);
+                                        ctx.request_repaint();
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+            }
+
+            Ok(Box::new(MonoryxApp { state }))
         }),
     )
 }

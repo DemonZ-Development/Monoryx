@@ -41,6 +41,47 @@ impl SortOrder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DiscoverTab {
+    #[default]
+    Mods,
+    ResourcePacks,
+    Shaders,
+    Modpacks,
+}
+
+impl DiscoverTab {
+    #[must_use]
+    pub const fn project_type(self) -> &'static str {
+        match self {
+            Self::Mods => "mod",
+            Self::ResourcePacks => "resourcepack",
+            Self::Shaders => "shader",
+            Self::Modpacks => "modpack",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Mods => "Mods",
+            Self::ResourcePacks => "Resource Packs",
+            Self::Shaders => "Shaders",
+            Self::Modpacks => "Modpacks",
+        }
+    }
+
+    #[must_use]
+    pub const fn all() -> [Self; 4] {
+        [
+            Self::Mods,
+            Self::ResourcePacks,
+            Self::Shaders,
+            Self::Modpacks,
+        ]
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchFilters {
     #[serde(default)]
@@ -70,5 +111,23 @@ impl Default for SearchFilters {
             limit: 24,
             offset: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discover_tab_project_types() {
+        assert_eq!(DiscoverTab::Mods.project_type(), "mod");
+        assert_eq!(DiscoverTab::ResourcePacks.project_type(), "resourcepack");
+        assert_eq!(DiscoverTab::Shaders.project_type(), "shader");
+        assert_eq!(DiscoverTab::Modpacks.project_type(), "modpack");
+    }
+
+    #[test]
+    fn discover_tab_all_contains_four() {
+        assert_eq!(DiscoverTab::all().len(), 4);
     }
 }

@@ -1,6 +1,6 @@
 use crate::app::state::AppState;
 use crate::content::ContentKind;
-use crate::ui::components::{badge, card_frame, empty_state, page_header};
+use crate::ui::components::{badge, card_frame, empty_state, hover_card_frame, page_header};
 use crate::ui::theme::{TEXT, TEXT2};
 use egui::RichText;
 
@@ -86,7 +86,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         return;
     }
     for e in entries {
-        card_frame(ui, |ui| {
+        hover_card_frame(ui, format!("lib_entry_{}", e.file_name), |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(

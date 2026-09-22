@@ -187,7 +187,9 @@ pub fn build_facets(
         }
     }
     if let Some(l) = loader {
-        if !l.is_empty() && l != "vanilla" && l != "minecraft" {
+
+        let is_pack_or_shader = matches!(project_type, Some("shader") | Some("resourcepack"));
+        if !is_pack_or_shader && !l.is_empty() && l != "vanilla" && l != "minecraft" {
             facets.push(vec![format!("categories:{l}")]);
         }
     }
@@ -209,5 +211,24 @@ mod tests {
     fn vanilla_loader_omitted() {
         let f = build_facets(Some("mod"), Some("1.21"), Some("vanilla"));
         assert!(!f.contains("vanilla"));
+    }
+
+    #[test]
+    fn shader_and_resourcepack_omit_loader_facet() {
+        let shader = build_facets(Some("shader"), Some("1.21"), Some("fabric"));
+        assert!(!shader.contains("categories:fabric"));
+        assert!(shader.contains("project_type:shader"));
+        assert!(shader.contains("versions:1.21"));
+
+        let rp = build_facets(Some("resourcepack"), Some("1.21"), Some("fabric"));
+        assert!(!rp.contains("categories:fabric"));
+        assert!(rp.contains("project_type:resourcepack"));
+    }
+
+    #[test]
+    fn modpack_supports_loader_facet() {
+        let pack = build_facets(Some("modpack"), Some("1.21"), Some("fabric"));
+        assert!(pack.contains("categories:fabric"));
+        assert!(pack.contains("project_type:modpack"));
     }
 }

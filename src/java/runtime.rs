@@ -18,7 +18,7 @@ impl JavaRuntime {
 
 impl std::fmt::Display for JavaRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Java {} — {}", self.major, self.path.display())
+        write!(f, "Java {} - {}", self.major, self.path.display())
     }
 }
 
