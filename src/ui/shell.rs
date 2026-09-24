@@ -7,11 +7,28 @@ use crate::ui::theme::{
 use egui::{Color32, CornerRadius, RichText, Stroke};
 
 pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    let startup_window_id = egui::Id::new("startup-window-size-applied");
+    let startup_passes = ctx.data_mut(|data| data.get_temp::<u8>(startup_window_id).unwrap_or(0));
+    if startup_passes < 5 {
+        ctx.data_mut(|data| data.insert_temp(startup_window_id, startup_passes + 1));
+        if state.config.start_maximized {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            #[cfg(target_os = "windows")]
+            crate::utils::system::ensure_window_positioned(true, false);
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                state.config.window_width.clamp(850.0, 2560.0),
+                state.config.window_height.clamp(560.0, 1440.0),
+            )));
+            #[cfg(target_os = "windows")]
+            crate::utils::system::ensure_window_positioned(false, startup_passes == 0);
+        }
+    }
     let any_playing = state.playing.values().any(|p| *p);
     if any_playing {
         ctx.request_repaint_after(std::time::Duration::from_millis(300));
     } else {
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 
     state.poll_events(ctx);
@@ -154,7 +171,7 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("v1.0.0 Beta")
+                        RichText::new("v1.1.0 Beta")
                             .size(10.5)
                             .color(MUTED),
                     );
@@ -297,6 +314,7 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                     Page::Discover => crate::ui::pages::discover::show(state, ctx, ui),
                     Page::Library => crate::ui::pages::library::show(state, ctx, ui),
                     Page::Downloads => crate::ui::pages::downloads::show(state, ctx, ui),
+                    Page::Nexeu => crate::ui::pages::nexeu::show(state, ctx, ui),
                     Page::Accounts => crate::ui::pages::accounts::show(state, ctx, ui),
                     Page::Settings => crate::ui::pages::settings::show(state, ctx, ui),
                     Page::Logs => crate::ui::pages::logs::show(state, ctx, ui),
@@ -353,10 +371,15 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         egui::Window::new("Something went wrong")
             .collapsible(false)
             .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(RichText::new(&msg).color(TEXT));
+                ui.add(egui::Label::new(RichText::new(&msg).color(TEXT)).selectable(true));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
+                    if ui.button("Copy error").clicked() {
+                        ctx.copy_text(msg.clone());
+                        state.notify("Error message copied to clipboard");
+                    }
                     if ui.button("Close").clicked() {
                         state.error_dialog.clear();
                     }
@@ -372,6 +395,7 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         egui::Window::new("Edit Instance")
             .collapsible(false)
             .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .min_width(440.0)
             .show(ctx, |ui| {
                 show_edit_dialog(state, ui);
@@ -401,32 +425,77 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("Minecraft {}", cfg.minecraft_version)).color(TEXT));
         ui.label(RichText::new(cfg.loader.display_name()).color(TEXT2));
+        if !cfg.loader_version.is_empty() {
+            ui.label(RichText::new(&cfg.loader_version).color(TEXT2));
+        }
     });
+
+    if cfg.loader != crate::instance::config::LoaderKind::Vanilla {
+        ui.horizontal(|ui| {
+            let checking = state.loader_update_checking.as_deref() == Some(&cfg.id);
+            let installing = state.loader_update_busy.as_deref() == Some(&cfg.id);
+            if ui
+                .add_enabled(
+                    !checking && !installing,
+                    egui::Button::new("Check loader update"),
+                )
+                .clicked()
+            {
+                state.loader_update_checking = Some(cfg.id.clone());
+                state.loader_update_candidate = None;
+                state.loader_update_error.clear();
+                crate::app::tasks::check_loader_update(state, cfg.id.clone());
+            }
+            if checking || installing {
+                ui.spinner();
+                ui.label(if checking {
+                    "Checking..."
+                } else {
+                    "Installing..."
+                });
+            }
+            if let Some((id, version)) = state.loader_update_candidate.clone() {
+                if id == cfg.id
+                    && ui
+                        .add_enabled(!installing, egui::Button::new(format!("Install {version}")))
+                        .clicked()
+                {
+                    state.loader_update_busy = Some(cfg.id.clone());
+                    state.loader_update_error.clear();
+                    crate::app::tasks::install_loader_update(state, cfg.id.clone(), version);
+                }
+            }
+        });
+        if !state.loader_update_error.is_empty() {
+            ui.colored_label(DANGER, &state.loader_update_error);
+        }
+    }
 
     ui.add_space(4.0);
 
     let mut boost_val = cfg.boost_mode.unwrap_or(state.config.boost_mode);
     ui.horizontal(|ui| {
-        if ui.checkbox(&mut boost_val, "Eco Mode (Low RAM & Optimized GC)").changed() {
+        if ui
+            .checkbox(&mut boost_val, "Eco Mode (Low RAM & Optimized GC)")
+            .changed()
+        {
             cfg.boost_mode = Some(boost_val);
         }
     });
 
-    let mut min_s = cfg.memory_min_mb.to_string();
-    let mut max_s = cfg.memory_max_mb.to_string();
     ui.horizontal(|ui| {
         ui.label("Min MB");
-        if ui.text_edit_singleline(&mut min_s).changed() {
-            if let Ok(v) = min_s.parse::<u64>() {
-                cfg.memory_min_mb = v;
-            }
-        }
+        ui.add(
+            egui::DragValue::new(&mut cfg.memory_min_mb)
+                .range(256..=131_072)
+                .speed(128),
+        );
         ui.label("Max MB");
-        if ui.text_edit_singleline(&mut max_s).changed() {
-            if let Ok(v) = max_s.parse::<u64>() {
-                cfg.memory_max_mb = v;
-            }
-        }
+        ui.add(
+            egui::DragValue::new(&mut cfg.memory_max_mb)
+                .range(256..=131_072)
+                .speed(128),
+        );
     });
 
     ui.label(RichText::new("JVM arguments").size(11.0).color(TEXT2));
@@ -516,12 +585,23 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
             {
                 let dir = state.instances.instance_dir(&cfg.id);
                 let meta: std::collections::HashMap<String, (Option<String>, Option<String>)> =
-                    Default::default();
+                    crate::content::ContentStore::for_instance(&dir)
+                        .load()
+                        .entries
+                        .into_iter()
+                        .map(|entry| (entry.file_name, (entry.project_id, entry.version_id)))
+                        .collect();
                 match crate::instance::export::export_instance(&dir, &cfg, &p, true, &meta) {
                     Ok(()) => state.notify("Instance exported"),
                     Err(e) => state.fail(e.user_message()),
                 }
             }
+        }
+        if ui.button("Manage content").clicked() {
+            state.selected_instance = Some(cfg.id.clone());
+            state.edit_instance = None;
+            state.refresh_library();
+            state.set_page(Page::Library);
         }
     });
 
@@ -538,10 +618,8 @@ fn sidebar_item(
     has_badge: bool,
 ) -> egui::Response {
     let id = ui.make_persistent_id(format!("sidebar_item_{label}"));
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 38.0),
-        egui::Sense::click(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 38.0), egui::Sense::click());
 
     let fade = ctx.animate_bool_with_time(id.with("hover"), response.hovered(), 0.15);
     if fade > 0.001 && fade < 0.999 {
@@ -619,15 +697,17 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
             );
         });
 
+    let dialog_width = (screen_rect.width() - 32.0).clamp(320.0, 820.0);
+    let dialog_height = (screen_rect.height() - 48.0).clamp(240.0, 700.0);
+    let log_height = (screen_rect.height() - 580.0).clamp(80.0, 300.0);
     egui::Window::new("Game Crash Detected")
         .open(&mut is_open)
         .order(egui::Order::Middle)
         .collapsible(false)
-        .resizable(true)
+        .fixed_size(egui::vec2(dialog_width, dialog_height))
+        .vscroll(true)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .min_width(560.0)
-        .default_width(660.0)
-        .default_height(500.0)
+        .constrain_to(screen_rect.shrink(12.0))
         .show(ctx, |ui| {
             ui.add_space(2.0);
 
@@ -659,6 +739,64 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
             });
 
             ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Copy crash report").strong().color(SELECTED_FG))
+                            .fill(ACCENT),
+                    )
+                    .clicked()
+                {
+                    ctx.copy_text(format!(
+                        "MONORYX Game Crash Report\n-------------------------\nInstance: {}\nExit Code: {}\nSummary:\n{}\nSource: {}\n\nDetails:\n{}",
+                        info.instance_name,
+                        crate::minecraft::crash::format_exit_code(info.exit_code),
+                        info.summary,
+                        info.source_label,
+                        info.details
+                    ));
+                    state.notify("Crash report copied to clipboard");
+                }
+                if ui
+                    .add_enabled(
+                        !state.crash_share_loading,
+                        egui::Button::new("Share on mclo.gs"),
+                    )
+                    .clicked()
+                {
+                    state.share_crash_log();
+                }
+                if state.crash_share_loading {
+                    ui.spinner();
+                }
+                if ui.button("View full logs").clicked() {
+                    navigate_logs = true;
+                }
+                if ui.button("Reports folder").clicked() {
+                    let _ = std::fs::create_dir_all(&info.crash_reports_dir);
+                    let _ = open::that(&info.crash_reports_dir);
+                }
+                if ui.button("Dismiss").clicked() {
+                    close_dialog = true;
+                }
+            });
+
+            if let Some(url) = state.crash_share_url.clone() {
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("mclo.gs URL:").size(12.0).strong().color(crate::ui::theme::INFO));
+                    ui.hyperlink_to(&url, &url);
+                    if ui.button("Copy link").clicked() {
+                        ctx.copy_text(url.clone());
+                        state.notify("mclo.gs link copied");
+                    }
+                });
+            }
+            if !state.crash_share_error.is_empty() {
+                ui.colored_label(DANGER, &state.crash_share_error);
+            }
+
+            ui.add_space(6.0);
 
             egui::Frame::new()
                 .fill(Color32::from_rgb(34, 18, 22))
@@ -679,7 +817,7 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
 
             ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new("Crash Log / Trace")
                         .size(12.0)
@@ -701,9 +839,9 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    let avail_h = (ui.available_height() - 42.0).clamp(180.0, 600.0);
                     egui::ScrollArea::both()
-                        .max_height(avail_h)
+                        .max_height(log_height)
+                        .max_width((dialog_width - 36.0).max(250.0))
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.add(
@@ -718,49 +856,12 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
                         });
                 });
 
-            ui.add_space(10.0);
-
-            ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("Copy Report to Clipboard")
-                                .strong()
-                                .size(12.0)
-                                .color(SELECTED_FG),
-                        )
-                        .fill(ACCENT)
-                        .corner_radius(CornerRadius::same(6)),
-                    )
-                    .clicked()
-                {
-                    let copy_content = format!(
-                        "MONORYX Game Crash Report\n-------------------------\nInstance: {}\nExit Code: {}\nSummary:\n{}\nSource: {}\n\nDetails:\n{}",
-                        info.instance_name,
-                        crate::minecraft::crash::format_exit_code(info.exit_code),
-                        info.summary,
-                        info.source_label,
-                        info.details
-                    );
-                    ctx.copy_text(copy_content);
-                    state.notify("Crash report copied to clipboard");
-                }
-
-                if ui.button("Open Crash Reports Folder").clicked() {
-                    let _ = std::fs::create_dir_all(&info.crash_reports_dir);
-                    let _ = open::that(&info.crash_reports_dir);
-                }
-
-                if ui.button("View Full Logs").clicked() {
-                    navigate_logs = true;
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Dismiss").clicked() {
-                        close_dialog = true;
-                    }
-                });
-            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Note: 'Copy crash report' copies summary and details to clipboard. 'Share on mclo.gs' uploads the log publicly.")
+                    .size(11.0)
+                    .color(MUTED),
+            );
         });
 
     if !is_open || close_dialog {

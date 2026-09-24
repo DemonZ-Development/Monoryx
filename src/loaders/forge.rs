@@ -110,7 +110,9 @@ impl ModLoader for ForgeLoader {
         })?;
 
         let profile = read_forge_installer(&tmp)?;
-        ensure_supported_processors(&profile, "Forge")?;
+        if !profile.processors.is_empty() {
+            run_official_installer(dm, paths, &tmp, minecraft_version, "Forge").await?;
+        }
 
         let cache = crate::storage::cache::DiskCache::new(
             paths.manifests_dir(),
@@ -135,6 +137,14 @@ impl ModLoader for ForgeLoader {
         for lib_name in &profile.libraries {
             if merged.libraries.iter().any(|l| &l.name == lib_name) {
                 continue;
+            }
+            let parts: Vec<_> = lib_name.split(':').collect();
+            if parts.len() >= 3 {
+                merged.libraries.retain(|lib| {
+                    let other: Vec<_> = lib.name.split(':').collect();
+                    other.len() < 3
+                        || (other[0], other[1], other.get(3)) != (parts[0], parts[1], parts.get(3))
+                });
             }
             extra_libs.push(Library {
                 name: lib_name.clone(),
@@ -219,13 +229,66 @@ fn parse_install_profile(text: &str) -> Result<(Vec<String>, Vec<serde_json::Val
     ))
 }
 
-pub(crate) fn ensure_supported_processors(
-    profile: &ForgeInstallerProfile,
+pub(crate) async fn run_official_installer(
+    dm: &DownloadManager,
+    paths: &MonoryxPaths,
+    installer: &std::path::Path,
+    minecraft_version: &str,
     loader: &str,
 ) -> Result<()> {
-    if !profile.processors.is_empty() {
+    use crate::java::runtime::{required_major_for_version, select_runtime, JavaMode};
+    let required = required_major_for_version(minecraft_version, None).unwrap_or(17);
+    let found = crate::java::discovery::discover_all(&paths.java_dir()).await;
+    let java = if let Some(runtime) = select_runtime(&found, Some(required), &JavaMode::Automatic) {
+        runtime.path
+    } else {
+        crate::java::managed::install_managed(dm, &paths.java_dir(), required, None).await?
+    };
+    let target = paths.minecraft_dir();
+    tokio::fs::create_dir_all(&target).await?;
+    let legacy_profile = target.join("launcher_profiles.json");
+    let store_profile = target.join("launcher_profiles_microsoft_store.json");
+    if !legacy_profile.exists() && !store_profile.exists() {
+        tokio::fs::write(&legacy_profile, b"{\"profiles\":{}}\n").await?;
+    }
+    let mut cmd = tokio::process::Command::new(java);
+    cmd.arg("-jar")
+        .arg(installer)
+        .arg("--installClient")
+        .arg(&target)
+        .current_dir(&target)
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(600), cmd.output())
+        .await
+        .map_err(|_| {
+            MonoryxError::LoaderUnavailable(format!(
+                "{loader} installer timed out after 10 minutes"
+            ))
+        })?
+        .map_err(|e| {
+            MonoryxError::LoaderUnavailable(format!("could not start {loader} installer: {e}"))
+        })?;
+    let log_path = paths
+        .logs_dir()
+        .join(format!("{}-installer.log", loader.to_lowercase()));
+    tokio::fs::create_dir_all(paths.logs_dir()).await?;
+    let mut log = output.stdout;
+    log.extend_from_slice(b"\n--- stderr ---\n");
+    log.extend_from_slice(&output.stderr);
+    tokio::fs::write(&log_path, &log).await?;
+    if !output.status.success() {
+        let tail = String::from_utf8_lossy(&log);
+        let detail = tail
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("no details");
         return Err(MonoryxError::LoaderUnavailable(format!(
-            "{loader} installer requires processors; processor-based installs are not supported yet"
+            "{loader} installer exited with {}: {detail}. See {}",
+            output.status,
+            log_path.display()
         )));
     }
     Ok(())
@@ -255,22 +318,6 @@ mod tests {
             ["10.13.4.1614-1.7.10"]
         );
         assert!(forge_versions_for_mc(&all, "26.3").is_empty());
-    }
-
-    #[test]
-    fn processor_installs_fail_for_both_loaders() {
-        let mut profile = ForgeInstallerProfile {
-            version_json: "{}".into(),
-            libraries: vec![],
-            processors: vec![serde_json::json!({"jar": "a:b:1"})],
-        };
-        for loader in ["Forge", "NeoForge"] {
-            assert!(
-                matches!(ensure_supported_processors(&profile, loader), Err(MonoryxError::LoaderUnavailable(message)) if message.contains("processors") && message.contains(loader))
-            );
-        }
-        profile.processors.clear();
-        assert!(ensure_supported_processors(&profile, "Forge").is_ok());
     }
 
     #[test]

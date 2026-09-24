@@ -44,9 +44,8 @@ pub fn find_latest_crash_report(
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                 if let Some(cutoff) = since {
-                    let cutoff_with_margin = cutoff
-                        .checked_sub(Duration::from_secs(5))
-                        .unwrap_or(cutoff);
+                    let cutoff_with_margin =
+                        cutoff.checked_sub(Duration::from_secs(5)).unwrap_or(cutoff);
                     if mtime < cutoff_with_margin {
                         continue;
                     }
@@ -92,9 +91,7 @@ pub fn find_latest_log(
         if let Ok(meta) = latest_log.metadata() {
             let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             let valid = since.is_none_or(|cutoff| {
-                let margin = cutoff
-                    .checked_sub(Duration::from_secs(5))
-                    .unwrap_or(cutoff);
+                let margin = cutoff.checked_sub(Duration::from_secs(5)).unwrap_or(cutoff);
                 mtime >= margin
             });
             if meta.len() > 0 && valid {
@@ -111,9 +108,7 @@ pub fn find_latest_log(
                 if let Ok(meta) = path.metadata() {
                     let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                     let valid = since.is_none_or(|cutoff| {
-                        let margin = cutoff
-                            .checked_sub(Duration::from_secs(5))
-                            .unwrap_or(cutoff);
+                        let margin = cutoff.checked_sub(Duration::from_secs(5)).unwrap_or(cutoff);
                         mtime >= margin
                     });
                     if meta.len() > 0 && valid {
@@ -151,7 +146,15 @@ pub fn extract_crash_summary(content: &str, exit_code: i32) -> String {
     let trimmed = content.trim();
 
     if !trimmed.is_empty() {
-
+        if let Some(cause) = trimmed
+            .lines()
+            .find(|line| line.contains("java.lang.module.ResolutionException: Modules"))
+        {
+            return format!(
+                "Forge library conflict: {}. Two versions of a library were placed on Java's module path. Try launching again with the updated launcher.",
+                cause.trim().trim_start_matches("[STDERR]").trim()
+            );
+        }
         if trimmed.contains("---- Minecraft Crash Report ----")
             || trimmed.contains("Description:")
             || trimmed.contains("-- Head --")
@@ -338,7 +341,8 @@ pub fn extract_crash_summary(content: &str, exit_code: i32) -> String {
             return "Java Version Incompatible: Minecraft requires a newer Java runtime than the one currently selected. Please select Automatic or a compatible Java version in Instance Settings.".to_string();
         }
 
-        if trimmed.contains("UnsatisfiedLinkError") || trimmed.contains("Failed to locate library") {
+        if trimmed.contains("UnsatisfiedLinkError") || trimmed.contains("Failed to locate library")
+        {
             for line in trimmed.lines() {
                 let l = line.trim();
                 if l.contains("UnsatisfiedLinkError") || l.contains("Failed to locate library") {
@@ -388,6 +392,64 @@ pub fn extract_crash_summary(content: &str, exit_code: i32) -> String {
         -1 => "Process failed to start or connection was terminated.".to_string(),
         other => format!("Minecraft exited abnormally with code {}.", format_exit_code(other)),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct MclogsResponse {
+    success: bool,
+    url: Option<String>,
+    error: Option<String>,
+}
+
+pub async fn share_on_mclogs(
+    http: &reqwest::Client,
+    info: &CrashInfo,
+) -> std::result::Result<String, String> {
+    let content = if let Some(path) = &info.report_path {
+        let metadata = tokio::fs::metadata(path)
+            .await
+            .map_err(|e| format!("Could not read crash log: {e}"))?;
+        if metadata.len() > 10 * 1024 * 1024 {
+            return Err("Crash log exceeds mclo.gs' 10 MiB limit.".to_string());
+        }
+        tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| format!("Could not read crash log: {e}"))?
+    } else {
+        info.details.clone()
+    };
+    if content.trim().is_empty() {
+        return Err("There is no crash log to share.".to_string());
+    }
+    if content.len() > 10 * 1024 * 1024 {
+        return Err("Crash log exceeds mclo.gs' 10 MiB limit.".to_string());
+    }
+    let response = http
+        .post("https://api.mclo.gs/1/log")
+        .json(&serde_json::json!({ "content": content, "source": "MONORYX" }))
+        .send()
+        .await
+        .map_err(|e| format!("Could not reach mclo.gs: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("mclo.gs returned HTTP {}", response.status()));
+    }
+    let payload: MclogsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not read mclo.gs response: {e}"))?;
+    if !payload.success {
+        return Err(payload
+            .error
+            .unwrap_or_else(|| "mclo.gs could not share this log.".to_string()));
+    }
+    let url = payload
+        .url
+        .ok_or_else(|| "mclo.gs did not return a link.".to_string())?;
+    let parsed = url::Url::parse(&url).map_err(|_| "mclo.gs returned an invalid link.")?;
+    if parsed.scheme() != "https" || parsed.host_str() != Some("mclo.gs") {
+        return Err("mclo.gs returned an unexpected link.".to_string());
+    }
+    Ok(url)
 }
 
 #[must_use]
@@ -464,6 +526,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forge_module_conflict_gets_specific_summary() {
+        let log = "[STDERR] Caused by: java.lang.module.ResolutionException: Modules jopt.simple and joptsimple export package joptsimple.util to module com.electronwill.nightconfig.core";
+        let summary = extract_crash_summary(log, 1);
+        assert!(summary.contains("Forge library conflict"));
+        assert!(summary.contains("jopt.simple and joptsimple"));
+    }
+
+    #[test]
     fn format_exit_code_positive_and_negative() {
         assert_eq!(format_exit_code(0), "0");
         assert_eq!(format_exit_code(1), "1");
@@ -490,7 +560,9 @@ Thread: main
 "#;
         let summary = extract_crash_summary(report, 1);
         assert!(summary.contains("Description: Loading library LWJGL system"));
-        assert!(summary.contains("Exception: java.lang.UnsatisfiedLinkError: Failed to locate library: lwjgl.dll"));
+        assert!(summary.contains(
+            "Exception: java.lang.UnsatisfiedLinkError: Failed to locate library: lwjgl.dll"
+        ));
     }
 
     #[test]
@@ -526,7 +598,9 @@ Details:
     fn extract_summary_crash_report_without_description() {
         let report = "---- Minecraft Crash Report ----\nTime: 2026-09-22 12:00:00\njava.lang.IllegalStateException: Missing block entity\n\tat net.minecraft.world.World.getBlockEntity\n-- Head --\n";
         let summary = extract_crash_summary(report, 1);
-        assert!(summary.contains("Exception: java.lang.IllegalStateException: Missing block entity"));
+        assert!(
+            summary.contains("Exception: java.lang.IllegalStateException: Missing block entity")
+        );
     }
 
     #[test]
@@ -616,7 +690,9 @@ Details:
         assert_eq!(info.instance_name, "Test Instance");
         assert_eq!(info.exit_code, 1);
         assert!(info.summary.contains("Description: Testing crash"));
-        assert!(info.summary.contains("Exception: java.lang.RuntimeException: Boom!"));
+        assert!(info
+            .summary
+            .contains("Exception: java.lang.RuntimeException: Boom!"));
         assert!(info.source_label.contains("crash-2026-09-22-client.txt"));
         assert_eq!(info.report_path, Some(file_path));
     }
@@ -635,7 +711,14 @@ Details:
         .unwrap();
 
         let future_launch = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
-        let info = detect_crash("test-id", "Test Instance", game_dir, 1, None, Some(future_launch));
+        let info = detect_crash(
+            "test-id",
+            "Test Instance",
+            game_dir,
+            1,
+            None,
+            Some(future_launch),
+        );
 
         assert_ne!(info.report_path, Some(file_path));
         assert!(!info.summary.contains("Old Crash From Last Week"));
@@ -675,7 +758,11 @@ Details:
         let logs_dir = game_dir.join("logs");
         std::fs::create_dir_all(&logs_dir).unwrap();
         let log_path = logs_dir.join("latest.log");
-        std::fs::write(&log_path, "[main/ERROR]: Failed to load mod configuration\n").unwrap();
+        std::fs::write(
+            &log_path,
+            "[main/ERROR]: Failed to load mod configuration\n",
+        )
+        .unwrap();
 
         let info = detect_crash("test-id", "Test Instance", game_dir, 1, None, None);
         assert_eq!(info.exit_code, 1);
@@ -687,7 +774,14 @@ Details:
     #[test]
     fn detect_crash_empty_dirs() {
         let dir = tempfile::tempdir().unwrap();
-        let info = detect_crash("test-id", "Test Instance", dir.path(), -1073740791, None, None);
+        let info = detect_crash(
+            "test-id",
+            "Test Instance",
+            dir.path(),
+            -1073740791,
+            None,
+            None,
+        );
         assert_eq!(info.exit_code, -1073740791);
         assert!(info.summary.contains("STATUS_STACK_BUFFER_OVERRUN"));
         assert_eq!(info.report_path, None);

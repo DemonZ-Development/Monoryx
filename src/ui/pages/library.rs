@@ -29,6 +29,9 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Check updates").clicked() {
                 state.updates_loading = true;
+                state.updates_checked = false;
+                state.updates_summary.clear();
+                state.updates_error.clear();
                 crate::app::tasks::check_updates(state);
             }
             if !state.updates.is_empty()
@@ -41,26 +44,16 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         });
     });
     if state.updates_loading {
-        ui.label("Checking for updates...");
-    }
-    for u in state.updates.clone() {
-        if entry_kind(state, &u.file_name) != Some(state.library_filter)
-            && !matches_kind(u.kind, state.library_filter)
-        {
-            continue;
-        }
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!(
-                    "{}: {} -> {}",
-                    u.title, u.current_version, u.new_version
-                ))
-                .color(TEXT),
-            );
-            if ui.small_button("Update").clicked() {
-                crate::app::tasks::update_one(state, u);
-            }
+            ui.spinner();
+            ui.label("Checking installed content...");
         });
+    }
+    if state.updates_checked && !state.updates_summary.is_empty() {
+        ui.label(RichText::new(&state.updates_summary).color(TEXT2));
+    }
+    if !state.updates_error.is_empty() {
+        ui.colored_label(crate::ui::theme::DANGER, &state.updates_error);
     }
     ui.add_space(6.0);
     let entries: Vec<_> = state
@@ -77,12 +70,6 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 "Install content from Discover or copy files manually.",
             );
         });
-        let mods_dir = match state.library_filter {
-            ContentKind::Mod => state.instances.mods_dir(&cfg.id),
-            ContentKind::Resourcepack => state.instances.resourcepacks_dir(&cfg.id),
-            ContentKind::Shader => state.instances.shaderpacks_dir(&cfg.id),
-        };
-        scan_manual(state, &cfg.id, &mods_dir);
         return;
     }
     for e in entries {
@@ -117,7 +104,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         if !e.enabled {
                             badge(ui, "Disabled");
                         }
-                        if state.updates.iter().any(|u| u.file_name == e.file_name) {
+                        if state
+                            .updates
+                            .iter()
+                            .any(|u| u.file_name == e.file_name && u.kind == e.kind)
+                        {
                             badge(ui, "Update available");
                         }
                     });
@@ -125,52 +116,67 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
+                            if let Some(update) = state
+                                .updates
+                                .iter()
+                                .find(|u| u.file_name == e.file_name && u.kind == e.kind)
+                                .cloned()
+                            {
+                                if ui
+                                    .small_button(format!("Update to {}", update.new_version))
+                                    .clicked()
+                                {
+                                    crate::app::tasks::update_one(state, update);
+                                }
+                            }
                             let label = if e.enabled { "Disable" } else { "Enable" };
                             if ui.small_button(label).clicked() {
                                 let id = cfg.id.clone();
                                 let name = e.file_name.clone();
                                 let target = !e.enabled;
-                                match state.instances.set_mod_enabled(&id, &name, target) {
-                                    Ok(_) => state.refresh_library(),
+                                match state
+                                    .instances
+                                    .set_content_enabled(&id, &name, e.kind, target)
+                                {
+                                    Ok(_) => {
+                                        let store = crate::content::ContentStore::for_instance(
+                                            &state.instances.instance_dir(&id),
+                                        );
+                                        if let Err(err) = store.set_enabled(e.kind, &name, target) {
+                                            state.fail(err.user_message());
+                                        }
+                                        state.refresh_library();
+                                    }
                                     Err(err) => state.fail(err.user_message()),
                                 }
                             }
-                            if ui.small_button("Remove").clicked() {
-                                match crate::modrinth::install::remove_project_blocking(
-                                    &state.instances,
-                                    &cfg.id,
-                                    e.kind,
-                                    &e.file_name,
-                                ) {
-                                    Ok(()) => state.refresh_library(),
-                                    Err(err) => state.fail(err),
+                            ui.menu_button("More", |ui| {
+                                if ui.button("Open folder").clicked() {
+                                    let dir = match e.kind {
+                                        ContentKind::Mod => state.instances.mods_dir(&cfg.id),
+                                        ContentKind::Resourcepack => {
+                                            state.instances.resourcepacks_dir(&cfg.id)
+                                        }
+                                        ContentKind::Shader => {
+                                            state.instances.shaderpacks_dir(&cfg.id)
+                                        }
+                                    };
+                                    let _ = open::that(dir);
+                                    ui.close();
                                 }
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            if e.project_id.is_some() && ui.small_button("Update").clicked() {
-                                if let Some(u) = state
-                                    .updates
-                                    .iter()
-                                    .find(|u| u.file_name == e.file_name)
-                                    .cloned()
-                                {
-                                    crate::app::tasks::update_one(state, u);
-                                } else {
-                                    state.updates_loading = true;
-                                    crate::app::tasks::check_updates(state);
-                                }
-                            }
-                            if ui.small_button("Folder").clicked() {
-                                let dir = match e.kind {
-                                    ContentKind::Mod => state.instances.mods_dir(&cfg.id),
-                                    ContentKind::Resourcepack => {
-                                        state.instances.resourcepacks_dir(&cfg.id)
+                                if ui.button("Remove").clicked() {
+                                    match crate::modrinth::install::remove_project_blocking(
+                                        &state.instances,
+                                        &cfg.id,
+                                        e.kind,
+                                        &e.file_name,
+                                    ) {
+                                        Ok(()) => state.refresh_library(),
+                                        Err(err) => state.fail(err),
                                     }
-                                    ContentKind::Shader => state.instances.shaderpacks_dir(&cfg.id),
-                                };
-                                let _ = open::that(dir.join(&e.file_name));
-                            }
+                                    ui.close();
+                                }
+                            });
                         });
                     });
                 });
@@ -178,34 +184,4 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         });
         ui.add_space(4.0);
     }
-}
-
-fn matches_kind(a: ContentKind, b: ContentKind) -> bool {
-    a == b
-}
-
-fn entry_kind(_state: &AppState, _file: &str) -> Option<ContentKind> {
-    None
-}
-
-fn scan_manual(state: &mut AppState, _instance_id: &str, dir: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut found: Vec<String> = Vec::new();
-    for e in entries.flatten() {
-        if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            if let Some(name) = e.file_name().to_str().map(str::to_string) {
-                if name.ends_with(".jar") || name.ends_with(".zip") {
-                    found.push(name);
-                }
-            }
-        }
-    }
-    if found.is_empty() {
-        return;
-    }
-    state
-        .log_lines
-        .push(format!("{} manual file(s) present", found.len()));
 }

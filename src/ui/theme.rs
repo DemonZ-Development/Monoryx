@@ -170,7 +170,10 @@ pub fn format_last_played(raw: Option<&str>) -> String {
         } else {
             local_dt.format("%b %d, %Y").to_string()
         }
-    } else if trimmed.len() >= 10 && trimmed.chars().nth(4) == Some('-') && trimmed.chars().nth(7) == Some('-') {
+    } else if trimmed.len() >= 10
+        && trimmed.chars().nth(4) == Some('-')
+        && trimmed.chars().nth(7) == Some('-')
+    {
         trimmed[..10].to_string()
     } else {
         trimmed.to_string()
@@ -200,7 +203,6 @@ mod tests {
 
     #[test]
     fn format_last_played_raw_nanosecond_utc_collapsing() {
-
         let raw = "2026-09-22T10:41:13.902901900+00:00";
         let formatted = format_last_played(Some(raw));
         assert!(!formatted.contains("902901900"));

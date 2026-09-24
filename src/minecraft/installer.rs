@@ -46,6 +46,10 @@ pub async fn install_version(
     version: &VersionJson,
     on_phase: Option<PhaseCallback>,
 ) -> Result<InstallReport> {
+    crate::utils::fs::safe_file_name(&version.id)?;
+    if let Some(jar) = &version.jar {
+        crate::utils::fs::safe_file_name(jar)?;
+    }
     let report = |p: InstallPhase, a: usize, b: usize| {
         if let Some(cb) = &on_phase {
             cb(p, a, b);
@@ -102,7 +106,7 @@ pub async fn install_version(
 
         if let Some(d) = &lib.downloads {
             if let Some(a) = &d.artifact {
-                let dest = libraries_dir.join(&a.path);
+                let dest = crate::utils::fs::safe_join(&libraries_dir, &a.path)?;
                 lib_jobs.push(
                     DownloadJob::new(&lib.name, &a.url, dest)
                         .with_sha1(a.sha1.clone())
@@ -114,7 +118,7 @@ pub async fn install_version(
                 if let Some(classifier) = current_natives_key(natives) {
                     if let Some(map) = &d.classifiers {
                         if let Some(art) = map.get(&classifier) {
-                            let dest = libraries_dir.join(&art.path);
+                            let dest = crate::utils::fs::safe_join(&libraries_dir, &art.path)?;
                             lib_jobs.push(
                                 DownloadJob::new(
                                     format!("{} (natives)", lib.name),
@@ -144,7 +148,7 @@ pub async fn install_version(
                         {
                             let base = lib.url.as_deref().unwrap_or(LIBRARIES_BASE);
                             let url = format!("{}/{path}", base.trim_end_matches('/'));
-                            let dest = libraries_dir.join(&path);
+                            let dest = crate::utils::fs::safe_join(&libraries_dir, &path)?;
                             lib_jobs.push(DownloadJob::new(&lib.name, url, dest.clone()));
                             let excludes = lib
                                 .extract
@@ -158,7 +162,7 @@ pub async fn install_version(
                 }
             }
             if let Some((path, url)) = artifact_location(lib, LIBRARIES_BASE) {
-                let dest = libraries_dir.join(&path);
+                let dest = crate::utils::fs::safe_join(&libraries_dir, &path)?;
                 lib_jobs.push(DownloadJob::new(&lib.name, url, dest));
             }
         }
@@ -268,6 +272,15 @@ pub fn validate_install(
     version: &VersionJson,
 ) -> Vec<String> {
     let mut problems = Vec::new();
+    if crate::utils::fs::safe_file_name(&version.id).is_err()
+        || version
+            .jar
+            .as_deref()
+            .is_some_and(|jar| crate::utils::fs::safe_file_name(jar).is_err())
+    {
+        problems.push("version metadata contains an unsafe file name".to_string());
+        return problems;
+    }
     let version_dir = paths.versions_dir().join(&version.id);
     let jar_name = version.jar.as_deref().unwrap_or(&version.id);
     let jar = version_dir.join(format!("{jar_name}.jar"));
@@ -295,24 +308,106 @@ pub fn validate_install(
         }
         if let Some(d) = &lib.downloads {
             if let Some(a) = &d.artifact {
-                check_lib_file(
-                    &paths.libraries_dir().join(&a.path),
-                    a.size,
-                    &a.sha1,
-                    &mut problems,
-                    &lib.name,
-                );
+                if let Ok(path) = crate::utils::fs::safe_join(&paths.libraries_dir(), &a.path) {
+                    check_lib_file(&path, a.size, &a.sha1, &mut problems, &lib.name);
+                } else {
+                    problems.push(format!("library {} has an unsafe path", lib.name));
+                }
+            }
+            if let Some(natives) = &lib.natives {
+                if let Some(classifier) = current_natives_key(natives) {
+                    if let Some(artifact) = d
+                        .classifiers
+                        .as_ref()
+                        .and_then(|items| items.get(&classifier))
+                    {
+                        if let Ok(path) =
+                            crate::utils::fs::safe_join(&paths.libraries_dir(), &artifact.path)
+                        {
+                            check_lib_file(
+                                &path,
+                                artifact.size,
+                                &artifact.sha1,
+                                &mut problems,
+                                &lib.name,
+                            );
+                        } else {
+                            problems
+                                .push(format!("library {} has an unsafe native path", lib.name));
+                        }
+                    }
+                }
+            }
+        } else {
+            let native_path =
+                lib.natives
+                    .as_ref()
+                    .and_then(current_natives_key)
+                    .and_then(|classifier| {
+                        crate::minecraft::manifest::maven_coord_to_path(&format!(
+                            "{}:{classifier}",
+                            lib.name
+                        ))
+                    });
+            let path = native_path
+                .or_else(|| artifact_location(lib, LIBRARIES_BASE).map(|(path, _)| path));
+            if let Some(path) = path {
+                match crate::utils::fs::safe_join(&paths.libraries_dir(), &path) {
+                    Ok(location) if location.is_file() => {}
+                    Ok(_) => problems.push(format!("library {} missing", lib.name)),
+                    Err(_) => problems.push(format!("library {} has an unsafe path", lib.name)),
+                }
             }
         }
     }
 
     if let Some(idx) = &version.asset_index {
+        if crate::utils::fs::safe_file_name(&idx.id).is_err() {
+            problems.push("asset index has an unsafe name".to_string());
+            return problems;
+        }
         let p = paths
             .assets_dir()
             .join("indexes")
             .join(format!("{}.json", idx.id));
-        if !p.exists() {
-            problems.push(format!("asset index {} missing", idx.id));
+        match std::fs::read(&p) {
+            Ok(bytes) => {
+                if let Ok(index) =
+                    serde_json::from_slice::<crate::minecraft::assets::AssetIndex>(&bytes)
+                {
+                    for object in index.objects.values() {
+                        if object.hash.len() != 40
+                            || !object.hash.bytes().all(|b| b.is_ascii_hexdigit())
+                        {
+                            problems
+                                .push("asset index contains an invalid object hash".to_string());
+                            break;
+                        }
+                        let Some(prefix) = object.hash.get(..2) else {
+                            problems
+                                .push("asset index contains an invalid object hash".to_string());
+                            break;
+                        };
+                        let path = paths
+                            .assets_dir()
+                            .join("objects")
+                            .join(prefix)
+                            .join(&object.hash);
+                        if std::fs::metadata(path).map_or(true, |meta| meta.len() != object.size) {
+                            problems.push(format!(
+                                "asset object {} missing or incomplete",
+                                object.hash
+                            ));
+                            if problems.len() >= 10 {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    problems.push(format!("asset index {} is corrupt", idx.id));
+                }
+            }
+            Err(_) => problems.push(format!("asset index {} missing", idx.id)),
         }
     }
     problems

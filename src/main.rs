@@ -10,6 +10,7 @@ pub mod java;
 pub mod loaders;
 pub mod minecraft;
 pub mod modrinth;
+pub mod nexeu;
 pub mod storage;
 pub mod ui;
 pub mod utils;
@@ -79,21 +80,38 @@ fn main() -> eframe::Result<()> {
         }
     };
 
-    let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1100.0, 700.0])
+    let startup_config = crate::config::LauncherConfig::load(
+        &crate::storage::paths::MonoryxPaths::global().config_file(),
+    )
+    .unwrap_or_default();
+    let mut viewport = egui::ViewportBuilder::default()
         .with_min_inner_size([850.0, 560.0])
-        .with_title("MONORYX v1.0.0 Beta")
+        .with_maximized(startup_config.start_maximized)
+        .with_title("MONORYX v1.1.0 Beta")
         .with_icon(monoryx_icon());
+    if !startup_config.start_maximized {
+        viewport = viewport.with_inner_size([
+            startup_config.window_width.clamp(850.0, 2560.0),
+            startup_config.window_height.clamp(560.0, 1440.0),
+        ]);
+    }
     let options = eframe::NativeOptions {
         viewport,
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
-        "MONORYX v1.0.0 Beta",
+        "MONORYX v1.1.0 Beta",
         options,
         Box::new(|cc| {
             crate::ui::theme::apply_theme(&cc.egui_ctx);
             let state = AppState::new(cc);
+
+            #[cfg(target_os = "windows")]
+            crate::utils::system::ensure_window_positioned(
+                startup_config.start_maximized,
+                !startup_config.start_maximized,
+            );
 
             if let Some(listener) = single_instance {
                 let tx = state.tx.clone();
@@ -111,7 +129,8 @@ fn main() -> eframe::Result<()> {
                                         let _ = stream.write_all(b"MONORYX_ACK\n");
                                         let _ = stream.flush();
                                         crate::utils::system::show_window_for_current_process(true);
-                                        let _ = tx.send(crate::app::events::AppEvent::RestoreWindow);
+                                        let _ =
+                                            tx.send(crate::app::events::AppEvent::RestoreWindow);
                                         ctx.request_repaint();
                                     }
                                 }
@@ -144,16 +163,23 @@ fn init_logging() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
     let data_root = crate::storage::paths::data_root();
     let logs_dir = data_root.join("logs");
-    let _ = std::fs::create_dir_all(&logs_dir);
-    let file_appender = tracing_appender::rolling::daily(&logs_dir, "monoryx.log");
-    let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
-    std::mem::forget(_guard);
+    let file_layer = tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("monoryx.log")
+        .build(&logs_dir)
+        .map(|appender| {
+            let (file_writer, guard) = tracing_appender::non_blocking(appender);
+            std::mem::forget(guard);
+            fmt::layer().with_writer(file_writer).with_ansi(false)
+        })
+        .map_err(|error| eprintln!("MONORYX: file logging unavailable: {error}"))
+        .ok();
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("monoryx=info,eframe=warn"));
     tracing_subscriber::registry()
         .with(filter)
         .with(fmt::layer().with_writer(std::io::stderr))
-        .with(fmt::layer().with_writer(file_writer).with_ansi(false))
+        .with(file_layer)
         .try_init()
         .ok();
 }

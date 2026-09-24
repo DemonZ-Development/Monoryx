@@ -6,7 +6,7 @@ use crate::instance::config::LoaderKind;
 use crate::modrinth::install::{install_project, InstallRequest};
 use std::sync::Arc;
 
-pub fn fetch_loader_versions(state: &AppState, loader: LoaderKind, mc: String) {
+pub fn fetch_loader_versions(state: &AppState, loader: LoaderKind, mc: String, force: bool) {
     let key = format!("{mc}|{}", loader.as_str());
     if loader == LoaderKind::Vanilla || mc.is_empty() {
         let _ = state.tx.send(AppEvent::LoaderVersions(
@@ -17,13 +17,36 @@ pub fn fetch_loader_versions(state: &AppState, loader: LoaderKind, mc: String) {
         return;
     }
     let http = state.http.clone();
+    let metadata_dir = state.paths.metadata_dir();
     let tx = state.tx.clone();
     state.runtime.spawn(async move {
+        let cache = crate::storage::cache::DiskCache::new(
+            metadata_dir,
+            std::time::Duration::from_secs(900),
+        );
+        let cache_key = format!("loader-versions-{key}");
         let l = crate::loaders::loader_for(loader);
-        let r = l
-            .available_versions(&http, &mc)
-            .await
-            .map_err(|e| e.user_message());
+        let r = if let Some(cached) = (!force)
+            .then(|| cache.get(&cache_key))
+            .flatten()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        {
+            Ok(cached)
+        } else {
+            match l.available_versions(&http, &mc).await {
+                Ok(versions) => {
+                    if let Ok(bytes) = serde_json::to_vec(&versions) {
+                        let _ = cache.put(&cache_key, &bytes);
+                    }
+                    Ok(versions)
+                }
+                Err(error) if !force => cache
+                    .get_stale(&cache_key)
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                    .ok_or_else(|| error.user_message()),
+                Err(error) => Err(error.user_message()),
+            }
+        };
         let _ = tx.send(AppEvent::LoaderVersions(loader, key, r));
     });
 }
@@ -104,7 +127,8 @@ pub async fn install_instance_inner(
         .map_err(|e| e.user_message())?;
     cfg.resolved_version_id = resolved.id.clone();
     if cfg.loader != LoaderKind::Vanilla && cfg.loader_version.is_empty() {
-        cfg.loader_version = guess_loader_version(&resolved.id).unwrap_or_default();
+        cfg.loader_version = guess_loader_version(cfg.loader, &cfg.minecraft_version, &resolved.id)
+            .unwrap_or_default();
     }
     instances.save(&cfg).map_err(|e| e.user_message())?;
     let report = crate::minecraft::installer::install_version(dm, paths, &resolved, phase_cb)
@@ -114,8 +138,21 @@ pub async fn install_instance_inner(
     Ok(report.version_id)
 }
 
-fn guess_loader_version(_resolved_id: &str) -> Option<String> {
-    None
+fn guess_loader_version(loader: LoaderKind, mc: &str, resolved_id: &str) -> Option<String> {
+    let version = match loader {
+        LoaderKind::Fabric => resolved_id
+            .strip_prefix("fabric-loader-")?
+            .strip_suffix(&format!("-{mc}"))?,
+        LoaderKind::Quilt => resolved_id
+            .strip_prefix("quilt-loader-")?
+            .strip_suffix(&format!("-{mc}"))?,
+        LoaderKind::Forge => resolved_id.strip_prefix(&format!("{mc}-forge-"))?,
+        LoaderKind::Neoforge => resolved_id
+            .strip_prefix("neoforge-")
+            .or_else(|| resolved_id.strip_prefix(&format!("{mc}-neoforge-")))?,
+        LoaderKind::Vanilla => return None,
+    };
+    (!version.is_empty()).then(|| version.to_string())
 }
 
 pub fn play_instance(state: &mut AppState, instance_id: String) {
@@ -453,6 +490,7 @@ pub fn install_mod(
 
 pub fn check_updates(state: &AppState) {
     let Some(cfg) = state.selected() else { return };
+    let instance_id = cfg.id.clone();
     let mr = state.mr.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
@@ -473,8 +511,8 @@ pub fn check_updates(state: &AppState) {
             &loader_str,
         )
         .await
-        .unwrap_or_default();
-        let _ = tx.send(AppEvent::UpdatesFound(r));
+        .map_err(|error| error.user_message());
+        let _ = tx.send(AppEvent::UpdatesFound(instance_id, r));
     });
 }
 
@@ -514,6 +552,55 @@ pub fn update_all_mods(state: &AppState) {
     for info in infos {
         update_one(state, info);
     }
+}
+
+pub fn check_loader_update(state: &AppState, instance_id: String) {
+    let instances = state.instances.clone();
+    let http = state.http.clone();
+    let tx = state.tx.clone();
+    state.runtime.spawn(async move {
+        let result = async {
+            let cfg = instances.get(&instance_id).map_err(|e| e.user_message())?;
+            if cfg.loader == LoaderKind::Vanilla {
+                return Ok(None);
+            }
+            let latest = crate::loaders::loader_for(cfg.loader)
+                .latest_stable(&http, &cfg.minecraft_version)
+                .await
+                .map_err(|e| e.user_message())?;
+            Ok((latest != cfg.loader_version).then_some(latest))
+        }
+        .await;
+        let _ = tx.send(AppEvent::LoaderUpdateChecked(instance_id, result));
+    });
+}
+
+pub fn install_loader_update(state: &AppState, instance_id: String, version: String) {
+    let instances = state.instances.clone();
+    let dm = state.dm.clone();
+    let paths = state.paths.clone();
+    let tx = state.tx.clone();
+    state.runtime.spawn(async move {
+        let result = async {
+            let mut cfg = instances.get(&instance_id).map_err(|e| e.user_message())?;
+            if cfg.loader == LoaderKind::Vanilla {
+                return Err("Vanilla has no separate loader to update".to_string());
+            }
+            let resolved = crate::loaders::loader_for(cfg.loader)
+                .install(&dm, &paths, &cfg.minecraft_version, &version)
+                .await
+                .map_err(|e| e.user_message())?;
+            crate::minecraft::installer::install_version(&dm, &paths, &resolved, None)
+                .await
+                .map_err(|e| e.user_message())?;
+            cfg.loader_version = version.clone();
+            cfg.resolved_version_id = resolved.id;
+            instances.save(&cfg).map_err(|e| e.user_message())?;
+            Ok(version)
+        }
+        .await;
+        let _ = tx.send(AppEvent::LoaderUpdateDone(instance_id, result));
+    });
 }
 
 pub fn repair_instance(state: &AppState, instance_id: String) {
@@ -568,26 +655,49 @@ pub fn install_modpack(state: &AppState, slug: String, title: String) {
     let ctx = state.egui_ctx.clone();
     state.runtime.spawn(async move {
         let res: std::result::Result<String, String> = async {
-            let versions = mr.project_versions(&slug, None, None).await.map_err(|e| e.user_message())?;
-            let latest = versions.into_iter().next().ok_or_else(|| "No versions found for this modpack.".to_string())?;
-            let pack_file = latest.files.into_iter().find(|f| f.filename.ends_with(".mrpack"))
+            let versions = mr
+                .project_versions(&slug, None, None)
+                .await
+                .map_err(|e| e.user_message())?;
+            let latest = versions
+                .into_iter()
+                .next()
+                .ok_or_else(|| "No versions found for this modpack.".to_string())?;
+            let pack_file = latest
+                .files
+                .into_iter()
+                .find(|f| f.filename.ends_with(".mrpack"))
                 .ok_or_else(|| "No .mrpack file found in latest modpack release.".to_string())?;
             let temp_dir = paths.cache_dir().join("modpacks");
             let _ = tokio::fs::create_dir_all(&temp_dir).await;
-            let dest = temp_dir.join(&pack_file.filename);
+            let dest = temp_dir.join(
+                crate::utils::fs::safe_file_name(&pack_file.filename)
+                    .map_err(|e| e.user_message())?,
+            );
             let sha1 = pack_file.hashes.get("sha1").cloned();
-            let mut job = DownloadJob::new(format!("Modpack: {title}"), pack_file.url, dest.clone())
-                .with_size(pack_file.size);
+            let mut job =
+                DownloadJob::new(format!("Modpack: {title}"), pack_file.url, dest.clone())
+                    .with_size(pack_file.size);
             if let Some(h) = sha1 {
                 job = job.with_sha1(h);
             }
-            dm.download(&job, None).await.map_err(|e| e.user_message())?;
+            dm.download(&job, None)
+                .await
+                .map_err(|e| e.user_message())?;
             let rep = crate::modrinth::modpack::install_mrpack(
-                &dm, &paths, &instances, &dest, Some(title), None
-            ).await.map_err(|e| e.user_message())?;
+                &dm,
+                &paths,
+                &instances,
+                &dest,
+                Some(title),
+                None,
+            )
+            .await
+            .map_err(|e| e.user_message())?;
             let _ = tokio::fs::remove_file(&dest).await;
             Ok(rep.instance_id)
-        }.await;
+        }
+        .await;
         let _ = tx.send(AppEvent::PackDone(res));
         ctx.request_repaint();
     });

@@ -6,8 +6,8 @@ fn main() {
     res.set_icon("assets/icon.ico");
     res.set("FileDescription", "MONORYX - Minecraft Launcher");
     res.set("ProductName", "MONORYX");
-    res.set("ProductVersion", "1.0.0 Beta");
-    res.set("FileVersion", "1.0.0.0");
+    res.set("ProductVersion", "1.1.0 Beta");
+    res.set("FileVersion", "1.1.0.0");
     res.set("LegalCopyright", "DemonZ Development");
     res.set("OriginalFilename", "monoryx.exe");
     if let Err(e) = res.compile() {

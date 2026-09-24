@@ -193,13 +193,20 @@ impl InstanceManager {
     }
 
     pub fn set_mod_enabled(&self, id: &str, file_name: &str, enabled: bool) -> Result<PathBuf> {
-        if file_name.contains(['/', '\\', '.'])
-            && (file_name.contains('/') || file_name.contains('\\'))
-        {
-            return Err(MonoryxError::Instance("invalid mod file name".to_string()));
-        }
-        let mods = self.mods_dir(id);
-        let disabled = self.disabled_dir(id);
+        self.set_content_enabled(id, file_name, crate::content::ContentKind::Mod, enabled)
+    }
+
+    pub fn set_content_enabled(
+        &self,
+        id: &str,
+        file_name: &str,
+        kind: crate::content::ContentKind,
+        enabled: bool,
+    ) -> Result<PathBuf> {
+        crate::utils::fs::safe_file_name(file_name)?;
+        let mods = self.game_dir(id).join(kind.subdir());
+        let disabled = self.disabled_dir(id).join(kind.subdir());
+        let old_disabled = self.disabled_dir(id);
         std::fs::create_dir_all(&disabled)?;
 
         let base = file_name.trim_end_matches(".disabled");
@@ -209,6 +216,14 @@ impl InstanceManager {
             if disabled_path.exists() {
                 std::fs::rename(&disabled_path, &enabled_path)?;
                 return Ok(enabled_path);
+            }
+
+            if kind == crate::content::ContentKind::Mod {
+                let legacy = old_disabled.join(format!("{base}.disabled"));
+                if legacy.exists() {
+                    std::fs::rename(&legacy, &enabled_path)?;
+                    return Ok(enabled_path);
+                }
             }
 
             let in_place = mods.join(format!("{base}.disabled"));

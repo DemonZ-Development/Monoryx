@@ -64,6 +64,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub dm: DownloadManager,
     pub mr: ModrinthClient,
+    pub nexeu: crate::nexeu::Session,
     pub instances: InstanceManager,
     pub tx: Sender<AppEvent>,
     pub rx: Receiver<AppEvent>,
@@ -91,6 +92,14 @@ pub struct AppState {
     pub library_filter: ContentKind,
     pub updates: Vec<UpdateInfo>,
     pub updates_loading: bool,
+    pub updates_checked: bool,
+    pub updates_summary: String,
+    pub updates_error: String,
+    pub updates_instance: Option<String>,
+    pub loader_update_checking: Option<String>,
+    pub loader_update_candidate: Option<(String, String)>,
+    pub loader_update_busy: Option<String>,
+    pub loader_update_error: String,
     pub operations: std::collections::BTreeMap<String, InstallOperation>,
     pub downloads: HashMap<String, TrackedDownload>,
     pub downloads_history: Vec<TrackedDownload>,
@@ -133,6 +142,10 @@ pub struct AppState {
     pub launcher_update_error: Option<String>,
     pub show_update_banner: bool,
     pub crash_report: Option<crate::minecraft::crash::CrashInfo>,
+    pub crash_share_generation: u64,
+    pub crash_share_loading: bool,
+    pub crash_share_url: Option<String>,
+    pub crash_share_error: String,
 }
 
 impl AppState {
@@ -157,7 +170,7 @@ impl AppState {
         let mr = ModrinthClient::new(http.clone());
         let instances = InstanceManager::new(paths.clone());
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(3)
+            .worker_threads(2)
             .enable_all()
             .thread_name("monoryx-bg")
             .build()
@@ -186,6 +199,7 @@ impl AppState {
             http,
             dm,
             mr,
+            nexeu: crate::nexeu::Session::default(),
             instances,
             tx,
             rx,
@@ -213,6 +227,14 @@ impl AppState {
             library_filter: ContentKind::Mod,
             updates: Vec::new(),
             updates_loading: false,
+            updates_checked: false,
+            updates_summary: String::new(),
+            updates_error: String::new(),
+            updates_instance: None,
+            loader_update_checking: None,
+            loader_update_candidate: None,
+            loader_update_busy: None,
+            loader_update_error: String::new(),
             operations: std::collections::BTreeMap::new(),
             downloads: HashMap::new(),
             downloads_history: Vec::new(),
@@ -255,6 +277,10 @@ impl AppState {
             launcher_update_error: None,
             show_update_banner: true,
             crash_report: None,
+            crash_share_generation: 0,
+            crash_share_loading: false,
+            crash_share_url: None,
+            crash_share_error: String::new(),
         };
         s.settings_jvm = s.config.default_jvm_args.clone();
         s.settings_game_args = s.config.default_game_args.clone();
@@ -310,13 +336,99 @@ impl AppState {
 
     pub fn fail(&mut self, msg: impl Into<String>) {
         self.error_dialog = msg.into();
+        tracing::error!("{}", self.error_dialog);
+        self.log_lines.push(format!("ERROR: {}", self.error_dialog));
+        if self.log_lines.len() > 500 {
+            self.log_lines.drain(..self.log_lines.len() - 500);
+        }
     }
 
     pub fn refresh_library(&mut self) {
+        if self.updates_instance != self.selected_instance {
+            self.updates.clear();
+            self.updates_checked = false;
+            self.updates_loading = false;
+            self.updates_summary.clear();
+            self.updates_error.clear();
+            self.updates_instance = self.selected_instance.clone();
+        }
         if let Some(id) = self.selected_instance.clone() {
             let store =
                 crate::content::ContentStore::for_instance(&self.instances.instance_dir(&id));
             let mut entries = store.load().entries;
+            let game_dir = self.instances.game_dir(&id);
+            let disabled_dir = self.instances.disabled_dir(&id);
+            entries.retain_mut(|entry| {
+                if crate::utils::fs::safe_file_name(&entry.file_name).is_err() {
+                    return false;
+                }
+                let active = game_dir.join(entry.kind.subdir()).join(&entry.file_name);
+                let disabled = disabled_dir
+                    .join(entry.kind.subdir())
+                    .join(format!("{}.disabled", entry.file_name));
+                let legacy = disabled_dir.join(format!("{}.disabled", entry.file_name));
+                if active.is_file() {
+                    entry.enabled = true;
+                    true
+                } else if disabled.is_file() || (entry.kind == ContentKind::Mod && legacy.is_file())
+                {
+                    entry.enabled = false;
+                    true
+                } else {
+                    false
+                }
+            });
+            for kind in [
+                ContentKind::Mod,
+                ContentKind::Resourcepack,
+                ContentKind::Shader,
+            ] {
+                for (folder, enabled) in [
+                    (game_dir.join(kind.subdir()), true),
+                    (disabled_dir.join(kind.subdir()), false),
+                ] {
+                    if let Ok(files) = std::fs::read_dir(folder) {
+                        for file in files.flatten() {
+                            if !file.file_type().is_ok_and(|kind| kind.is_file()) {
+                                continue;
+                            }
+                            let Some(raw) = file.file_name().to_str().map(str::to_string) else {
+                                continue;
+                            };
+                            let name = if enabled {
+                                raw.as_str()
+                            } else {
+                                raw.strip_suffix(".disabled").unwrap_or(&raw)
+                            };
+                            if !name.ends_with(".jar") && !name.ends_with(".zip") {
+                                continue;
+                            }
+                            if entries
+                                .iter()
+                                .any(|entry| entry.kind == kind && entry.file_name == name)
+                            {
+                                continue;
+                            }
+                            entries.push(InstalledEntry {
+                                file_name: name.to_string(),
+                                kind,
+                                project_id: None,
+                                project_slug: None,
+                                project_title: None,
+                                version_id: None,
+                                version_number: None,
+                                file_hash_sha512: None,
+                                file_hash_sha1: None,
+                                size: file.metadata().map(|m| m.len()).unwrap_or(0),
+                                enabled,
+                                installed_at: String::new(),
+                                loader: String::new(),
+                                game_version: String::new(),
+                            });
+                        }
+                    }
+                }
+            }
             entries.sort_by(|a, b| {
                 a.project_title
                     .clone()
@@ -352,6 +464,105 @@ impl AppState {
         match ev {
             AppEvent::Notice(m) => self.notify(m),
             AppEvent::Error(m) => self.fail(m),
+            AppEvent::CrashLogShared(generation, result)
+                if generation == self.crash_share_generation =>
+            {
+                self.crash_share_loading = false;
+                match result {
+                    Ok(url) => {
+                        self.crash_share_url = Some(url);
+                        self.crash_share_error.clear();
+                    }
+                    Err(error) => self.crash_share_error = error,
+                }
+            }
+            AppEvent::CrashLogShared(..) => {}
+            AppEvent::NexeuOverview(generation, result) if generation == self.nexeu.generation => {
+                self.nexeu.loading = false;
+                match result {
+                    Ok(overview) => {
+                        self.nexeu.overview = Some(overview);
+                        self.nexeu.error.clear();
+                    }
+                    Err(error) => self.nexeu.error = error,
+                }
+            }
+            AppEvent::NexeuResources(generation, id, result)
+                if generation == self.nexeu.generation =>
+            {
+                if self.nexeu.selected_server.as_deref() == Some(&id) {
+                    match result {
+                        Ok(resources) => {
+                            self.nexeu.resources = Some(resources);
+                            self.nexeu.error.clear();
+                        }
+                        Err(error) => self.nexeu.error = error,
+                    }
+                }
+            }
+            AppEvent::NexeuLogs(generation, id, result) if generation == self.nexeu.generation => {
+                if self.nexeu.selected_server.as_deref() == Some(&id) {
+                    match result {
+                        Ok(logs) => self.nexeu.logs = Some(logs),
+                        Err(error) => self.nexeu.error = error,
+                    }
+                }
+            }
+            AppEvent::NexeuBackups(generation, id, result)
+                if generation == self.nexeu.generation =>
+            {
+                if self.nexeu.selected_server.as_deref() == Some(&id) {
+                    match result {
+                        Ok(backups) => self.nexeu.backups = Some(backups),
+                        Err(error) => self.nexeu.error = error,
+                    }
+                }
+            }
+            AppEvent::NexeuBackupCreated(generation, id, result)
+                if generation == self.nexeu.generation =>
+            {
+                match result {
+                    Ok(()) => {
+                        self.notify("Nexeu backup started");
+                        self.nexeu_load_backups(id);
+                    }
+                    Err(error) => self.nexeu.error = error,
+                }
+            }
+            AppEvent::NexeuCommand(generation, result) if generation == self.nexeu.generation => {
+                match result {
+                    Ok(()) => {
+                        self.nexeu.console_command.clear();
+                        self.notify("Nexeu console command sent");
+                    }
+                    Err(error) => self.nexeu.error = error,
+                }
+            }
+            AppEvent::NexeuPower(generation, result) if generation == self.nexeu.generation => {
+                match result {
+                    Ok(action) => {
+                        self.notify(format!("Nexeu {action} request sent"));
+                        self.nexeu_refresh();
+                    }
+                    Err(error) => self.nexeu.error = error,
+                }
+            }
+            AppEvent::NexeuOverview(..)
+            | AppEvent::NexeuResources(..)
+            | AppEvent::NexeuLogs(..)
+            | AppEvent::NexeuBackups(..)
+            | AppEvent::NexeuBackupCreated(..)
+            | AppEvent::NexeuCommand(..)
+            | AppEvent::NexeuPower(..) => {}
+            AppEvent::InstanceImported(result) => match result {
+                Ok(id) => {
+                    self.refresh_instances();
+                    self.selected_instance = Some(id);
+                    self.refresh_library();
+                    self.notify("Instance imported. Play to install any missing Minecraft files.");
+                }
+                Err(error) => self.fail(error),
+            },
             AppEvent::VersionsLoaded(r) => {
                 self.manifest_loading = false;
                 match r {
@@ -360,7 +571,13 @@ impl AppState {
                         self.versions_error.clear();
                         self.sync_search_filters();
                     }
-                    Err(e) => self.versions_error = e,
+                    Err(e) => {
+                        self.versions_error = if self.manifest.is_some() {
+                            "Offline: showing cached Minecraft versions. Downloads require internet.".to_string()
+                        } else {
+                            e
+                        };
+                    }
                 }
             }
             AppEvent::LoaderVersions(_kind, key, r) => {
@@ -408,11 +625,16 @@ impl AppState {
                 self.pending_thumbs.remove(&url);
                 if let Ok(bytes) = r {
                     if let Ok(img) = image::load_from_memory(&bytes) {
-                        let rgba = img.to_rgba8();
+                        let rgba = img.thumbnail(128, 128).to_rgba8();
                         let (w, h) = (rgba.width() as usize, rgba.height() as usize);
                         let pixels = rgba.into_raw();
                         let cimg = egui::ColorImage::from_rgba_unmultiplied([w, h], &pixels);
                         let tex = ctx.load_texture(url.clone(), cimg, egui::TextureOptions::LINEAR);
+                        if self.thumbnails.len() >= 96 {
+                            if let Some(old) = self.thumbnails.keys().next().cloned() {
+                                self.thumbnails.remove(&old);
+                            }
+                        }
                         self.thumbnails.insert(url, tex);
                     }
                 }
@@ -505,9 +727,80 @@ impl AppState {
                     Err(e) => self.fail(e),
                 }
             }
-            AppEvent::UpdatesFound(u) => {
-                self.updates = u;
+            AppEvent::UpdatesFound(id, result) => {
+                if self.selected_instance.as_deref() != Some(&id) {
+                    return;
+                }
                 self.updates_loading = false;
+                self.updates_checked = true;
+                match result {
+                    Ok(scan) => {
+                        self.updates = scan.updates;
+                        self.updates_summary = format!(
+                            "Checked {} Modrinth items. {} update(s) available.{}",
+                            scan.checked,
+                            self.updates.len(),
+                            if scan.untracked > 0 {
+                                format!(
+                                    " {} manually added item(s) cannot be checked.",
+                                    scan.untracked
+                                )
+                            } else {
+                                String::new()
+                            }
+                        );
+                        self.updates_error = if scan.errors.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "Could not check {} item(s): {}",
+                                scan.errors.len(),
+                                scan.errors.join("; ")
+                            )
+                        };
+                    }
+                    Err(error) => {
+                        self.updates.clear();
+                        self.updates_summary.clear();
+                        self.updates_error = error;
+                    }
+                }
+            }
+            AppEvent::LoaderUpdateChecked(id, result) => {
+                if self.loader_update_checking.as_deref() != Some(&id) {
+                    return;
+                }
+                self.loader_update_checking = None;
+                match result {
+                    Ok(Some(version)) => {
+                        self.loader_update_candidate = Some((id, version));
+                        self.loader_update_error.clear();
+                    }
+                    Ok(None) => {
+                        self.loader_update_candidate = None;
+                        self.loader_update_error.clear();
+                        self.notify("Loader is up to date");
+                    }
+                    Err(error) => self.loader_update_error = error,
+                }
+            }
+            AppEvent::LoaderUpdateDone(id, result) => {
+                if self.loader_update_busy.as_deref() != Some(&id) {
+                    return;
+                }
+                self.loader_update_busy = None;
+                match result {
+                    Ok(version) => {
+                        self.loader_update_candidate = None;
+                        self.loader_update_error.clear();
+                        if self.edit_instance.as_ref().is_some_and(|cfg| cfg.id == id) {
+                            self.edit_instance = None;
+                        }
+                        self.refresh_instances();
+                        self.notify(format!("Loader updated to {version}"));
+                    }
+                    Err(error) => self.loader_update_error = error,
+                }
             }
             AppEvent::PlayStarted(id) => {
                 self.playing.insert(id, true);
@@ -522,6 +815,9 @@ impl AppState {
                 crate::utils::system::show_window_for_current_process(true);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                if self.config.start_maximized {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                     egui::UserAttentionType::Critical,
@@ -536,6 +832,8 @@ impl AppState {
                     self.launcher_minimized = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
+                self.thumbnails.clear();
+                self.pending_thumbs.clear();
                 self.global_status.clear();
                 self.global_frac = None;
                 self.notice.clear();
@@ -561,6 +859,9 @@ impl AppState {
                     crate::utils::system::show_window_for_current_process(true);
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    if self.config.start_maximized {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                    }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                         egui::UserAttentionType::Critical,
@@ -569,11 +870,15 @@ impl AppState {
                 }
             }
             AppEvent::RestoreWindow => {
+                self.error_dialog.clear();
                 self.launcher_hidden = false;
                 self.launcher_minimized = false;
                 crate::utils::system::show_window_for_current_process(true);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                if self.config.start_maximized {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                     egui::UserAttentionType::Critical,
@@ -586,11 +891,17 @@ impl AppState {
                     Ok(info) => {
                         if info.has_update {
                             self.show_update_banner = true;
-                            self.notify(format!("MONORYX v{} update available!", info.latest_version));
+                            self.notify(format!(
+                                "MONORYX v{} update available!",
+                                info.latest_version
+                            ));
+                        } else {
+                            self.notify("You are running the latest version of MONORYX.");
                         }
                         self.launcher_update = Some(info);
                     }
                     Err(e) => {
+                        self.notify(format!("Update check failed: {e}"));
                         self.launcher_update_error = Some(e);
                     }
                 }
@@ -672,6 +983,31 @@ impl AppState {
             launched_at,
         );
         self.crash_report = Some(crash_info);
+        self.crash_share_generation = self.crash_share_generation.wrapping_add(1);
+        self.crash_share_loading = false;
+        self.crash_share_url = None;
+        self.crash_share_error.clear();
+    }
+
+    pub fn share_crash_log(&mut self) {
+        let Some(info) = self.crash_report.clone() else {
+            return;
+        };
+        if self.crash_share_loading {
+            return;
+        }
+        self.crash_share_loading = true;
+        self.crash_share_url = None;
+        self.crash_share_error.clear();
+        let generation = self.crash_share_generation;
+        let http = self.http.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::minecraft::crash::share_on_mclogs(&http, &info).await;
+            let _ = tx.send(AppEvent::CrashLogShared(generation, result));
+            ctx.request_repaint();
+        });
     }
 
     pub fn sync_search_filters(&mut self) {
@@ -679,7 +1015,8 @@ impl AppState {
             if self.search.game_version.is_empty() {
                 self.search.game_version = cfg.minecraft_version.clone();
             }
-            if (self.discover_tab == DiscoverTab::Mods || self.discover_tab == DiscoverTab::Modpacks)
+            if (self.discover_tab == DiscoverTab::Mods
+                || self.discover_tab == DiscoverTab::Modpacks)
                 && self.search.loader.is_empty()
             {
                 self.search.loader = match cfg.loader {
@@ -736,6 +1073,15 @@ impl AppState {
     }
 
     pub fn spawn_initial(&mut self) {
+        if self.manifest.is_none() {
+            let cache = crate::storage::cache::DiskCache::new(
+                self.paths.manifests_dir(),
+                std::time::Duration::from_secs(3600),
+            );
+            self.manifest = cache
+                .get_stale("mojang-version-manifest-v2")
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        }
         self.manifest_loading = true;
         let http = self.http.clone();
         let tx = self.tx.clone();
@@ -762,6 +1108,7 @@ impl AppState {
         }
         self.launcher_update_loading = true;
         self.launcher_update_error = None;
+        self.launcher_update = None;
         crate::app::tasks::check_launcher_update(self);
     }
 
@@ -905,6 +1252,123 @@ impl AppState {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn nexeu_refresh(&mut self) {
+        if self.nexeu.api_key.trim().is_empty() {
+            self.nexeu.error = "Enter a Nexeu game-panel API key first.".to_string();
+            return;
+        }
+        self.nexeu.loading = true;
+        self.nexeu.generation = self.nexeu.generation.wrapping_add(1);
+        let generation = self.nexeu.generation;
+        self.nexeu.overview = None;
+        self.nexeu.selected_server = None;
+        self.nexeu.resources = None;
+        self.nexeu.logs = None;
+        self.nexeu.backups = None;
+        self.nexeu.console_command.clear();
+        self.nexeu.error.clear();
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::overview(&http, &key).await;
+            let _ = tx.send(AppEvent::NexeuOverview(generation, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn nexeu_select_server(&mut self, id: String) {
+        let generation = self.nexeu.generation;
+        if self.nexeu.selected_server.as_deref() != Some(&id) {
+            self.nexeu.console_command.clear();
+        }
+        self.nexeu.selected_server = Some(id.clone());
+        self.nexeu.resources = None;
+        self.nexeu.logs = None;
+        self.nexeu.backups = None;
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::resources(&http, &key, &id).await;
+            let _ = tx.send(AppEvent::NexeuResources(generation, id, result));
+            ctx.request_repaint();
+        });
+        if let Some(id) = self.nexeu.selected_server.clone() {
+            self.nexeu_load_backups(id);
+        }
+    }
+
+    pub fn nexeu_load_logs(&self, id: String) {
+        let generation = self.nexeu.generation;
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::logs(&http, &key, &id).await;
+            let _ = tx.send(AppEvent::NexeuLogs(generation, id, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn nexeu_power(&self, id: String, action: &'static str) {
+        let generation = self.nexeu.generation;
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::power(&http, &key, &id, action)
+                .await
+                .map(|()| action.to_string());
+            let _ = tx.send(AppEvent::NexeuPower(generation, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn nexeu_load_backups(&self, id: String) {
+        let generation = self.nexeu.generation;
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::backups(&http, &key, &id).await;
+            let _ = tx.send(AppEvent::NexeuBackups(generation, id, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn nexeu_create_backup(&self, id: String) {
+        let generation = self.nexeu.generation;
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::create_backup(&http, &key, &id).await;
+            let _ = tx.send(AppEvent::NexeuBackupCreated(generation, id, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn nexeu_send_command(&self, id: String) {
+        let generation = self.nexeu.generation;
+        let http = self.http.clone();
+        let key = self.nexeu.api_key.clone();
+        let command = self.nexeu.console_command.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.spawn(async move {
+            let result = crate::nexeu::command(&http, &key, &id, &command).await;
+            let _ = tx.send(AppEvent::NexeuCommand(generation, result));
+            ctx.request_repaint();
+        });
     }
 
     pub fn spawn<Fut>(&self, fut: Fut)

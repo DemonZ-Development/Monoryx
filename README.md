@@ -20,6 +20,7 @@ By **DemonZDevelopment**. Licensed under **Apache-2.0**.
 - Modrinth `.mrpack` installation into new isolated instances with path-traversal protection
 - Resource packs and shader packs
 - Repair, export/import, per-instance logs, monochrome theme
+- Nexeu game-panel integration: server list, resource usage, logs, console commands, backups, and power controls
 
 ## Quick Start
 
@@ -57,6 +58,22 @@ MONORYX supports **offline profiles only** in this release. Your username maps t
 ## Modrinth Integration
 
 Public browsing and installation use the official Modrinth API (`https://api.modrinth.com/v2`) with the User-Agent `monoryx/<version> (https://github.com/DemonZDevelopment/monoryx)`. No login required. Rate limits and `Retry-After` are respected. Hashes are verified, required dependencies install recursively, cycles and conflicts are blocked, and installed files are tracked in `content.json` for reliable updates and uninstalls.
+
+Discover displays the selected target instance before installing. Already installed projects can be reinstalled or removed. The Library also shows manually copied mods, resource packs, and shaders.
+
+## Nexeu Servers
+
+**Nexeu sign in is Coming soon.** Direct account linking from the launcher needs a desktop authorization flow supported by Nexeu. The **Game panel API (Beta)** remains available for users with an existing full panel API key. The key stays in memory and is cleared when you disconnect or close the launcher. Once connected, MONORYX uses Nexeu's client API to show your account, servers, announcements, resource usage, logs, and backups, and to send power controls, console commands, and backup creation requests.
+
+Balance and server creation open Nexeu's client portal. Nexeu does not currently document those operations in its public game-panel client API. The page also links to Nexeu's Discord support.
+
+## Crash reports
+
+The crash dialog shows the error summary and recent log output in a window that fits the launcher. **Share on mclo.gs** uploads the full crash report or session log only when you click it, then shows a link you can copy. Shared logs are public, so review them for private information first. Local logs and crash reports remain accessible from the dialog.
+
+## Local and Offline Use
+
+Installed instances, the Library, local archive import, and offline profiles work without a network connection. Cached Minecraft and loader version lists remain available. New downloads, repairs that need missing files, Modrinth, and Nexeu require internet. A MONORYX instance export can be imported from **Instances → Import → MONORYX archive (.zip)**; missing Minecraft files install when you play it online.
 
 ## Supported Platforms
 

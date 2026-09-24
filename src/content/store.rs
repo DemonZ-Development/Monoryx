@@ -65,13 +65,15 @@ impl ContentStore {
     }
 
     pub fn load(&self) -> InstalledContent {
+        self.load_result().unwrap_or_default()
+    }
+
+    pub fn load_result(&self) -> Result<InstalledContent> {
         if !self.path.exists() {
-            return InstalledContent::default();
+            return Ok(InstalledContent::default());
         }
-        std::fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        let text = std::fs::read_to_string(&self.path)?;
+        Ok(serde_json::from_str(&text)?)
     }
 
     pub fn save(&self, content: &InstalledContent) -> Result<()> {
@@ -83,7 +85,7 @@ impl ContentStore {
     }
 
     pub fn upsert(&self, entry: InstalledEntry) -> Result<()> {
-        let mut content = self.load();
+        let mut content = self.load_result()?;
         content
             .entries
             .retain(|e| e.file_name != entry.file_name || e.kind != entry.kind);
@@ -99,11 +101,24 @@ impl ContentStore {
     }
 
     pub fn remove(&self, kind: ContentKind, file_name: &str) -> Result<()> {
-        let mut content = self.load();
+        let mut content = self.load_result()?;
         content
             .entries
             .retain(|e| !(e.kind == kind && e.file_name == file_name));
         self.save(&content)
+    }
+
+    pub fn set_enabled(&self, kind: ContentKind, file_name: &str, enabled: bool) -> Result<()> {
+        let mut content = self.load_result()?;
+        if let Some(entry) = content
+            .entries
+            .iter_mut()
+            .find(|e| e.kind == kind && e.file_name == file_name)
+        {
+            entry.enabled = enabled;
+            self.save(&content)?;
+        }
+        Ok(())
     }
 
     pub fn by_project(&self, project_id: &str) -> Option<InstalledEntry> {
@@ -131,5 +146,20 @@ impl ContentStore {
             }
         }
         m
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_content_metadata_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::for_instance(dir.path());
+        std::fs::write(&store.path, b"not json").unwrap();
+        assert!(store.load_result().is_err());
+        assert!(store.remove(ContentKind::Mod, "any.jar").is_err());
+        assert_eq!(std::fs::read(&store.path).unwrap(), b"not json");
     }
 }

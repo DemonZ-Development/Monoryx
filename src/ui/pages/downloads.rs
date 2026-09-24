@@ -67,18 +67,21 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     if !state.downloads_history.is_empty() {
         ui.add_space(8.0);
         ui.label(RichText::new("History").strong().color(TEXT));
+        ui.label(
+            RichText::new("Install results and file transfers appear as separate entries.")
+                .size(11.0)
+                .color(TEXT2),
+        );
         for h in state.downloads_history.clone().into_iter().take(20) {
-            ui.horizontal(|ui| {
-                if h.state == "completed" {
-                    crate::ui::components::badge_ok(ui, "Completed");
-                } else {
-                    crate::ui::components::badge(ui, "Failed");
-                }
-                ui.label(
-                    RichText::new(&h.label)
-                        .size(12.0)
-                        .color(TEXT),
-                );
+            card_frame(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if h.state == "completed" {
+                        crate::ui::components::badge_ok(ui, "Completed");
+                    } else {
+                        crate::ui::components::badge(ui, "Failed");
+                    }
+                    ui.label(RichText::new(&h.label).size(12.0).color(TEXT));
+                });
                 if !h.message.is_empty() {
                     ui.label(RichText::new(&h.message).size(11.0).color(TEXT2));
                 }

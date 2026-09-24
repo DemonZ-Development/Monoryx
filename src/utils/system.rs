@@ -171,7 +171,6 @@ pub fn try_acquire_single_instance() -> SingleInstanceStatus {
             SingleInstanceStatus::Primary(listener)
         }
         Err(_) => {
-
             if let Ok(mut stream) = std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::from(([127, 0, 0, 1], SINGLE_INSTANCE_PORT)),
                 std::time::Duration::from_millis(600),
@@ -192,7 +191,15 @@ pub fn try_acquire_single_instance() -> SingleInstanceStatus {
                 }
             }
 
-            if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT_FALLBACK)) {
+            #[cfg(target_os = "windows")]
+            if !find_monoryx_windows(None).is_empty() {
+                restore_any_running_monoryx_window();
+                return SingleInstanceStatus::AlreadyRunning;
+            }
+
+            if let Ok(listener) =
+                std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT_FALLBACK))
+            {
                 let _ = listener.set_nonblocking(true);
                 return SingleInstanceStatus::Primary(listener);
             }
@@ -254,14 +261,21 @@ pub fn find_monoryx_windows(target_pid: Option<u32>) -> Vec<windows_sys::Win32::
 #[cfg(target_os = "windows")]
 pub fn show_window_for_current_process(show: bool) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW,
+        IsIconic, IsZoomed, SetForegroundWindow, ShowWindow, SW_HIDE, SW_MAXIMIZE, SW_RESTORE,
+        SW_SHOW,
     };
     let hwnds = find_monoryx_windows(Some(std::process::id()));
     for hwnd in hwnds {
         unsafe {
             if show {
-                ShowWindow(hwnd, SW_SHOW);
-                ShowWindow(hwnd, SW_RESTORE);
+                if IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                } else if IsZoomed(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_SHOW);
+                    ShowWindow(hwnd, SW_MAXIMIZE);
+                } else {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
                 SetForegroundWindow(hwnd);
             } else {
                 ShowWindow(hwnd, SW_HIDE);
@@ -273,14 +287,111 @@ pub fn show_window_for_current_process(show: bool) {
 #[cfg(target_os = "windows")]
 pub fn restore_any_running_monoryx_window() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+        IsIconic, IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_RESTORE, SW_SHOW,
     };
     let hwnds = find_monoryx_windows(None);
     for hwnd in hwnds {
         unsafe {
-            ShowWindow(hwnd, SW_SHOW);
-            ShowWindow(hwnd, SW_RESTORE);
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            } else if IsZoomed(hwnd) != 0 {
+                ShowWindow(hwnd, SW_SHOW);
+                ShowWindow(hwnd, SW_MAXIMIZE);
+            } else {
+                ShowWindow(hwnd, SW_SHOW);
+            }
             SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn ensure_window_positioned(start_maximized: bool, force_center: bool) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, GetWindowRect, IsIconic, IsZoomed, SetForegroundWindow, SetWindowPos,
+        ShowWindow, SystemParametersInfoW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA,
+        SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_MAXIMIZE, SW_RESTORE, SW_SHOW,
+    };
+
+    let hwnds = find_monoryx_windows(Some(std::process::id()));
+    for hwnd in hwnds {
+        unsafe {
+            if start_maximized {
+                if IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                }
+                if IsZoomed(hwnd) == 0 {
+                    ShowWindow(hwnd, SW_MAXIMIZE);
+                }
+                SetForegroundWindow(hwnd);
+            } else {
+                if IsZoomed(hwnd) != 0 || IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                } else {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
+
+                let mut work_area = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                let has_work_area = SystemParametersInfoW(
+                    SPI_GETWORKAREA,
+                    0,
+                    &mut work_area as *mut _ as *mut core::ffi::c_void,
+                    0,
+                ) != 0;
+
+                let (wa_left, wa_top, wa_width, wa_height) = if has_work_area
+                    && work_area.right > work_area.left
+                    && work_area.bottom > work_area.top
+                {
+                    (
+                        work_area.left,
+                        work_area.top,
+                        work_area.right - work_area.left,
+                        work_area.bottom - work_area.top,
+                    )
+                } else {
+                    let cx = GetSystemMetrics(SM_CXSCREEN);
+                    let cy = GetSystemMetrics(SM_CYSCREEN);
+                    (0, 0, cx.max(800), cy.max(600))
+                };
+
+                let mut win_rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                GetWindowRect(hwnd, &mut win_rect);
+                let cur_w = (win_rect.right - win_rect.left).max(850);
+                let cur_h = (win_rect.bottom - win_rect.top).max(560);
+
+                let is_badly_positioned = force_center
+                    || win_rect.left < wa_left
+                    || win_rect.top < wa_top
+                    || win_rect.left + 100 > wa_left + wa_width
+                    || win_rect.top + 50 > wa_top + wa_height;
+
+                if is_badly_positioned {
+                    let new_x = (wa_left + (wa_width - cur_w) / 2).max(wa_left);
+                    let new_y = (wa_top + (wa_height - cur_h) / 2).max(wa_top);
+                    SetWindowPos(
+                        hwnd,
+                        0 as _,
+                        new_x,
+                        new_y,
+                        0,
+                        0,
+                        SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    );
+                }
+                SetForegroundWindow(hwnd);
+            }
         }
     }
 }
@@ -290,6 +401,9 @@ pub fn show_window_for_current_process(_show: bool) {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn restore_any_running_monoryx_window() {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ensure_window_positioned(_start_maximized: bool, _force_center: bool) {}
 
 #[cfg(target_os = "windows")]
 async fn query_windows_gpus() -> Result<Vec<String>, String> {

@@ -283,18 +283,16 @@ impl DownloadManager {
         file.flush().await.map_err(MonoryxError::Io)?;
         drop(file);
 
-        if let Some(expected) = job.expected_size.or(total) {
-            if let Some(t) = total {
-                let actual = tokio::fs::metadata(&part)
-                    .await
-                    .map_err(MonoryxError::Io)?
-                    .len();
-                if actual != t && job.expected_size.is_some() && actual != expected {
-                    return Err(MonoryxError::Download(format!(
-                        "size mismatch for {}: expected {expected}, got {actual}",
-                        job.label
-                    )));
-                }
+        let actual_size = tokio::fs::metadata(&part)
+            .await
+            .map_err(MonoryxError::Io)?
+            .len();
+        for expected in [job.expected_size, total].into_iter().flatten() {
+            if actual_size != expected {
+                return Err(MonoryxError::Download(format!(
+                    "size mismatch for {}: expected {expected}, got {actual_size}",
+                    job.label
+                )));
             }
         }
 

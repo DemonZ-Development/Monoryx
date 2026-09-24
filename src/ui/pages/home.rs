@@ -1,10 +1,11 @@
 use crate::app::state::AppState;
 use crate::ui::components::{
-    action_button, badge, badge_ok, card_frame, empty_state, format_last_played,
-    hero_card_frame, page_header, play_hero_button, primary_button, stat, thin_progress,
+    action_button, badge, badge_ok, card_frame, empty_state, format_last_played, hero_card_frame,
+    page_header, play_hero_button, primary_button, stat, thin_progress,
 };
 use crate::ui::theme::{
-    ACCENT, BOOST, BOOST_BG, BORDER, DANGER, ELEVATED, ELEVATED2, HOVER, MUTED, OK, TEXT, TEXT2, WARNING,
+    ACCENT, BOOST, BOOST_BG, BORDER, DANGER, ELEVATED, ELEVATED2, HOVER, MUTED, OK, TEXT, TEXT2,
+    WARNING,
 };
 use egui::{Color32, CornerRadius, RichText, Stroke};
 
@@ -63,7 +64,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     if running {
                         badge_ok(ui, "RUNNING");
                     }
-                    let boost_text = if boost_on { "Eco Mode: ON" } else { "Eco Mode: OFF" };
+                    let boost_text = if boost_on {
+                        "Eco Mode: ON"
+                    } else {
+                        "Eco Mode: OFF"
+                    };
                     let boost_btn = egui::Button::new(
                         RichText::new(boost_text)
                             .size(11.5)
@@ -104,10 +109,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if running {
                     let btn = egui::Button::new(
-                        RichText::new("GAME RUNNING")
-                            .strong()
-                            .size(13.5)
-                            .color(OK),
+                        RichText::new("GAME RUNNING").strong().size(13.5).color(OK),
                     )
                     .fill(ELEVATED2)
                     .stroke(Stroke::new(1.0_f32, BORDER))
@@ -132,11 +134,12 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
         ui.add_space(14.0);
 
-        let effective_ram = if boost_on && cfg.memory_max_mb == crate::utils::system::default_max_memory_mb() {
-            crate::utils::system::default_boost_max_memory_mb()
-        } else {
-            cfg.memory_max_mb
-        };
+        let effective_ram =
+            if boost_on && cfg.memory_max_mb == crate::utils::system::default_max_memory_mb() {
+                crate::utils::system::default_boost_max_memory_mb()
+            } else {
+                cfg.memory_max_mb
+            };
         let ram_label = if boost_on {
             format!("{effective_ram} MB (Eco)")
         } else {
@@ -193,7 +196,12 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     if state.instance_list.len() > 1 {
         ui.add_space(16.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Your Instances").size(15.0).strong().color(TEXT));
+            ui.label(
+                RichText::new("Your Instances")
+                    .size(15.0)
+                    .strong()
+                    .color(TEXT),
+            );
             ui.label(
                 RichText::new(format!("({} total)", state.instance_list.len()))
                     .size(12.0)
@@ -209,8 +217,12 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     for inst in state.instance_list.clone() {
                         let is_selected = Some(inst.id.clone()) == state.selected_instance;
                         let card_id = ui.make_persistent_id(format!("home_inst_card_{}", inst.id));
-                        let hovered = ui.ctx().data(|d| d.get_temp::<bool>(card_id).unwrap_or(false));
-                        let fade = ui.ctx().animate_bool_with_time(card_id.with("hover"), hovered, 0.15);
+                        let hovered = ui
+                            .ctx()
+                            .data(|d| d.get_temp::<bool>(card_id).unwrap_or(false));
+                        let fade =
+                            ui.ctx()
+                                .animate_bool_with_time(card_id.with("hover"), hovered, 0.15);
                         if fade > 0.001 && fade < 0.999 {
                             ui.ctx().request_repaint();
                         }
@@ -219,7 +231,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         let card_stroke = if is_selected {
                             Stroke::new(1.5_f32, ACCENT)
                         } else {
-                            Stroke::new(1.0_f32, BORDER.lerp_to_gamma(Color32::from_rgb(52, 55, 65), fade))
+                            Stroke::new(
+                                1.0_f32,
+                                BORDER.lerp_to_gamma(Color32::from_rgb(52, 55, 65), fade),
+                            )
                         };
 
                         let frame_resp = egui::Frame::new()
@@ -247,15 +262,26 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                                     );
                                     ui.add_space(6.0);
                                     if !is_selected {
-                                        ui.label(RichText::new("Click to switch").size(11.0).color(MUTED));
+                                        ui.label(
+                                            RichText::new("Click to switch")
+                                                .size(11.0)
+                                                .color(MUTED),
+                                        );
                                     } else {
-                                        ui.label(RichText::new("Active").size(11.0).strong().color(ACCENT));
+                                        ui.label(
+                                            RichText::new("Active")
+                                                .size(11.0)
+                                                .strong()
+                                                .color(ACCENT),
+                                        );
                                     }
                                 });
                             });
 
-                        let resp = ui.interact(frame_resp.response.rect, card_id, egui::Sense::click());
-                        ui.ctx().data_mut(|d| d.insert_temp(card_id, resp.hovered()));
+                        let resp =
+                            ui.interact(frame_resp.response.rect, card_id, egui::Sense::click());
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(card_id, resp.hovered()));
                         if resp.hovered() && !is_selected {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }

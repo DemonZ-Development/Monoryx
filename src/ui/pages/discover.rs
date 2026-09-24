@@ -4,7 +4,7 @@ use crate::ui::components::{
     badge, card_frame, empty_state, hover_card_frame, page_header, thin_progress,
 };
 use crate::ui::theme::{
-    ACCENT, BORDER, DANGER, ELEVATED, ELEVATED2, MUTED, OK, SELECTED_FG, TEXT, TEXT2,
+    ACCENT, BORDER, DANGER, ELEVATED, ELEVATED2, MUTED, SELECTED_FG, TEXT, TEXT2,
 };
 use egui::{Color32, CornerRadius, RichText, Stroke};
 
@@ -14,6 +14,45 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         "Discover",
         "Explore mods, modpacks, resource packs and shaders from Modrinth.",
     );
+
+    if state.discover_tab != DiscoverTab::Modpacks {
+        let current = state.selected();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Install into:").strong().color(TEXT));
+            let mut selection = state.selected_instance.clone();
+            egui::ComboBox::from_id_salt("discover-target-instance")
+                .selected_text(
+                    current
+                        .as_ref()
+                        .map_or("Choose an instance", |cfg| cfg.name.as_str()),
+                )
+                .show_ui(ui, |ui| {
+                    for instance in &state.instance_list {
+                        ui.selectable_value(
+                            &mut selection,
+                            Some(instance.id.clone()),
+                            format!(
+                                "{} · MC {} · {}",
+                                instance.name,
+                                instance.minecraft_version,
+                                instance.loader.display_name()
+                            ),
+                        );
+                    }
+                });
+            if selection != state.selected_instance {
+                state.selected_instance = selection;
+                state.save_config();
+                state.refresh_library();
+                state.search.game_version.clear();
+                state.search.loader.clear();
+                state.sync_search_filters();
+                state.search.offset = 0;
+                state.run_search();
+            }
+        });
+        ui.add_space(8.0);
+    }
 
     ui.horizontal(|ui| {
         for tab in DiscoverTab::all() {
@@ -33,6 +72,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             if ui.add_sized(egui::vec2(120.0, 32.0), btn).clicked() {
                 state.discover_tab = tab;
                 state.search.project_type = tab.project_type().to_string();
+                if tab == DiscoverTab::Mods {
+                    state.search.game_version.clear();
+                    state.search.loader.clear();
+                    state.sync_search_filters();
+                }
                 state.search.offset = 0;
                 state.run_search();
             }
@@ -47,11 +91,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut state.search.query)
-                        .hint_text("Search mods, resource packs, shaders, modpacks...")
-                        .desired_width(ui.available_width() - 170.0),
+                        .hint_text("Search Modrinth")
+                        .desired_width((ui.available_width() - 170.0).max(150.0)),
                 );
                 if resp.changed() {
                     state.search_debounce = Some(std::time::Instant::now());
@@ -62,7 +106,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 }
 
                 if !state.search.query.is_empty()
-                    && ui.small_button("Clear").on_hover_text("Clear query").clicked()
+                    && ui
+                        .small_button("Clear")
+                        .on_hover_text("Clear query")
+                        .clicked()
                 {
                     state.search.query.clear();
                     state.search.offset = 0;
@@ -87,115 +134,145 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 });
             });
 
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(6.0);
-
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("MC Version:").size(12.0).color(TEXT2));
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.search.game_version)
-                        .desired_width(75.0)
-                        .hint_text("All"),
-                );
-                if !state.search.game_version.is_empty()
-                    && ui.small_button("Clear").on_hover_text("Clear version").clicked()
-                {
-                    state.search.game_version.clear();
-                    state.search.offset = 0;
-                    state.run_search();
-                }
-
-                ui.add_space(8.0);
-
-                let is_loader_applicable = state.discover_tab == DiscoverTab::Mods
-                    || state.discover_tab == DiscoverTab::Modpacks;
-
-                if is_loader_applicable {
-                    ui.label(RichText::new("Loader:").size(12.0).color(TEXT2));
-                    let current_loader_label = if state.search.loader.is_empty() {
-                        "All Loaders"
-                    } else {
-                        match state.search.loader.as_str() {
-                            "fabric" => "Fabric",
-                            "forge" => "Forge",
-                            "neoforge" => "NeoForge",
-                            "quilt" => "Quilt",
-                            other => other,
-                        }
-                    };
-                    egui::ComboBox::from_id_salt("discover-loader")
-                        .selected_text(current_loader_label)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_value(&mut state.search.loader, String::new(), "All Loaders")
-                                .clicked()
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new("Filters")
+                .id_salt("discover-filters")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let targeted_mods =
+                            state.discover_tab == DiscoverTab::Mods && state.selected().is_some();
+                        if targeted_mods {
+                            if let Some(instance) = state.selected() {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Compatible with {} · Minecraft {} · {}",
+                                        instance.name,
+                                        instance.minecraft_version,
+                                        instance.loader.display_name()
+                                    ))
+                                    .size(12.0)
+                                    .color(TEXT2),
+                                );
+                            }
+                        } else {
+                            ui.label(RichText::new("MC Version:").size(12.0).color(TEXT2));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.search.game_version)
+                                    .desired_width(75.0)
+                                    .hint_text("All"),
+                            );
+                            if !state.search.game_version.is_empty()
+                                && ui.small_button("Clear").clicked()
                             {
+                                state.search.game_version.clear();
                                 state.search.offset = 0;
                                 state.run_search();
                             }
-                            for (id, label) in [
-                                ("fabric", "Fabric"),
-                                ("forge", "Forge"),
-                                ("neoforge", "NeoForge"),
-                                ("quilt", "Quilt"),
-                            ] {
-                                if ui
-                                    .selectable_value(&mut state.search.loader, id.to_string(), label)
-                                    .clicked()
-                                {
-                                    state.search.offset = 0;
-                                    state.run_search();
+                        }
+
+                        ui.add_space(8.0);
+
+                        let is_loader_applicable = state.discover_tab == DiscoverTab::Mods
+                            || state.discover_tab == DiscoverTab::Modpacks;
+
+                        if is_loader_applicable && !targeted_mods {
+                            ui.label(
+                                RichText::new("Supported loader filter:")
+                                    .size(12.0)
+                                    .color(TEXT2),
+                            );
+                            let current_loader_label = if state.search.loader.is_empty() {
+                                "All Loaders"
+                            } else {
+                                match state.search.loader.as_str() {
+                                    "fabric" => "Fabric",
+                                    "forge" => "Forge",
+                                    "neoforge" => "NeoForge",
+                                    "quilt" => "Quilt",
+                                    other => other,
                                 }
+                            };
+                            egui::ComboBox::from_id_salt("discover-loader")
+                                .selected_text(current_loader_label)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_value(
+                                            &mut state.search.loader,
+                                            String::new(),
+                                            "Any supported loader",
+                                        )
+                                        .clicked()
+                                    {
+                                        state.search.offset = 0;
+                                        state.run_search();
+                                    }
+                                    for (id, label) in [
+                                        ("fabric", "Fabric"),
+                                        ("forge", "Forge"),
+                                        ("neoforge", "NeoForge"),
+                                        ("quilt", "Quilt"),
+                                    ] {
+                                        if ui
+                                            .selectable_value(
+                                                &mut state.search.loader,
+                                                id.to_string(),
+                                                label,
+                                            )
+                                            .clicked()
+                                        {
+                                            state.search.offset = 0;
+                                            state.run_search();
+                                        }
+                                    }
+                                });
+                            ui.label(
+                                RichText::new(
+                                    "Search choices; these are not installed in your instance.",
+                                )
+                                .size(11.0)
+                                .color(MUTED),
+                            );
+                        }
+
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Sort:").size(12.0).color(TEXT2));
+                        let prev_sort = state.search.sort;
+                        egui::ComboBox::from_id_salt("sort")
+                            .selected_text(state.search.sort.label())
+                            .show_ui(ui, |ui| {
+                                for s in SortOrder::all() {
+                                    ui.selectable_value(&mut state.search.sort, s, s.label());
+                                }
+                            });
+                        if state.search.sort != prev_sort {
+                            state.search.offset = 0;
+                            state.run_search();
+                        }
+
+                        ui.horizontal(|ui| {
+                            if !targeted_mods && ui.small_button("Clear Filters").clicked() {
+                                state.search.game_version.clear();
+                                state.search.loader.clear();
+                                state.search.offset = 0;
+                                state.run_search();
+                            }
+                            if ui
+                                .small_button("Use selected instance")
+                                .on_hover_text(
+                                    "Search for your selected instance's version and loader",
+                                )
+                                .clicked()
+                            {
+                                state.search.game_version.clear();
+                                state.search.loader.clear();
+                                state.sync_search_filters();
+                                state.search.offset = 0;
+                                state.run_search();
                             }
                         });
-                } else {
-
-                    egui::Frame::new()
-                        .fill(ELEVATED2)
-                        .stroke(Stroke::new(1.0_f32, BORDER))
-                        .corner_radius(CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(8, 3))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new("Universal (No Loader Required)")
-                                    .size(11.0)
-                                    .color(OK),
-                            );
-                        });
-                }
-
-                ui.add_space(8.0);
-                ui.label(RichText::new("Sort:").size(12.0).color(TEXT2));
-                let prev_sort = state.search.sort;
-                egui::ComboBox::from_id_salt("sort")
-                    .selected_text(state.search.sort.label())
-                    .show_ui(ui, |ui| {
-                        for s in SortOrder::all() {
-                            ui.selectable_value(&mut state.search.sort, s, s.label());
-                        }
                     });
-                if state.search.sort != prev_sort {
-                    state.search.offset = 0;
-                    state.run_search();
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Clear Filters").on_hover_text("Reset MC version and loader filters").clicked() {
-                        state.search.game_version.clear();
-                        state.search.loader.clear();
-                        state.search.offset = 0;
-                        state.run_search();
-                    }
-                    if ui.small_button("Use Instance").on_hover_text("Filter for selected instance's version and loader").clicked() {
-                        state.search.game_version.clear();
-                        state.search.loader.clear();
-                        state.sync_search_filters();
-                        state.search.offset = 0;
-                        state.run_search();
-                    }
                 });
-            });
         });
 
     ui.add_space(8.0);
@@ -203,7 +280,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     if state.search_loading {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Searching Modrinth...").size(12.5).color(TEXT2));
+            ui.label(
+                RichText::new("Searching Modrinth...")
+                    .size(12.5)
+                    .color(TEXT2),
+            );
         });
         thin_progress(ui, None);
         ui.add_space(6.0);
@@ -217,10 +298,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .inner_margin(egui::Margin::symmetric(14, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&state.search_error)
-                            .color(DANGER),
-                    );
+                    ui.label(RichText::new(&state.search_error).color(DANGER));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Retry").clicked() {
                             state.run_search();
@@ -244,7 +322,8 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     state.search.game_version
                 )
             } else {
-                "Try another search term, or clear any filters to view all available content.".to_string()
+                "Try another search term, or clear any filters to view all available content."
+                    .to_string()
             };
             empty_state(ui, "No results found", &filter_hint);
             ui.vertical_centered(|ui| {
@@ -268,10 +347,14 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     }
                     if ui
                         .add(
-                            egui::Button::new(RichText::new("Clear All Filters & Show All").size(12.5).color(TEXT))
-                                .fill(ELEVATED2)
-                                .stroke(Stroke::new(1.0_f32, BORDER))
-                                .corner_radius(CornerRadius::same(8)),
+                            egui::Button::new(
+                                RichText::new("Clear All Filters & Show All")
+                                    .size(12.5)
+                                    .color(TEXT),
+                            )
+                            .fill(ELEVATED2)
+                            .stroke(Stroke::new(1.0_f32, BORDER))
+                            .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
                     {
@@ -309,103 +392,122 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             for hit in state.search_results.clone() {
                 hover_card_frame(ui, format!("discover_hit_{}", hit.slug), |ui| {
-                        ui.horizontal(|ui| {
-                            show_thumb(state, ui, hit.icon_url.as_deref().unwrap_or(""), 52.0);
-                            ui.add_space(6.0);
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(&hit.title).size(15.5).strong().color(TEXT),
-                                    );
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(format!("by {}", hit.author))
-                                            .size(11.5)
-                                            .color(TEXT2),
-                                    );
-                                    ui.label(RichText::new("-").size(10.0).color(MUTED));
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} downloads",
-                                            format_downloads(hit.downloads)
-                                        ))
+                    ui.horizontal(|ui| {
+                        show_thumb(state, ui, hit.icon_url.as_deref().unwrap_or(""), 52.0);
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&hit.title).size(15.5).strong().color(TEXT));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!("by {}", hit.author))
                                         .size(11.5)
                                         .color(TEXT2),
-                                    );
-                                });
-                                ui.label(
-                                    RichText::new(&hit.description)
-                                        .size(12.0)
-                                        .color(TEXT)
-                                        .line_height(Some(16.0)),
                                 );
-                                ui.horizontal(|ui| {
-                                    badge(ui, &hit.project_type);
-                                    if let Some(lv) = hit.latest_version.as_deref() {
-                                        if !lv.is_empty() {
-                                            badge(ui, lv);
-                                        }
-                                    }
-                                    for cat in hit.categories.iter().take(3) {
-                                        badge(ui, cat);
-                                    }
-                                });
+                                ui.label(RichText::new("-").size(10.0).color(MUTED));
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} downloads",
+                                        format_downloads(hit.downloads)
+                                    ))
+                                    .size(11.5)
+                                    .color(TEXT2),
+                                );
                             });
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.vertical(|ui| {
-                                        if ui.small_button("Details").clicked() {
-                                            state.detail_loading = true;
-                                            state.detail_project = None;
-                                            state.detail_versions.clear();
-                                            crate::app::tasks::open_project_page(
-                                                state,
-                                                hit.slug.clone(),
-                                            );
-                                        }
-                                        if state.search.project_type != "modpack" {
-                                            let btn = egui::Button::new(
-                                                RichText::new("Install")
-                                                    .strong()
-                                                    .color(SELECTED_FG),
-                                            )
-                                            .fill(ACCENT)
-                                            .corner_radius(CornerRadius::same(6));
-                                            if ui.add(btn).clicked() {
-                                                crate::app::tasks::install_mod(
-                                                    state,
-                                                    hit.slug.clone(),
-                                                    hit.slug.clone(),
-                                                    hit.title.clone(),
-                                                    None,
-                                                );
-                                                state.global_status =
-                                                    format!("Installing {}...", hit.title);
-                                            }
-                                        } else {
-                                            let btn = egui::Button::new(
-                                                RichText::new("Install Pack")
-                                                    .strong()
-                                                    .color(SELECTED_FG),
-                                            )
-                                            .fill(ACCENT)
-                                            .corner_radius(CornerRadius::same(6));
-                                            if ui.add(btn).clicked() {
-                                                state.global_status = format!("Installing modpack {}...", hit.title);
-                                                crate::app::tasks::install_modpack(
-                                                    state,
-                                                    hit.slug.clone(),
-                                                    hit.title.clone(),
-                                                );
-                                            }
-                                        }
-                                    });
-                                },
+                            ui.label(
+                                RichText::new(&hit.description)
+                                    .size(12.0)
+                                    .color(TEXT)
+                                    .line_height(Some(16.0)),
                             );
+                            ui.horizontal_wrapped(|ui| {
+                                badge(ui, &hit.project_type);
+                                if let Some(lv) = hit.latest_version.as_deref() {
+                                    if !lv.is_empty() {
+                                        badge(ui, lv);
+                                    }
+                                }
+                                for cat in hit.categories.iter().take(3) {
+                                    badge(ui, cat);
+                                }
+                            });
                         });
                     });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Details").clicked() {
+                            state.detail_loading = true;
+                            state.detail_project = None;
+                            state.detail_versions.clear();
+                            crate::app::tasks::open_project_page(state, hit.slug.clone());
+                        }
+                        if state.search.project_type != "modpack" {
+                            let installed = state
+                                .library_entries
+                                .iter()
+                                .find(|entry| {
+                                    entry.project_slug.as_deref() == Some(&hit.slug)
+                                        && entry.kind.as_str() == hit.project_type
+                                })
+                                .cloned();
+                            let btn = egui::Button::new(
+                                RichText::new(if installed.is_some() {
+                                    "Reinstall"
+                                } else {
+                                    "Install"
+                                })
+                                .strong()
+                                .color(SELECTED_FG),
+                            )
+                            .fill(ACCENT)
+                            .corner_radius(CornerRadius::same(6));
+                            if ui.add(btn).clicked() {
+                                crate::app::tasks::install_mod(
+                                    state,
+                                    hit.slug.clone(),
+                                    hit.slug.clone(),
+                                    hit.title.clone(),
+                                    None,
+                                );
+                                state.global_status = format!("Installing {}...", hit.title);
+                            }
+                            if let Some(installed) = installed {
+                                if ui.small_button("Remove").clicked() {
+                                    if let Some(id) = state.selected_instance.clone() {
+                                        match crate::modrinth::install::remove_project_blocking(
+                                            &state.instances,
+                                            &id,
+                                            installed.kind,
+                                            &installed.file_name,
+                                        ) {
+                                            Ok(()) => {
+                                                state.refresh_library();
+                                                state.notify("Content removed");
+                                            }
+                                            Err(error) => state.fail(error),
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            let btn = egui::Button::new(
+                                RichText::new("Install Pack").strong().color(SELECTED_FG),
+                            )
+                            .fill(ACCENT)
+                            .corner_radius(CornerRadius::same(6));
+                            if ui.add(btn).clicked() {
+                                state.global_status =
+                                    format!("Installing modpack {}...", hit.title);
+                                crate::app::tasks::install_modpack(
+                                    state,
+                                    hit.slug.clone(),
+                                    hit.title.clone(),
+                                );
+                            }
+                        }
+                    });
+                });
                 ui.add_space(8.0);
             }
 
@@ -561,17 +663,94 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
             });
             if !state.detail_versions.is_empty() {
                 ui.add_space(8.0);
-                ui.label(RichText::new("Compatible Versions").strong().color(TEXT));
-                egui::ComboBox::from_id_salt("detail-ver")
-                    .selected_text(if state.detail_version_pick.is_empty() {
-                        "(newest compatible)".to_string()
+                let selected_inst = state.selected();
+                let inst_loader = selected_inst.as_ref().and_then(|i| {
+                    if i.loader == crate::instance::config::LoaderKind::Vanilla {
+                        None
                     } else {
-                        state.detail_version_pick.clone()
-                    })
+                        Some(i.loader.as_str().to_lowercase())
+                    }
+                });
+
+                let mut filtered_versions: Vec<_> = if let Some(loader) = &inst_loader {
+                    let matching: Vec<_> = state
+                        .detail_versions
+                        .iter()
+                        .filter(|v| {
+                            v.loaders.iter().any(|l| {
+                                let l_lower = l.to_lowercase();
+                                l_lower == *loader
+                                    || (loader == "quilt" && l_lower == "fabric")
+                                    || (loader == "fabric" && l_lower == "quilt")
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    if !matching.is_empty() {
+                        matching
+                    } else {
+                        state.detail_versions.clone()
+                    }
+                } else {
+                    state.detail_versions.clone()
+                };
+
+                if let Some(inst) = &selected_inst {
+                    let mc = &inst.minecraft_version;
+                    filtered_versions.sort_by_key(|v| {
+                        if v.game_versions.iter().any(|gv| gv == mc) {
+                            0
+                        } else {
+                            1
+                        }
+                    });
+                }
+
+                let heading = if let Some(inst) = &selected_inst {
+                    if inst.loader != crate::instance::config::LoaderKind::Vanilla {
+                        format!("Compatible Versions ({})", inst.loader.display_name())
+                    } else {
+                        "Compatible Versions".to_string()
+                    }
+                } else {
+                    "Compatible Versions".to_string()
+                };
+                ui.label(RichText::new(heading).strong().color(TEXT));
+
+                let selected_label = if state.detail_version_pick.is_empty() {
+                    "(newest compatible)".to_string()
+                } else if let Some(v) = filtered_versions
+                    .iter()
+                    .find(|v| v.id == state.detail_version_pick)
+                {
+                    let loader_str = if v.loaders.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", v.loaders.join("/"))
+                    };
+                    format!(
+                        "{}{loader_str} ({})",
+                        v.version_number,
+                        v.game_versions.join(", ")
+                    )
+                } else {
+                    state.detail_version_pick.clone()
+                };
+
+                egui::ComboBox::from_id_salt("detail-ver")
+                    .selected_text(selected_label)
                     .show_ui(ui, |ui| {
-                        for v in state.detail_versions.clone().into_iter().take(40) {
-                            let label =
-                                format!("{} ({})", v.version_number, v.game_versions.join(", "));
+                        for v in filtered_versions.into_iter().take(40) {
+                            let loader_str = if v.loaders.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · {}", v.loaders.join("/"))
+                            };
+                            let label = format!(
+                                "{}{loader_str} ({})",
+                                v.version_number,
+                                v.game_versions.join(", ")
+                            );
                             ui.selectable_value(
                                 &mut state.detail_version_pick,
                                 v.id.clone(),
@@ -590,10 +769,7 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
                 });
             }
             if !state.detail_error.is_empty() {
-                ui.label(
-                    RichText::new(&state.detail_error)
-                        .color(DANGER),
-                );
+                ui.label(RichText::new(&state.detail_error).color(DANGER));
             }
         });
 }

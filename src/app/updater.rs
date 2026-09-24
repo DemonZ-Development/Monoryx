@@ -42,7 +42,6 @@ pub async fn check_launcher_update(http: &reqwest::Client) -> Result<LauncherUpd
         .map_err(|e| format!("Failed to reach update server: {e}"))?;
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-
         return Ok(LauncherUpdateInfo {
             current_version: current_str.to_string(),
             latest_version: current_str.to_string(),
@@ -54,12 +53,20 @@ pub async fn check_launcher_update(http: &reqwest::Client) -> Result<LauncherUpd
         });
     }
 
-    if resp.status() == reqwest::StatusCode::FORBIDDEN || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err("GitHub API rate limit reached. Please try checking again in a few minutes.".to_string());
+    if resp.status() == reqwest::StatusCode::FORBIDDEN
+        || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Err(
+            "GitHub API rate limit reached. Please try checking again in a few minutes."
+                .to_string(),
+        );
     }
 
     if !resp.status().is_success() {
-        return Err(format!("Update server responded with status: {}", resp.status()));
+        return Err(format!(
+            "Update server responded with status: {}",
+            resp.status()
+        ));
     }
 
     let release: GithubRelease = resp
@@ -82,7 +89,12 @@ pub async fn check_launcher_update(http: &reqwest::Client) -> Result<LauncherUpd
             n.ends_with(".exe") || n.ends_with(".msi") || n.ends_with(".zip")
         })
         .map(|a| a.browser_download_url.clone())
-        .or_else(|| release.assets.first().map(|a| a.browser_download_url.clone()))
+        .or_else(|| {
+            release
+                .assets
+                .first()
+                .map(|a| a.browser_download_url.clone())
+        })
         .or_else(|| Some(release.html_url.clone()));
 
     Ok(LauncherUpdateInfo {

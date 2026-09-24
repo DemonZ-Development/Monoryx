@@ -1,10 +1,16 @@
 use crate::app::state::AppState;
 use crate::config::{CloseAction, GpuPreference};
 use crate::ui::components::{badge_accent, badge_boost, card_frame, field_label, page_header};
-use crate::ui::theme::{
-    ACCENT, BORDER, BOOST, DANGER, ELEVATED2, MUTED, OK, SELECTED_FG, TEXT, TEXT2,
-};
+use crate::ui::theme::{ACCENT, BORDER, DANGER, ELEVATED2, MUTED, OK, SELECTED_FG, TEXT, TEXT2};
 use egui::{CornerRadius, RichText, Stroke};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    Launcher,
+    Minecraft,
+    Runtime,
+    About,
+}
 
 pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     page_header(
@@ -13,10 +19,34 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         "Launcher updates, window behavior, performance, and runtime preferences.",
     );
 
+    let tab_id = egui::Id::new("settings-tab");
+    let mut tab = ctx.data_mut(|data| {
+        data.get_temp::<SettingsTab>(tab_id)
+            .unwrap_or(SettingsTab::Launcher)
+    });
+    ui.horizontal_wrapped(|ui| {
+        for (value, label) in [
+            (SettingsTab::Launcher, "Launcher"),
+            (SettingsTab::Minecraft, "Minecraft"),
+            (SettingsTab::Runtime, "Java & GPU"),
+            (SettingsTab::About, "About"),
+        ] {
+            ui.selectable_value(&mut tab, value, label);
+        }
+    });
+    ctx.data_mut(|data| data.insert_temp(tab_id, tab));
+    ui.add_space(12.0);
+
+    if tab == SettingsTab::Launcher {
         card_frame(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Launcher Updates").size(16.0).strong().color(TEXT));
-                badge_accent(ui, "v1.0.0 Beta");
+                ui.label(
+                    RichText::new("Launcher Updates")
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT),
+                );
+                badge_accent(ui, "v1.1.0 Beta");
             });
 
             ui.label(
@@ -38,21 +68,48 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 save_settings(state, "Update preference saved".to_string());
             }
 
-            ui.add_space(6.0);
+            ui.add_space(8.0);
+            let is_checking = state.launcher_update_loading;
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Check for Updates").strong()).clicked() {
+                let btn = egui::Button::new(
+                    RichText::new(if is_checking {
+                        "Checking..."
+                    } else {
+                        "Check for Updates"
+                    })
+                    .size(13.0)
+                    .strong()
+                    .color(if is_checking { TEXT2 } else { SELECTED_FG }),
+                )
+                .fill(if is_checking { ELEVATED2 } else { ACCENT })
+                .stroke(if is_checking {
+                    Stroke::new(1.0_f32, BORDER)
+                } else {
+                    Stroke::NONE
+                })
+                .corner_radius(CornerRadius::same(6));
+
+                if ui.add_sized(egui::vec2(150.0, 32.0), btn).clicked() && !is_checking {
                     state.check_launcher_update();
                 }
 
-                if state.launcher_update_loading {
+                if is_checking {
                     ui.spinner();
-                    ui.label(RichText::new("Checking for updates...").color(TEXT2));
+                    ui.label(
+                        RichText::new("Checking for updates...")
+                            .size(12.5)
+                            .color(TEXT2),
+                    );
                 }
             });
 
             if let Some(err) = &state.launcher_update_error {
-                ui.add_space(4.0);
-                ui.label(RichText::new(format!("Update check error: {err}")).color(DANGER));
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!("Update check error: {err}"))
+                        .size(12.5)
+                        .color(DANGER),
+                );
             }
 
             if let Some(update) = state.launcher_update.clone() {
@@ -86,11 +143,15 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                     .strong()
                                     .color(TEXT),
                             );
-                            egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(&update.release_notes).size(11.5).color(TEXT2),
-                                );
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(120.0)
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(&update.release_notes)
+                                            .size(11.5)
+                                            .color(TEXT2),
+                                    );
+                                });
 
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
@@ -115,7 +176,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                             });
                         });
                 } else if !state.launcher_update_loading && state.launcher_update_error.is_none() {
-                    ui.label(RichText::new("You are running the latest version of MONORYX.").color(OK));
+                    ui.label(
+                        RichText::new("You are running the latest version of MONORYX.").color(OK),
+                    );
                 }
             }
         });
@@ -123,11 +186,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         card_frame(ui, |ui| {
-            ui.label(RichText::new("Launch Behavior & Window").size(16.0).strong().color(TEXT));
             ui.label(
-                RichText::new("Control launcher window visibility and behavior when Minecraft runs.")
-                    .size(12.0)
-                    .color(TEXT2),
+                RichText::new("Launch Behavior & Window")
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT),
+            );
+            ui.label(
+                RichText::new(
+                    "Control launcher window visibility and behavior when Minecraft runs.",
+                )
+                .size(12.0)
+                .color(TEXT2),
             );
             ui.add_space(4.0);
 
@@ -154,37 +224,162 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     });
             });
             ui.label(
-                RichText::new(
-                    "When set to Close / Hide, MONORYX closes its window when Minecraft launches to save system resources, and automatically restores and refocuses itself when the game exits.",
-                )
-                .size(11.5)
-                .color(MUTED),
+                RichText::new("Hide restores the launcher when Minecraft exits.")
+                    .size(11.5)
+                    .color(MUTED),
             );
 
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .checkbox(&mut state.config.start_maximized, "Start maximized")
+                    .changed()
+                {
+                    if state.config.start_maximized {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                        #[cfg(target_os = "windows")]
+                        crate::utils::system::ensure_window_positioned(true, false);
+                    }
+                    save_settings(state, "Startup window preference saved".to_string());
+                }
+                let max_btn =
+                    egui::Button::new(RichText::new("Maximize now").size(12.0).color(TEXT))
+                        .fill(ELEVATED2)
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .corner_radius(CornerRadius::same(6));
+                if ui.add(max_btn).clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                    #[cfg(target_os = "windows")]
+                    crate::utils::system::ensure_window_positioned(true, false);
+                }
+            });
+            if !state.config.start_maximized {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Windowed size:").color(TEXT2));
+                    ui.add(
+                        egui::DragValue::new(&mut state.config.window_width)
+                            .range(850.0..=2560.0)
+                            .speed(10.0)
+                            .suffix(" px wide"),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut state.config.window_height)
+                            .range(560.0..=1440.0)
+                            .speed(10.0)
+                            .suffix(" px high"),
+                    );
+                    let apply_btn =
+                        egui::Button::new(RichText::new("Apply size").size(12.0).color(TEXT))
+                            .fill(ELEVATED2)
+                            .stroke(Stroke::new(1.0_f32, BORDER))
+                            .corner_radius(CornerRadius::same(6));
+                    if ui.add(apply_btn).clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            state.config.window_width.clamp(850.0, 2560.0),
+                            state.config.window_height.clamp(560.0, 1440.0),
+                        )));
+                        #[cfg(target_os = "windows")]
+                        crate::utils::system::ensure_window_positioned(false, true);
+                        save_settings(state, "Window size applied".to_string());
+                    }
+                    let center_btn =
+                        egui::Button::new(RichText::new("Center window").size(12.0).color(TEXT))
+                            .fill(ELEVATED2)
+                            .stroke(Stroke::new(1.0_f32, BORDER))
+                            .corner_radius(CornerRadius::same(6));
+                    if ui.add(center_btn).clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                        #[cfg(target_os = "windows")]
+                        crate::utils::system::ensure_window_positioned(false, true);
+                    }
+                });
+            }
             ui.add_space(4.0);
-            ui.checkbox(&mut state.config.remember_instance, "Remember last selected instance");
-            ui.checkbox(&mut state.show_snapshots, "Show Minecraft snapshots and experimental releases");
+            ui.checkbox(
+                &mut state.config.remember_instance,
+                "Remember last selected instance",
+            );
+            ui.checkbox(
+                &mut state.show_snapshots,
+                "Show Minecraft snapshots and experimental releases",
+            );
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Parallel download threads:").color(TEXT2));
-                let mut v = state.config.parallel_downloads.to_string();
-                if ui.text_edit_singleline(&mut v).changed() {
-                    if let Ok(n) = v.parse::<usize>() {
-                        state.config.parallel_downloads = n.clamp(1, 16);
-                    }
-                }
-                ui.label(RichText::new("(1-16)").size(11.0).color(MUTED));
+                ui.add(
+                    egui::DragValue::new(&mut state.config.parallel_downloads)
+                        .range(1..=16)
+                        .speed(1),
+                );
             });
 
-            ui.add_space(4.0);
-            if ui.button("Save Window & Launch Settings").clicked() {
+            ui.add_space(8.0);
+            let save_btn = egui::Button::new(
+                RichText::new("Save Window & Launch Settings")
+                    .size(12.5)
+                    .strong()
+                    .color(SELECTED_FG),
+            )
+            .fill(ACCENT)
+            .corner_radius(CornerRadius::same(6));
+            if ui.add(save_btn).clicked() {
                 save_settings(state, "Launch settings saved".to_string());
             }
         });
 
         ui.add_space(8.0);
 
+        card_frame(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Launcher Performance & Memory")
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT),
+                );
+                badge_accent(ui, "Low Footprint");
+            });
+
+            ui.label(
+                RichText::new(
+                    "MONORYX is built in native Rust without Electron or Chromium overhead, keeping idle memory light.",
+                )
+                .size(12.0)
+                .color(TEXT2),
+            );
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "Cached thumbnail textures: {}",
+                        state.thumbnails.len()
+                    ))
+                    .color(TEXT),
+                );
+                if ui.button("Purge Image Cache (Free RAM)").clicked() {
+                    let count = state.thumbnails.len();
+                    state.thumbnails.clear();
+                    state.notify(format!("Purged {count} cached textures; memory freed"));
+                }
+            });
+
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "Tip: Setting 'When game starts' to 'Close / Hide' fully suspends window rendering and releases GPU resources while Minecraft runs.",
+                )
+                .size(11.5)
+                .color(MUTED),
+            );
+        });
+    }
+
+    ui.add_space(8.0);
+
+    if tab == SettingsTab::Minecraft {
         card_frame(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
@@ -200,12 +395,10 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             });
 
             ui.label(
-                RichText::new(
-                    "Tuned for smooth gameplay and minimal physical RAM footprint. Returns unused heap memory back to Windows, deduplicates string memory, and optimizes Java garbage collection.",
-                )
+            RichText::new("Choose a memory limit for new game instances. This does not change the launcher's own RAM use.")
                 .size(12.0)
                 .color(TEXT2),
-            );
+        );
 
             ui.add_space(6.0);
             if ui
@@ -226,11 +419,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             }
 
             ui.add_space(8.0);
-            ui.label(RichText::new("Quick Memory Presets:").size(12.0).strong().color(TEXT));
-            ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Quick Memory Presets:")
+                    .size(12.0)
+                    .strong()
+                    .color(TEXT),
+            );
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .button("2 GB (Low RAM / Vanilla)")
-                    .on_hover_text("Recommended: Minimal RAM consumption for vanilla and light play")
+                    .on_hover_text(
+                        "Recommended: Minimal RAM consumption for vanilla and light play",
+                    )
                     .clicked()
                 {
                     state.settings_mem_min = "512".to_string();
@@ -251,53 +451,53 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     save_settings(state, "Balanced preset applied (3072 MB)".to_string());
                 }
                 if ui
-                    .button("4 GB (Heavy Modpacks)")
-                    .on_hover_text("For large modpacks with 100+ mods")
+                    .button("4 GB (Modpacks)")
+                    .on_hover_text("For modpacks with 80-150 mods")
                     .clicked()
                 {
                     state.settings_mem_min = "1024".to_string();
                     state.settings_mem_max = "4096".to_string();
                     state.config.memory.min_mb = 1024;
                     state.config.memory.max_mb = 4096;
-                    save_settings(state, "Heavy modpack preset applied (4096 MB)".to_string());
+                    save_settings(state, "Modpack preset applied (4096 MB)".to_string());
+                }
+                if ui
+                    .button("6 GB (Heavy Modpacks)")
+                    .on_hover_text("For large 200+ modpacks")
+                    .clicked()
+                {
+                    state.settings_mem_min = "1024".to_string();
+                    state.settings_mem_max = "6144".to_string();
+                    state.config.memory.min_mb = 1024;
+                    state.config.memory.max_mb = 6144;
+                    save_settings(state, "Heavy modpack preset applied (6144 MB)".to_string());
+                }
+                if ui
+                    .button("8 GB (Extreme Shaders)")
+                    .on_hover_text("For heavy modpacks with high-res shaders")
+                    .clicked()
+                {
+                    state.settings_mem_min = "2048".to_string();
+                    state.settings_mem_max = "8192".to_string();
+                    state.config.memory.min_mb = 2048;
+                    state.config.memory.max_mb = 8192;
+                    save_settings(state, "Extreme preset applied (8192 MB)".to_string());
                 }
             });
-
-            ui.add_space(10.0);
-            egui::Frame::new()
-                .fill(ELEVATED2)
-                .stroke(Stroke::new(1.0_f32, BORDER))
-                .corner_radius(CornerRadius::same(8))
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.label(RichText::new("Active Optimizations").size(13.0).strong().color(TEXT));
-                    ui.add_space(8.0);
-
-                    let optimizations = [
-                        ("RAM Reclaim", "Periodically returns unused heap memory back to Windows while playing"),
-                        ("String Deduplication", "Eliminates duplicate strings in memory across game and mod assets"),
-                        ("Smooth Frame Pacing", "Caps Java garbage collector pause times to 50ms to eliminate micro-stutters"),
-                        ("Compact 32-bit Pointers", "Enables compressed object references to save 20-30% heap space"),
-                    ];
-
-                    for (title, desc) in optimizations {
-                        ui.horizontal(|ui| {
-                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                            ui.painter().circle_filled(dot_rect.center(), 2.5_f32, BOOST);
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(title).size(12.0).strong().color(TEXT));
-                            ui.label(RichText::new(format!("- {desc}")).size(11.5).color(TEXT2));
-                        });
-                        ui.add_space(4.0);
-                    }
-                });
         });
+    }
 
-        ui.add_space(8.0);
+    ui.add_space(8.0);
 
+    if tab == SettingsTab::Runtime {
         card_frame(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Java Runtime & GPU").size(16.0).strong().color(TEXT));
+                ui.label(
+                    RichText::new("Java Runtime & GPU")
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT),
+                );
                 if ui.small_button("Refresh Java").clicked() {
                     state.refresh_java();
                 }
@@ -313,18 +513,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     .color(TEXT2),
                 );
             }
-            for j in state.java_list.clone() {
-                ui.label(
-                    RichText::new(format!("Java {} - {}", j.major, j.path.display()))
-                        .size(12.0)
-                        .color(TEXT),
-                );
-                ui.label(
-                    RichText::new(format!("{} - {}", j.source, j.version_string))
-                        .size(11.0)
-                        .color(TEXT2),
-                );
-            }
+            ui.collapsing(
+                format!("Detected Java runtimes ({})", state.java_list.len()),
+                |ui| {
+                    for j in &state.java_list {
+                        ui.label(
+                            RichText::new(format!("Java {} · {}", j.major, j.path.display()))
+                                .size(12.0)
+                                .color(TEXT),
+                        );
+                    }
+                },
+            );
             ui.add_space(4.0);
             field_label(ui, "Mode");
             egui::ComboBox::from_id_salt("java-mode")
@@ -348,15 +548,17 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 )
                 .color(MUTED),
             );
-            field_label(ui, "Custom Java path");
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut state.config.java.custom_path);
-                if ui.small_button("Browse").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().pick_file() {
-                        state.config.java.custom_path = p.display().to_string();
+            if state.config.java.mode == "custom" {
+                field_label(ui, "Custom Java path");
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut state.config.java.custom_path);
+                    if ui.small_button("Browse").clicked() {
+                        if let Some(p) = rfd::FileDialog::new().pick_file() {
+                            state.config.java.custom_path = p.display().to_string();
+                        }
                     }
-                }
-            });
+                });
+            }
             ui.add_space(4.0);
             gpu_preference_selector(ui, &mut state.config.gpu_preference);
             gpu_status(ui, ctx, state);
@@ -364,19 +566,28 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 save_settings(state, "Java & GPU settings saved".to_string());
             }
         });
+    }
 
-        ui.add_space(8.0);
+    ui.add_space(8.0);
 
+    if tab == SettingsTab::Minecraft {
         card_frame(ui, |ui| {
-            ui.label(RichText::new("Minecraft Defaults").size(16.0).strong().color(TEXT));
+            ui.label(
+                RichText::new("Minecraft Defaults")
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT),
+            );
             field_label(ui, "Default min memory (MB)");
             ui.text_edit_singleline(&mut state.settings_mem_min);
             field_label(ui, "Default max memory (MB)");
             ui.text_edit_singleline(&mut state.settings_mem_max);
-            field_label(ui, "Default JVM arguments");
-            ui.text_edit_singleline(&mut state.settings_jvm);
-            field_label(ui, "Default game arguments");
-            ui.text_edit_singleline(&mut state.settings_game_args);
+            ui.collapsing("Advanced launch arguments", |ui| {
+                field_label(ui, "Default JVM arguments");
+                ui.text_edit_singleline(&mut state.settings_jvm);
+                field_label(ui, "Default game arguments");
+                ui.text_edit_singleline(&mut state.settings_game_args);
+            });
             if ui.button("Save Minecraft defaults").clicked() {
                 match (
                     state.settings_mem_min.trim().parse::<u64>(),
@@ -399,11 +610,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 }
             }
         });
+    }
 
-        ui.add_space(8.0);
+    ui.add_space(8.0);
 
+    if tab == SettingsTab::About {
         card_frame(ui, |ui| {
-            ui.label(RichText::new("About MONORYX").size(16.0).strong().color(TEXT));
+            ui.label(
+                RichText::new("About MONORYX")
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT),
+            );
             ui.label(
                 RichText::new(format!(
                     "Version {} - High-Performance Native Launcher",
@@ -426,6 +644,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 }
             });
         });
+    }
 }
 
 pub(super) fn gpu_preference_selector(ui: &mut egui::Ui, preference: &mut GpuPreference) {
@@ -457,9 +676,7 @@ fn gpu_status(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut AppState) {
         return;
     }
     let auto_id = egui::Id::new("gpu-autodetect-once");
-    if !ctx
-        .data_mut(|data| data.get_temp::<bool>(auto_id).unwrap_or(false))
-    {
+    if !ctx.data_mut(|data| data.get_temp::<bool>(auto_id).unwrap_or(false)) {
         ctx.data_mut(|data| data.insert_temp(auto_id, true));
         state.refresh_gpus();
     }

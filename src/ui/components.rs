@@ -1,5 +1,5 @@
 use crate::ui::theme::{
-    ACCENT, ACCENT_HOVER, BORDER, BORDER_ACCENT, BOOST, BOOST_BG, BOOST_HOVER, DANGER, ELEVATED,
+    ACCENT, ACCENT_HOVER, BOOST, BOOST_BG, BOOST_HOVER, BORDER, BORDER_ACCENT, DANGER, ELEVATED,
     ELEVATED2, HOVER, MUTED, OK, SELECTED_FG, TEXT, TEXT2, WARNING,
 };
 use egui::{Color32, CornerRadius, RichText, Stroke};
@@ -110,7 +110,9 @@ pub fn hover_card_frame(
 ) -> egui::Response {
     let id = ui.make_persistent_id(id_salt);
     let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
-    let fade = ui.ctx().animate_bool_with_time(id.with("hover"), hovered, 0.15);
+    let fade = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), hovered, 0.15);
     let fill = ELEVATED.lerp_to_gamma(ELEVATED2, fade);
     let border_color = BORDER.lerp_to_gamma(Color32::from_rgb(52, 55, 65), fade);
 
@@ -169,15 +171,10 @@ pub fn play_hero_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         ui.ctx().request_repaint();
     }
     let fill = ACCENT.lerp_to_gamma(ACCENT_HOVER, fade);
-    let btn = egui::Button::new(
-        RichText::new(text)
-            .strong()
-            .size(14.0)
-            .color(SELECTED_FG),
-    )
-    .fill(fill)
-    .corner_radius(CornerRadius::same(8))
-    .stroke(Stroke::NONE);
+    let btn = egui::Button::new(RichText::new(text).strong().size(14.0).color(SELECTED_FG))
+        .fill(fill)
+        .corner_radius(CornerRadius::same(8))
+        .stroke(Stroke::NONE);
     let response = ui.add_sized(egui::vec2(150.0, 42.0), btn);
     ui.ctx()
         .data_mut(|data| data.insert_temp(id, response.hovered()));
@@ -207,7 +204,9 @@ pub fn boost_toggle_button(ui: &mut egui::Ui, active: bool) -> egui::Response {
 pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let id = ui.next_auto_id();
     let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
-    let fade = ui.ctx().animate_bool_with_time(id.with("hover"), hovered, 0.12);
+    let fade = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), hovered, 0.12);
     if fade > 0.001 && fade < 0.999 {
         ui.ctx().request_repaint();
     }
@@ -229,7 +228,9 @@ pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 pub fn action_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let id = ui.next_auto_id();
     let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
-    let fade = ui.ctx().animate_bool_with_time(id.with("hover"), hovered, 0.12);
+    let fade = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), hovered, 0.12);
     if fade > 0.001 && fade < 0.999 {
         ui.ctx().request_repaint();
     }
@@ -251,7 +252,9 @@ pub fn action_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let id = ui.next_auto_id();
     let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
-    let fade = ui.ctx().animate_bool_with_time(id.with("hover"), hovered, 0.12);
+    let fade = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), hovered, 0.12);
     if fade > 0.001 && fade < 0.999 {
         ui.ctx().request_repaint();
     }
@@ -317,7 +320,8 @@ pub fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(54.0, 54.0), egui::Sense::hover());
         let center = rect.center();
         ui.painter().circle_filled(center, 26.0_f32, ELEVATED2);
-        ui.painter().circle_stroke(center, 26.0_f32, Stroke::new(1.0_f32, BORDER));
+        ui.painter()
+            .circle_stroke(center, 26.0_f32, Stroke::new(1.0_f32, BORDER));
 
         ui.painter().circle_stroke(
             center + egui::vec2(-3.0, -3.0),

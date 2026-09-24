@@ -151,7 +151,20 @@ pub async fn fetch_version_json(
             return Ok(v);
         }
     }
-    let v: VersionJson = crate::utils::net::get_json_with_retry(client, manifest_url, None).await?;
+    let v: VersionJson =
+        match crate::utils::net::get_json_with_retry(client, manifest_url, None).await {
+            Ok(version) => version,
+            Err(error) => {
+                if let Some(version) = cache
+                    .get_stale(&key)
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                {
+                    tracing::warn!("using cached metadata for {version_id} while offline");
+                    return Ok(version);
+                }
+                return Err(error);
+            }
+        };
 
     let resolved = Box::pin(resolve_inheritance(client, cache, v)).await?;
     if let Ok(bytes) = serde_json::to_vec(&resolved) {

@@ -48,7 +48,24 @@ pub fn build_classpath(
     default_base: &str,
 ) -> Vec<std::path::PathBuf> {
     let mut cp = Vec::new();
-    for lib in libraries {
+    let mut last_by_artifact = std::collections::HashMap::new();
+    for (index, lib) in libraries.iter().enumerate() {
+        let parts: Vec<_> = lib.name.split(':').collect();
+        if parts.len() >= 3 && library_applies(lib) {
+            last_by_artifact.insert(
+                (parts[0], parts[1], parts.get(3).copied().unwrap_or("")),
+                index,
+            );
+        }
+    }
+    for (index, lib) in libraries.iter().enumerate() {
+        let parts: Vec<_> = lib.name.split(':').collect();
+        if parts.len() >= 3
+            && last_by_artifact.get(&(parts[0], parts[1], parts.get(3).copied().unwrap_or("")))
+                != Some(&index)
+        {
+            continue;
+        }
         if !library_applies(lib) {
             continue;
         }
@@ -119,5 +136,28 @@ mod tests {
             url: None,
         };
         assert!(!library_applies(&lib));
+    }
+
+    #[test]
+    fn later_installer_library_replaces_vanilla_module() {
+        let lib = |name: &str| Library {
+            name: name.to_string(),
+            rules: None,
+            downloads: None,
+            natives: None,
+            extract: None,
+            url: None,
+        };
+        let cp = build_classpath(
+            &[
+                lib("net.sf.jopt-simple:jopt-simple:5.0.4"),
+                lib("net.sf.jopt-simple:jopt-simple:6.0-alpha-3"),
+            ],
+            std::path::Path::new("libs"),
+            std::path::Path::new("client.jar"),
+            "https://libraries.minecraft.net",
+        );
+        assert_eq!(cp.len(), 2);
+        assert!(cp[0].to_string_lossy().contains("6.0-alpha-3"));
     }
 }

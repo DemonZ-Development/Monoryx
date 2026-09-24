@@ -187,7 +187,6 @@ pub fn build_facets(
         }
     }
     if let Some(l) = loader {
-
         let is_pack_or_shader = matches!(project_type, Some("shader") | Some("resourcepack"));
         if !is_pack_or_shader && !l.is_empty() && l != "vanilla" && l != "minecraft" {
             facets.push(vec![format!("categories:{l}")]);

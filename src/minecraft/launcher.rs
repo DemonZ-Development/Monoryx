@@ -143,10 +143,7 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         ctx.memory_min_mb.clamp(128, max_mem)
     };
 
-    let mut jvm: Vec<String> = vec![
-        format!("-Xms{min_mem}M"),
-        format!("-Xmx{max_mem}M"),
-    ];
+    let mut jvm: Vec<String> = vec![format!("-Xms{min_mem}M"), format!("-Xmx{max_mem}M")];
 
     let modern = ctx.version.arguments.is_some();
     if modern {
@@ -211,7 +208,9 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
                 continue;
             }
             if let Some(key) = vm_option_key(arg) {
-                if !has_matching_vm_option(&jvm, key) && !has_matching_vm_option(&user_jvm_args, key) {
+                if !has_matching_vm_option(&jvm, key)
+                    && !has_matching_vm_option(&user_jvm_args, key)
+                {
                     jvm.push(arg.to_string());
                 }
             } else if !jvm.iter().any(|a| a == arg) && !user_jvm_args.iter().any(|a| a == arg) {
@@ -665,12 +664,16 @@ mod tests {
         let mut c = ctx();
         c.skins_restorer_compat = true;
         let plan = build_launch_plan(&c).unwrap();
-        assert!(plan.args.contains(&"-Dskinsrestorer.compat=true".to_string()));
+        assert!(plan
+            .args
+            .contains(&"-Dskinsrestorer.compat=true".to_string()));
 
         let mut c_legacy = ctx();
         c_legacy.skins_restorer_compat = false;
         let plan_legacy = build_launch_plan(&c_legacy).unwrap();
-        assert!(!plan_legacy.args.contains(&"-Dskinsrestorer.compat=true".to_string()));
+        assert!(!plan_legacy
+            .args
+            .contains(&"-Dskinsrestorer.compat=true".to_string()));
     }
 
     #[test]
@@ -678,11 +681,17 @@ mod tests {
         let mut c = ctx();
         c.boost_mode = true;
         let plan = build_launch_plan(&c).unwrap();
-        assert!(plan.args.contains(&"-XX:+IgnoreUnrecognizedVMOptions".to_string()));
-        assert!(plan.args.contains(&"-XX:+UseStringDeduplication".to_string()));
+        assert!(plan
+            .args
+            .contains(&"-XX:+IgnoreUnrecognizedVMOptions".to_string()));
+        assert!(plan
+            .args
+            .contains(&"-XX:+UseStringDeduplication".to_string()));
         assert!(plan.args.contains(&"-XX:+UseG1GC".to_string()));
         assert!(plan.args.contains(&"-XX:+UseCompressedOops".to_string()));
-        assert!(plan.args.contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
+        assert!(plan
+            .args
+            .contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
         assert!(plan.args.contains(&"-XX:MinHeapFreeRatio=10".to_string()));
         assert!(plan.args.contains(&"-XX:MaxHeapFreeRatio=20".to_string()));
         assert!(plan.args.contains(&"-XX:-ShrinkHeapInSteps".to_string()));
@@ -700,7 +709,9 @@ mod tests {
         let plan = build_launch_plan(&c).unwrap();
 
         assert!(!plan.args.contains(&"-XX:+UseG1GC".to_string()));
-        assert!(!plan.args.contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
+        assert!(!plan
+            .args
+            .contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
         assert!(plan.args.contains(&"-XX:+UseZGC".to_string()));
 
         assert!(plan.args.contains(&"-XX:MaxGCPauseMillis=100".to_string()));

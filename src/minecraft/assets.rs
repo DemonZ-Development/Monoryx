@@ -27,6 +27,7 @@ pub async fn install_assets(
     index_size: u64,
     progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<(usize, usize)> {
+    crate::utils::fs::safe_file_name(index_id)?;
     let indexes_dir = assets_dir.join("indexes");
     std::fs::create_dir_all(&indexes_dir)?;
     let index_path = indexes_dir.join(format!("{index_id}.json"));
@@ -45,9 +46,16 @@ pub async fn install_assets(
     let objects_dir = assets_dir.join("objects");
     let mut jobs: Vec<(String, DownloadJob)> = Vec::new();
     for (name, obj) in &index.objects {
+        if obj.hash.len() != 40 || !obj.hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(crate::error::MonoryxError::UnsafePath(obj.hash.clone()));
+        }
         let prefix = obj.hash.get(0..2).unwrap_or("xx").to_string();
         let dest: PathBuf = objects_dir.join(&prefix).join(&obj.hash);
-        if dest.exists() && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == obj.size {
+        if dest.exists()
+            && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == obj.size
+            && crate::utils::hash::sha1_file(&dest)
+                .is_ok_and(|hash| hash.eq_ignore_ascii_case(&obj.hash))
+        {
             continue;
         }
         let url = format!("{RESOURCE_BASE}/{prefix}/{}", obj.hash);

@@ -99,7 +99,16 @@ impl ModLoader for NeoForgeLoader {
         })?;
 
         let profile = crate::loaders::forge::read_forge_installer(&tmp)?;
-        crate::loaders::forge::ensure_supported_processors(&profile, "NeoForge")?;
+        if !profile.processors.is_empty() {
+            crate::loaders::forge::run_official_installer(
+                dm,
+                paths,
+                &tmp,
+                minecraft_version,
+                "NeoForge",
+            )
+            .await?;
+        }
         let cache = crate::storage::cache::DiskCache::new(
             paths.manifests_dir(),
             std::time::Duration::from_secs(3600),
@@ -189,11 +198,11 @@ fn versions_for_mc(all: Vec<String>, mc: &str) -> Vec<String> {
 
 fn latest_release(versions: Vec<String>, mc: &str) -> Result<String> {
     versions
-        .into_iter()
+        .iter()
         .find(|version| !version.contains('-'))
-        .ok_or_else(|| {
-            MonoryxError::LoaderUnavailable(format!("no stable NeoForge for Minecraft {mc}"))
-        })
+        .or_else(|| versions.first())
+        .cloned()
+        .ok_or_else(|| MonoryxError::LoaderUnavailable(format!("no NeoForge for Minecraft {mc}")))
 }
 
 #[cfg(test)]
@@ -249,6 +258,6 @@ mod tests {
         let all = ["26.1.0.2-beta", "26.1.1.10", "26.1.0.10-beta", "26.1.99"];
         let versions = versions_for_mc(all.map(str::to_string).to_vec(), "26.1");
         assert_eq!(versions, ["26.1.0.10-beta", "26.1.0.2-beta"]);
-        assert!(latest_release(versions, "26.1").is_err());
+        assert_eq!(latest_release(versions, "26.1").unwrap(), "26.1.0.10-beta");
     }
 }

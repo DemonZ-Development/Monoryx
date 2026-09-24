@@ -30,23 +30,29 @@ struct FabricLoaderVersions(Vec<FabricLoaderEntry>);
 
 impl FabricLoaderVersions {
     fn latest_stable(self, minecraft_version: &str) -> Result<String> {
-        self.0
+        let mut stable: Vec<String> = self
+            .0
             .into_iter()
             .map(|entry| entry.loader)
-            .find(|loader| loader.stable)
+            .filter(|loader| loader.stable)
             .map(|loader| loader.version)
-            .ok_or_else(|| {
-                MonoryxError::LoaderUnavailable(format!(
-                    "no stable Fabric loader for {minecraft_version}"
-                ))
-            })
+            .collect();
+        crate::loaders::sort_versions(&mut stable);
+        stable.into_iter().next().ok_or_else(|| {
+            MonoryxError::LoaderUnavailable(format!(
+                "no stable Fabric loader for {minecraft_version}"
+            ))
+        })
     }
 
     fn available_versions(self) -> Vec<String> {
-        self.0
+        let mut versions: Vec<String> = self
+            .0
             .into_iter()
             .map(|entry| entry.loader.version)
-            .collect()
+            .collect();
+        crate::loaders::sort_versions(&mut versions);
+        versions
     }
 }
 
@@ -244,6 +250,17 @@ mod tests {
     #[test]
     fn nested_schema_selects_first_stable_loader_not_intermediary() {
         assert_eq!(nested_versions().latest_stable("1.21.1").unwrap(), "0.16.9");
+    }
+
+    #[test]
+    fn newest_stable_wins_when_api_order_changes() {
+        let versions: FabricLoaderVersions = serde_json::from_value(serde_json::json!([
+            loader_entry("0.16.9", true),
+            loader_entry("0.19.5", true),
+            loader_entry("0.20.0-beta.1", false)
+        ]))
+        .unwrap();
+        assert_eq!(versions.latest_stable("26.3").unwrap(), "0.19.5");
     }
 
     #[test]

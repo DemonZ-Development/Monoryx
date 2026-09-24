@@ -16,24 +16,41 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         if primary_button(ui, "+ New instance").clicked() {
             open_new_dialog(state);
         }
-        if ui
-            .add(
-                egui::Button::new(RichText::new("Import .mrpack").size(13.0).color(TEXT))
-                    .fill(ELEVATED2)
-                    .stroke(Stroke::new(1.0_f32, BORDER))
-                    .corner_radius(CornerRadius::same(8)),
-            )
-            .on_hover_text("Create a new instance from a local .mrpack file")
-            .clicked()
-        {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Modrinth Modpack", &["mrpack"])
-                .pick_file()
-            {
-                state.global_status = "Importing modpack...".to_string();
-                crate::app::tasks::install_pack_file(state, path);
+        ui.menu_button("Import", |ui| {
+            if ui.button("Modrinth pack (.mrpack)").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Modrinth Modpack", &["mrpack"])
+                    .pick_file()
+                {
+                    state.global_status = "Importing modpack...".to_string();
+                    crate::app::tasks::install_pack_file(state, path);
+                }
+                ui.close();
             }
-        }
+            if ui.button("MONORYX archive (.zip)").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("MONORYX export", &["zip"])
+                    .pick_file()
+                {
+                    let manager = state.instances.clone();
+                    let tx = state.tx.clone();
+                    let ctx = state.egui_ctx.clone();
+                    state.notify("Importing local instance archive...");
+                    state.spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::instance::export::import_instance_export(&manager, &path)
+                                .map(|config| config.id)
+                                .map_err(|error| error.user_message())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()));
+                        let _ = tx.send(crate::app::events::AppEvent::InstanceImported(result));
+                        ctx.request_repaint();
+                    });
+                }
+                ui.close();
+            }
+        });
         if ui
             .checkbox(&mut state.show_snapshots, "Show snapshots")
             .changed()
@@ -71,8 +88,13 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                             badge(ui, &inst.loader_version);
                         }
                         badge(ui, &format!("{} mods", state.instances.mod_count(&inst.id)));
-                        let ram_text = if boost_on && inst.memory_max_mb == crate::utils::system::default_max_memory_mb() {
-                            format!("{} MB (Eco Mode)", crate::utils::system::default_boost_max_memory_mb())
+                        let ram_text = if boost_on
+                            && inst.memory_max_mb == crate::utils::system::default_max_memory_mb()
+                        {
+                            format!(
+                                "{} MB (Eco Mode)",
+                                crate::utils::system::default_boost_max_memory_mb()
+                            )
                         } else {
                             format!("{} MB RAM", inst.memory_max_mb)
                         };
@@ -81,12 +103,23 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if running {
-                        let btn = egui::Button::new(RichText::new("RUNNING").strong().color(crate::ui::theme::OK))
-                            .fill(ELEVATED2)
-                            .stroke(Stroke::new(1.0_f32, BORDER))
-                            .corner_radius(CornerRadius::same(8));
+                        let btn = egui::Button::new(
+                            RichText::new("RUNNING")
+                                .strong()
+                                .color(crate::ui::theme::OK),
+                        )
+                        .fill(ELEVATED2)
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .corner_radius(CornerRadius::same(8));
                         ui.add_enabled(false, btn);
-                    } else if ui.add(egui::Button::new(RichText::new("Play").strong().color(SELECTED_FG)).fill(crate::ui::theme::ACCENT).corner_radius(CornerRadius::same(8))).clicked() {
+                    } else if ui
+                        .add(
+                            egui::Button::new(RichText::new("Play").strong().color(SELECTED_FG))
+                                .fill(crate::ui::theme::ACCENT)
+                                .corner_radius(CornerRadius::same(8)),
+                        )
+                        .clicked()
+                    {
                         state.selected_instance = Some(inst.id.clone());
                         state.save_config();
                         crate::app::tasks::play_instance(state, inst.id.clone());
@@ -103,29 +136,31 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 if ui.small_button("Edit").clicked() {
                     state.edit_instance = Some(inst.clone());
                 }
-                if ui.small_button("Duplicate").clicked() {
-                    match state
-                        .instances
-                        .duplicate(&inst.id, format!("{} Copy", inst.name))
-                    {
-                        Ok(_) => {
-                            state.refresh_instances();
-                            state.notify("Instance duplicated");
+                ui.menu_button("More", |ui| {
+                    if ui.button("Duplicate").clicked() {
+                        match state
+                            .instances
+                            .duplicate(&inst.id, format!("{} Copy", inst.name))
+                        {
+                            Ok(_) => {
+                                state.refresh_instances();
+                                state.notify("Instance duplicated");
+                            }
+                            Err(e) => state.fail(e.user_message()),
                         }
-                        Err(e) => state.fail(e.user_message()),
                     }
-                }
-                if ui.small_button("Folder").clicked() {
-                    let _ = open::that(state.instances.game_dir(&inst.id));
-                }
-                if ui.small_button("Repair").clicked() {
-                    state.global_status = "Repairing...".to_string();
-                    crate::app::tasks::repair_instance(state, inst.id.clone());
-                }
-                if ui.small_button(RichText::new("Delete")).clicked() {
-                    state.confirm_delete = Some(inst.id.clone());
-                    state.confirm_title = format!("Delete \"{}\"?", inst.name);
-                }
+                    if ui.button("Open folder").clicked() {
+                        let _ = open::that(state.instances.game_dir(&inst.id));
+                    }
+                    if ui.button("Repair files").clicked() {
+                        state.global_status = "Repairing...".to_string();
+                        crate::app::tasks::repair_instance(state, inst.id.clone());
+                    }
+                    if ui.button(RichText::new("Delete").color(DANGER)).clicked() {
+                        state.confirm_delete = Some(inst.id.clone());
+                        state.confirm_title = format!("Delete \"{}\"?", inst.name);
+                    }
+                });
             });
         });
         ui.add_space(6.0);
@@ -153,19 +188,14 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(_ctx, |ui| {
                 ui.label("This removes the instance and its game files. This cannot be undone.");
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
                         state.confirm_delete = None;
                     }
-                    if ui
-                        .button(
-                            RichText::new("Delete")
-                                .color(DANGER),
-                        )
-                        .clicked()
-                    {
+                    if ui.button(RichText::new("Delete").color(DANGER)).clicked() {
                         match state.instances.delete(&id, true) {
                             Ok(()) => {
                                 state.confirm_delete = None;
@@ -253,7 +283,7 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         })
         .width(ui.available_width())
         .show_ui(ui, |ui| {
-            for v in state.new_draft.versions.clone().into_iter().take(200) {
+            for v in state.new_draft.versions.clone() {
                 ui.selectable_value(&mut state.new_draft.version, v.clone(), v);
             }
         });
@@ -342,6 +372,7 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
                 state,
                 state.new_draft.loader,
                 state.new_draft.version.clone(),
+                refresh,
             );
         }
         if !state.new_draft.loading_loaders && !state.new_draft.loader_versions.is_empty() {
@@ -353,7 +384,7 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
                 })
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
-                    for v in state.new_draft.loader_versions.clone().into_iter().take(60) {
+                    for v in state.new_draft.loader_versions.clone() {
                         ui.selectable_value(&mut state.new_draft.loader_version, v.clone(), v);
                     }
                 });
@@ -385,12 +416,6 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
             )
             .color(TEXT2),
         );
-    }
-    if matches!(
-        state.new_draft.loader,
-        LoaderKind::Forge | LoaderKind::Neoforge
-    ) {
-        ui.label(RichText::new("Installer processors are not supported yet. Versions requiring them cannot be installed.").color(TEXT2));
     }
     ui.add_space(12.0);
     ui.separator();

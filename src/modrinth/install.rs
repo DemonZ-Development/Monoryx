@@ -82,11 +82,13 @@ pub async fn install_project(
         } else {
             let matched = versions
                 .iter()
-                .filter(|v| v.game_versions.is_empty() || v.game_versions.iter().any(|g| g == &req.minecraft_version))
+                .filter(|v| {
+                    v.game_versions.is_empty()
+                        || v.game_versions.iter().any(|g| g == &req.minecraft_version)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             if matched.is_empty() {
-
                 versions.clone()
             } else {
                 matched
@@ -172,7 +174,7 @@ pub async fn install_project(
         };
         let dir = target_dir(manager, instance_id, kind);
         std::fs::create_dir_all(&dir)?;
-        let dest = dir.join(&file.filename);
+        let dest = dir.join(crate::utils::fs::safe_file_name(&file.filename)?);
         let mut job =
             DownloadJob::new(&file.filename, &file.url, dest.clone()).with_size(file.size);
         if let Some(sha512) = file.sha512() {
@@ -181,6 +183,14 @@ pub async fn install_project(
             job = job.with_sha1(sha1.to_string());
         }
         dm.download(&job, None).await?;
+        if let Some(previous) = store.load().entries.into_iter().find(|entry| {
+            entry.kind == kind
+                && entry.project_id.as_deref() == Some(&ver.project_id)
+                && entry.file_name != file.filename
+        }) {
+            remove_project_blocking(manager, instance_id, kind, &previous.file_name)
+                .map_err(MonoryxError::Modrinth)?;
+        }
         let title = if ver.project_id == chosen.project_id {
             Some(req.project_title.clone())
         } else {
@@ -223,13 +233,22 @@ pub fn remove_project_blocking(
     kind: ContentKind,
     file_name: &str,
 ) -> std::result::Result<(), String> {
+    crate::utils::fs::safe_file_name(file_name).map_err(|e| e.user_message())?;
     let dir = target_dir(manager, instance_id, kind);
     let direct = dir.join(file_name);
     let disabled = manager
         .disabled_dir(instance_id)
+        .join(kind.subdir())
+        .join(format!("{file_name}.disabled"));
+    let legacy_disabled = manager
+        .disabled_dir(instance_id)
         .join(format!("{file_name}.disabled"));
     let in_place = dir.join(format!("{file_name}.disabled"));
-    for p in [&direct, &disabled, &in_place] {
+    let mut candidates = vec![&direct, &disabled, &in_place];
+    if kind == ContentKind::Mod {
+        candidates.push(&legacy_disabled);
+    }
+    for p in candidates {
         if p.exists() {
             if !crate::utils::fs::is_within_root(&manager.instance_dir(instance_id), p) {
                 return Err("refusing to remove a file outside the instance".to_string());

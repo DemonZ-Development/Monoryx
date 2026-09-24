@@ -104,6 +104,8 @@ pub struct LauncherConfig {
     #[serde(default = "default_height")]
     pub window_height: f32,
     #[serde(default = "default_true")]
+    pub start_maximized: bool,
+    #[serde(default = "default_true")]
     pub completed_onboarding: bool,
     #[serde(default = "default_parallel")]
     pub parallel_downloads: usize,
@@ -151,6 +153,7 @@ impl Default for LauncherConfig {
             default_game_args: String::new(),
             window_width: 1100.0,
             window_height: 700.0,
+            start_maximized: true,
             completed_onboarding: false,
             parallel_downloads: 6,
             show_snapshots: false,
@@ -167,7 +170,8 @@ impl LauncherConfig {
             return Ok(Self::default());
         }
         let text = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))?;
+        let config: Self =
+            toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))?;
         if text.contains("keep_open") || text.contains("keepopen") || text.contains("keep-open") {
             let _ = config.save(path);
         }

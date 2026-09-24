@@ -40,6 +40,21 @@ pub fn safe_join(root: &Path, untrusted: &str) -> Result<PathBuf> {
     Ok(out)
 }
 
+pub fn safe_file_name(name: &str) -> Result<&str> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\', ':', '\0'])
+        || name.chars().any(char::is_control)
+        || Path::new(name)
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(MonoryxError::UnsafePath(name.to_string()));
+    }
+    Ok(name)
+}
+
 pub fn is_within_root(root: &Path, candidate: &Path) -> bool {
     if let (Ok(r), Ok(c)) = (root.canonicalize(), candidate.canonicalize()) {
         return c.starts_with(r);
@@ -119,6 +134,24 @@ mod tests {
         assert!(safe_join(root, "/absolute/path").is_err());
         assert!(safe_join(root, "a/../../b").is_err());
         assert!(safe_join(root, "..\\evil.exe").is_err());
+    }
+
+    #[test]
+    fn remote_filename_must_be_one_file() {
+        for name in [
+            "../config.toml",
+            "..\\config.toml",
+            "/tmp/file",
+            "C:evil",
+            "",
+            "..",
+        ] {
+            assert!(safe_file_name(name).is_err(), "{name}");
+        }
+        assert_eq!(
+            safe_file_name("sodium-1.2.3.jar").unwrap(),
+            "sodium-1.2.3.jar"
+        );
     }
 
     #[test]

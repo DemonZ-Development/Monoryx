@@ -42,10 +42,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 field_label(ui, "Username");
                 ui.text_edit_singleline(&mut state.onboarding_user);
                 if !state.onboarding_error.is_empty() {
-                    ui.label(
-                        RichText::new(&state.onboarding_error)
-                            .color(DANGER),
-                    );
+                    ui.label(RichText::new(&state.onboarding_error).color(DANGER));
                 }
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Offline").size(11.0).color(TEXT2));
@@ -93,10 +90,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             );
             super::settings::gpu_preference_selector(ui, &mut state.config.gpu_preference);
             if !state.onboarding_error.is_empty() {
-                ui.label(
-                    RichText::new(&state.onboarding_error)
-                        .color(DANGER),
-                );
+                ui.label(RichText::new(&state.onboarding_error).color(DANGER));
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {

@@ -22,14 +22,16 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.0.0-beta" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.1.0-beta" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.1.0-beta" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
-          Compress-Archive -Path target\release\monoryx.exe, README.md, LICENSE -DestinationPath dist\monoryx-v1.0.0-beta-windows-x64.zip -Force
+          Compress-Archive -Path target\release\monoryx.exe, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist\monoryx-v$version-windows-x64.zip" -Force
       - name: Upload Windows Assets
         uses: actions/upload-artifact@v4
         with:
@@ -47,10 +49,22 @@ jobs:
           sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
       - name: Build release binary
         run: cargo build --release
-      - name: Package Linux tarball
+      - name: Package Linux assets
         run: |
-          mkdir -p dist
-          tar -czf dist/monoryx-v1.0.0-beta-linux-x64.tar.gz -C target/release monoryx
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          if [ -z "$VERSION" ]; then VERSION="1.1.0-beta"; fi
+          mkdir -p dist/package
+          cp target/release/monoryx dist/package/
+          chmod +x dist/package/monoryx
+          cp installer/install.sh dist/package/
+          chmod +x dist/package/install.sh
+          cp installer/uninstall.sh dist/package/
+          chmod +x dist/package/uninstall.sh
+          cp -r assets dist/package/ 2>/dev/null || true
+          cp README.md LICENSE CHANGELOG.md dist/package/ 2>/dev/null || true
+          tar -czf "dist/monoryx-v${VERSION}-linux-x64.tar.gz" -C dist/package .
+          cp installer/install.sh "dist/monoryx-installer-linux.sh"
       - name: Upload Linux Assets
         uses: actions/upload-artifact@v4
         with:
@@ -72,5 +86,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.0.0-beta"; fi
-          gh release upload "$TAG" release-assets/* --clobber
+          if [ -z "$TAG" ]; then TAG="v1.1.0-beta"; fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* --title "MONORYX $TAG" --notes-file CHANGELOG.md --prerelease
+          fi

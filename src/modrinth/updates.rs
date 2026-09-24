@@ -3,7 +3,7 @@ use crate::downloads::{DownloadJob, DownloadManager};
 use crate::error::{MonoryxError, Result};
 use crate::instance::manager::InstanceManager;
 use crate::modrinth::api::ModrinthClient;
-use crate::modrinth::models::{is_compatible, pick_best_version, primary_file};
+use crate::modrinth::models::{is_compatible, pick_best_version, primary_file, ProjectVersion};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -17,15 +17,39 @@ pub struct UpdateInfo {
     pub new_version_id: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UpdateScan {
+    pub updates: Vec<UpdateInfo>,
+    pub checked: usize,
+    pub untracked: usize,
+    pub errors: Vec<String>,
+}
+
+fn best_compatible_version<'a>(
+    versions: &'a [ProjectVersion],
+    kind: ContentKind,
+    minecraft_version: &str,
+    loader_id: &str,
+) -> Option<&'a ProjectVersion> {
+    if kind == ContentKind::Mod {
+        pick_best_version(versions, minecraft_version, loader_id)
+    } else {
+        versions
+            .iter()
+            .filter(|version| version.game_versions.iter().any(|v| v == minecraft_version))
+            .max_by(|a, b| a.date_published.cmp(&b.date_published))
+    }
+}
+
 pub async fn check_updates(
     mr: &ModrinthClient,
     manager: &InstanceManager,
     instance_id: &str,
     minecraft_version: &str,
     loader: &str,
-) -> Result<Vec<UpdateInfo>> {
+) -> Result<UpdateScan> {
     let store = ContentStore::for_instance(&manager.instance_dir(instance_id));
-    let content = store.load();
+    let content = store.load_result()?;
     let loader_id = match loader.to_lowercase().as_str() {
         "fabric" => "fabric",
         "quilt" => "quilt",
@@ -33,15 +57,24 @@ pub async fn check_updates(
         "neoforge" => "neoforge",
         _ => "minecraft",
     };
-    let mut out = Vec::new();
+    let mut scan = UpdateScan::default();
     for entry in content.entries {
         let Some(pid) = entry.project_id.clone() else {
+            scan.untracked += 1;
             continue;
         };
         let versions = match mr.project_versions(&pid, None, None).await {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(error) => {
+                scan.errors.push(format!(
+                    "{}: {}",
+                    entry.project_title.as_deref().unwrap_or(&entry.file_name),
+                    error.user_message()
+                ));
+                continue;
+            }
         };
+        scan.checked += 1;
         let compat: Vec<_> = versions
             .into_iter()
             .filter(|v| {
@@ -52,13 +85,21 @@ pub async fn check_updates(
                 }
             })
             .collect();
-        let Some(best) = pick_best_version(&compat, minecraft_version, loader_id) else {
+        let best = best_compatible_version(&compat, entry.kind, minecraft_version, loader_id);
+        let Some(best) = best else {
             continue;
         };
         let current = entry.version_id.clone().unwrap_or_default();
+        if compat
+            .iter()
+            .find(|version| version.id == current)
+            .is_some_and(|version| best.date_published <= version.date_published)
+        {
+            continue;
+        }
         if best.id != current {
             let title = entry.project_title.clone().unwrap_or_else(|| pid.clone());
-            out.push(UpdateInfo {
+            scan.updates.push(UpdateInfo {
                 file_name: entry.file_name.clone(),
                 kind: entry.kind,
                 project_id: pid,
@@ -69,7 +110,7 @@ pub async fn check_updates(
             });
         }
     }
-    Ok(out)
+    Ok(scan)
 }
 
 pub async fn update_project(
@@ -88,13 +129,19 @@ pub async fn update_project(
         .ok_or_else(|| MonoryxError::Modrinth("update version vanished".to_string()))?;
     let file = primary_file(&ver)
         .ok_or_else(|| MonoryxError::Modrinth("update has no downloadable files".to_string()))?;
+    let store = ContentStore::for_instance(&manager.instance_dir(instance_id));
+    let previous = store
+        .load()
+        .entries
+        .into_iter()
+        .find(|entry| entry.kind == info.kind && entry.file_name == info.file_name);
     let dir = match info.kind {
         ContentKind::Mod => manager.mods_dir(instance_id),
         ContentKind::Resourcepack => manager.resourcepacks_dir(instance_id),
         ContentKind::Shader => manager.shaderpacks_dir(instance_id),
     };
     std::fs::create_dir_all(&dir)?;
-    let dest = dir.join(&file.filename);
+    let dest = dir.join(crate::utils::fs::safe_file_name(&file.filename)?);
     let mut job = DownloadJob::new(&file.filename, &file.url, dest.clone()).with_size(file.size);
     if let Some(h) = file.sha512() {
         job = job.with_sha512(h.to_string());
@@ -102,32 +149,48 @@ pub async fn update_project(
         job = job.with_sha1(h.to_string());
     }
     dm.download(&job, None).await?;
+    let was_enabled = previous.as_ref().is_none_or(|entry| entry.enabled);
+    if !was_enabled {
+        let disabled = manager.disabled_dir(instance_id).join(info.kind.subdir());
+        std::fs::create_dir_all(&disabled)?;
+        let target = disabled.join(format!("{}.disabled", file.filename));
+        if target.exists() {
+            std::fs::remove_file(&target)?;
+        }
+        std::fs::rename(&dest, target)?;
+    }
     if file.filename != info.file_name {
+        crate::utils::fs::safe_file_name(&info.file_name)?;
         let old = dir.join(&info.file_name);
         let old_disabled = manager
             .disabled_dir(instance_id)
+            .join(info.kind.subdir())
             .join(format!("{}.disabled", info.file_name));
-        for p in [&old, &old_disabled] {
+        let legacy_disabled = manager
+            .disabled_dir(instance_id)
+            .join(format!("{}.disabled", info.file_name));
+        for p in [&old, &old_disabled, &legacy_disabled] {
             if p.exists() && crate::utils::fs::is_within_root(&manager.instance_dir(instance_id), p)
             {
                 let _ = std::fs::remove_file(p);
             }
         }
     }
-    let store = ContentStore::for_instance(&manager.instance_dir(instance_id));
     store.remove(info.kind, &info.file_name)?;
     store.upsert(crate::content::InstalledEntry {
         file_name: file.filename.clone(),
         kind: info.kind,
         project_id: Some(info.project_id.clone()),
-        project_slug: None,
+        project_slug: previous
+            .as_ref()
+            .and_then(|entry| entry.project_slug.clone()),
         project_title: Some(info.title.clone()),
         version_id: Some(ver.id.clone()),
         version_number: Some(ver.version_number.clone()),
         file_hash_sha512: file.sha512().map(str::to_string),
         file_hash_sha1: file.sha1().map(str::to_string),
         size: file.size,
-        enabled: true,
+        enabled: was_enabled,
         installed_at: chrono::Utc::now().to_rfc3339(),
         loader: loader.to_string(),
         game_version: minecraft_version.to_string(),
@@ -144,7 +207,9 @@ pub async fn update_all(
     loader: &str,
     progress: Option<HashMap<String, String>>,
 ) -> Result<Vec<String>> {
-    let updates = check_updates(mr, manager, instance_id, minecraft_version, loader).await?;
+    let updates = check_updates(mr, manager, instance_id, minecraft_version, loader)
+        .await?
+        .updates;
     let mut done = Vec::new();
     for u in updates {
         let _ = &progress;
@@ -152,4 +217,23 @@ pub async fn update_all(
         done.push(f);
     }
     Ok(done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_pack_updates_ignore_loader_and_pick_newest_publish_date() {
+        let versions: Vec<ProjectVersion> = serde_json::from_value(serde_json::json!([
+            {"id":"old","project_id":"p","name":"Old","version_number":"1", "date_published":"2026-01-01T00:00:00Z", "files":[], "dependencies":[], "game_versions":["1.21.1"], "loaders":["minecraft"]},
+            {"id":"new","project_id":"p","name":"New","version_number":"2", "date_published":"2026-02-01T00:00:00Z", "files":[], "dependencies":[], "game_versions":["1.21.1"], "loaders":["iris"]}
+        ])).unwrap();
+        assert_eq!(
+            best_compatible_version(&versions, ContentKind::Resourcepack, "1.21.1", "fabric")
+                .unwrap()
+                .id,
+            "new"
+        );
+    }
 }
