@@ -65,11 +65,14 @@ jobs:
           cp README.md LICENSE CHANGELOG.md dist/package/ 2>/dev/null || true
           tar -czf "dist/monoryx-v${VERSION}-linux-x64.tar.gz" -C dist/package .
           cp installer/install.sh "dist/monoryx-installer-linux.sh"
+          rm -rf dist/package
       - name: Upload Linux Assets
         uses: actions/upload-artifact@v4
         with:
           name: linux-assets
-          path: dist/*
+          path: |
+            dist/*.tar.gz
+            dist/*.sh
 
   publish-release:
     needs: [build-windows, build-linux]
@@ -87,8 +90,12 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           if [ -z "$TAG" ]; then TAG="v1.1.0-beta"; fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/* --clobber
-          else
-            gh release create "$TAG" release-assets/* --title "MONORYX $TAG" --notes-file CHANGELOG.md --prerelease
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "MONORYX $TAG" --notes-file CHANGELOG.md --latest
           fi
+          for f in release-assets/*; do
+            if [ -f "$f" ]; then
+              gh release upload "$TAG" "$f" --clobber
+            fi
+          done
+
