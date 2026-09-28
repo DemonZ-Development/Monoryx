@@ -25,7 +25,7 @@ impl CloseAction {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Never => "Never",
+            Self::Never => "Keep launcher open",
             Self::Minimize => "Minimize",
             Self::Hide => "Close / Hide (restore after game exits)",
         }
@@ -49,6 +49,36 @@ impl GpuPreference {
             Self::HighPerformance => "High performance",
             Self::PowerSaving => "Power saving",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeKind {
+    #[default]
+    Monochrome,
+    Gloss,
+    SoftPink,
+    SoftBrown,
+}
+
+impl ThemeKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Monochrome => "Monochrome",
+            Self::Gloss => "Gloss",
+            Self::SoftPink => "Soft pink",
+            Self::SoftBrown => "Soft brown",
+        }
+    }
+
+    pub const fn all() -> [Self; 4] {
+        [
+            Self::Monochrome,
+            Self::Gloss,
+            Self::SoftPink,
+            Self::SoftBrown,
+        ]
     }
 }
 
@@ -80,6 +110,10 @@ pub struct JavaDefaults {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
     #[serde(default)]
+    pub discord: crate::discord::Settings,
+    #[serde(default)]
+    pub theme: ThemeKind,
+    #[serde(default)]
     pub profile: Option<OfflineProfile>,
     #[serde(default)]
     pub close_action: CloseAction,
@@ -103,7 +137,7 @@ pub struct LauncherConfig {
     pub window_width: f32,
     #[serde(default = "default_height")]
     pub window_height: f32,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub start_maximized: bool,
     #[serde(default = "default_true")]
     pub completed_onboarding: bool,
@@ -111,7 +145,7 @@ pub struct LauncherConfig {
     pub parallel_downloads: usize,
     #[serde(default)]
     pub show_snapshots: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub boost_mode: bool,
     #[serde(default = "default_true")]
     pub auto_check_updates: bool,
@@ -126,10 +160,10 @@ fn default_last_page() -> String {
     "home".to_string()
 }
 fn default_width() -> f32 {
-    1100.0
+    1280.0
 }
 fn default_height() -> f32 {
-    700.0
+    720.0
 }
 fn default_parallel() -> usize {
     6
@@ -138,6 +172,8 @@ fn default_parallel() -> usize {
 impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
+            theme: ThemeKind::default(),
+            discord: crate::discord::Settings::default(),
             profile: None,
             close_action: CloseAction::Hide,
             remember_instance: true,
@@ -151,13 +187,13 @@ impl Default for LauncherConfig {
             gpu_preference: GpuPreference::default(),
             default_jvm_args: String::new(),
             default_game_args: String::new(),
-            window_width: 1100.0,
-            window_height: 700.0,
-            start_maximized: true,
+            window_width: default_width(),
+            window_height: default_height(),
+            start_maximized: false,
             completed_onboarding: false,
             parallel_downloads: 6,
             show_snapshots: false,
-            boost_mode: true,
+            boost_mode: false,
             auto_check_updates: true,
             skins_restorer_compat: true,
         }
@@ -252,14 +288,29 @@ mod tests {
     }
 
     #[test]
+    fn theme_roundtrip_and_window_defaults() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.toml");
+        let config = LauncherConfig {
+            theme: ThemeKind::SoftPink,
+            ..Default::default()
+        };
+        config.save(&path).unwrap();
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert_eq!(loaded.theme, ThemeKind::SoftPink);
+        assert!(!LauncherConfig::default().start_maximized);
+        assert_eq!(LauncherConfig::default().window_width, 1280.0);
+    }
+
+    #[test]
     fn boost_and_update_defaults() {
         let def = LauncherConfig::default();
-        assert!(def.boost_mode);
+        assert!(!def.boost_mode);
         assert!(def.auto_check_updates);
         assert!(def.skins_restorer_compat);
 
         let parsed: LauncherConfig = toml::from_str("").unwrap();
-        assert!(parsed.boost_mode);
+        assert!(!parsed.boost_mode);
         assert!(parsed.auto_check_updates);
         assert!(parsed.skins_restorer_compat);
     }

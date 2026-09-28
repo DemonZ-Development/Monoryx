@@ -142,6 +142,12 @@ pub async fn update_project(
     };
     std::fs::create_dir_all(&dir)?;
     let dest = dir.join(crate::utils::fs::safe_file_name(&file.filename)?);
+    if file.sha512().is_none() && file.sha1().is_none() {
+        return Err(MonoryxError::Modrinth(format!(
+            "{} has no file checksum, so the download cannot be verified",
+            file.filename
+        )));
+    }
     let mut job = DownloadJob::new(&file.filename, &file.url, dest.clone()).with_size(file.size);
     if let Some(h) = file.sha512() {
         job = job.with_sha512(h.to_string());

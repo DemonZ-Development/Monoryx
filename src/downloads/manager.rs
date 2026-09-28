@@ -16,6 +16,7 @@ pub type LifecycleCallback = Arc<dyn Fn(DownloadEvent) + Send + Sync>;
 pub struct DownloadManager {
     client: reqwest::Client,
     semaphore: Arc<Semaphore>,
+    max_concurrent: usize,
     max_retries: u32,
     observer: Option<LifecycleCallback>,
 }
@@ -66,6 +67,7 @@ impl DownloadManager {
         Self {
             client,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            max_concurrent,
             max_retries: 3,
             observer: None,
         }
@@ -85,11 +87,12 @@ impl DownloadManager {
         if !job.dest.exists() {
             return false;
         }
-        if let Ok(meta) = std::fs::metadata(&job.dest) {
-            if let Some(expected) = job.expected_size {
-                if meta.len() != expected {
-                    return false;
-                }
+        let Ok(meta) = std::fs::metadata(&job.dest) else {
+            return false;
+        };
+        if let Some(expected) = job.expected_size {
+            if meta.len() != expected {
+                return false;
             }
         }
         if let Some(sha1) = &job.expected_sha1 {
@@ -341,25 +344,25 @@ impl DownloadManager {
     }
 
     pub async fn download_all(&self, jobs: &[DownloadJob], on_each: EachCallback) -> Result<()> {
-        let mut handles = Vec::new();
-        #[allow(clippy::unnecessary_to_owned)]
-        for job in jobs.to_vec() {
-            let this = self.clone();
-            let cb = on_each.clone();
-            handles.push(tokio::spawn(async move {
-                let job_for_cb = job.clone();
-                let inner: ProgressCallback = Arc::new(move |p| {
-                    if let Some(f) = &cb {
-                        f(&job_for_cb, p);
-                    }
-                });
-                this.download(&job, Some(inner)).await
-            }));
-        }
-        for h in handles {
-            h.await
-                .map_err(|e| MonoryxError::Download(e.to_string()))??;
-        }
+        futures::stream::iter(jobs.iter().cloned())
+            .map(|job| {
+                let this = self.clone();
+                let cb = on_each.clone();
+                async move {
+                    let job_for_cb = job.clone();
+                    let inner: ProgressCallback = Arc::new(move |p| {
+                        if let Some(f) = &cb {
+                            f(&job_for_cb, p);
+                        }
+                    });
+                    this.download(&job, Some(inner)).await
+                }
+            })
+            .buffer_unordered(self.max_concurrent)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
         Ok(())
     }
 }

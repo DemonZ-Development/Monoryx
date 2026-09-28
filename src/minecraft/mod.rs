@@ -1,10 +1,15 @@
+pub mod activity;
 pub mod arguments;
 pub mod assets;
 pub mod crash;
+pub mod diagnostics;
+pub mod game_window;
 pub mod installer;
 pub mod launcher;
 pub mod libraries;
 pub mod manifest;
 pub mod natives;
+pub mod nbt;
+pub mod patch_notes;
 pub mod rules;
 pub mod version;

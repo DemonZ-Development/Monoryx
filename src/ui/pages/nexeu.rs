@@ -1,76 +1,49 @@
 use crate::app::state::AppState;
-use crate::ui::components::{card_frame, page_header};
-use crate::ui::theme::{TEXT, TEXT2};
-use egui::RichText;
+use crate::ui::components::{card_frame, content_primary_button, page_header};
+use crate::ui::theme::{format_bytes, palette, DANGER, MUTED, TEXT, TEXT2};
+use egui::{CornerRadius, RichText, Stroke};
 
 pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
-    page_header(ui, "Nexeu Servers", "Your hosting space.");
-    ui.horizontal_wrapped(|ui| {
-        ui.hyperlink_to("Game panel", "https://game.nexeu.zip/");
-        ui.hyperlink_to("Billing and new servers", "https://client.nexeu.zip/");
-        ui.hyperlink_to("Support on Discord", "https://discord.gg/hSKbA8haZh");
-    });
-    ui.add_space(10.0);
-    card_frame(ui, |ui| {
-        ui.label(
-            RichText::new("Nexeu sign in · Coming soon")
-                .strong()
-                .color(TEXT),
-        );
-        ui.label(
-            RichText::new(
-                "Launcher sign in is coming soon. Manage your account on Nexeu's website for now.",
-            )
-            .color(TEXT2),
-        );
-        ui.add_space(8.0);
-        ui.label(RichText::new("Game panel API · Beta").strong().color(TEXT));
-        egui::CollapsingHeader::new("Connect with a panel API key (Beta)")
-            .id_salt("nexeu-token-connect")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(
-                        "Use the full API key shown when you created it in the game panel. It stays in memory until you disconnect or close the launcher.",
-                    )
-                    .color(TEXT2),
+    page_header(
+        ui,
+        "Nexeu Servers",
+        "Server controls, console and backups in one place.",
+    );
+    if state.nexeu.overview.is_none() {
+        card_frame(ui, |ui| {
+            ui.label(
+                RichText::new("Connect your game panel")
+                    .size(18.0)
+                    .strong()
+                    .color(TEXT),
+            );
+            ui.label(RichText::new("Enter a client API key from the Nexeu game panel. It stays in memory until you disconnect or close MONORYX.").color(TEXT2));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.nexeu.api_key)
+                        .password(true)
+                        .hint_text("Full client API key")
+                        .desired_width(380.0),
                 );
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.nexeu.api_key)
-                            .password(true)
-                            .hint_text("Full game panel API key")
-                            .desired_width(260.0),
-                    );
-                    if ui
-                        .add_enabled(!state.nexeu.loading, egui::Button::new("Connect"))
-                        .clicked()
-                    {
-                        state.nexeu_refresh();
-                    }
-                    if !state.nexeu.api_key.is_empty() && ui.button("Disconnect").clicked() {
-                        let generation = state.nexeu.generation.wrapping_add(1);
-                        state.nexeu = crate::nexeu::Session {
-                            generation,
-                            ..Default::default()
-                        };
-                    }
-                    if state.nexeu.loading {
-                        ui.spinner();
-                    }
-                });
+                if ui
+                    .add_enabled(!state.nexeu.loading, egui::Button::new("Connect"))
+                    .clicked()
+                {
+                    state.nexeu_refresh();
+                }
+                if state.nexeu.loading {
+                    ui.spinner();
+                }
             });
+            ui.hyperlink_to("Manage API keys", "https://game.nexeu.zip/");
+        });
         if !state.nexeu.error.is_empty() {
-            ui.colored_label(crate::ui::theme::DANGER, &state.nexeu.error);
+            ui.colored_label(DANGER, &state.nexeu.error);
         }
-    });
-
-    let Some(overview) = state.nexeu.overview.clone() else {
-        ui.add_space(8.0);
-        ui.label("Your local instances are available while Nexeu is offline.");
         return;
-    };
-    ui.add_space(10.0);
+    }
+    let overview = state.nexeu.overview.clone().unwrap();
     let account = overview
         .account
         .get("user")
@@ -80,34 +53,109 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         .get("username")
         .or_else(|| account.get("name"))
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("Account connected");
-    ui.label(
-        RichText::new(format!("Signed in as {name}"))
-            .strong()
-            .color(TEXT),
-    );
-
-    for announcement in overview.announcements.iter().take(3) {
-        card_frame(ui, |ui| {
-            ui.label(RichText::new(&announcement.title).strong());
-            if let Some(content) = &announcement.content {
-                ui.label(content);
-            }
-        });
-        ui.add_space(4.0);
+        .unwrap_or("Connected account");
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("Connected as {name}")).color(TEXT2));
+        if ui.button("Refresh").clicked() {
+            state.nexeu_refresh();
+        }
+        if ui.button("Disconnect").clicked() {
+            let generation = state.nexeu.generation.wrapping_add(1);
+            state.nexeu = crate::nexeu::Session {
+                generation,
+                ..Default::default()
+            };
+        }
+        if state.nexeu.loading {
+            ui.spinner();
+        }
+    });
+    if !state.nexeu.error.is_empty() {
+        ui.colored_label(DANGER, &state.nexeu.error);
     }
-
-    ui.heading(format!("Servers ({})", overview.servers.len()));
+    ui.add_space(10.0);
     if overview.servers.is_empty() {
-        ui.label("No servers are linked to this game panel account.");
-    }
-    for server in overview.servers {
-        let selected = state.nexeu.selected_server.as_deref() == Some(&server.uuid);
         card_frame(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&server.name).strong().color(TEXT));
-                if let Some(status) = &server.status {
-                    ui.label(status);
+            ui.label("No servers are linked to this account.");
+        });
+        return;
+    }
+    let selected_id = state
+        .nexeu
+        .selected_server
+        .clone()
+        .unwrap_or_else(|| overview.servers[0].uuid.clone());
+    if state.nexeu.selected_server.is_none() {
+        state.nexeu_select_server(selected_id.clone());
+    }
+    let server = overview
+        .servers
+        .iter()
+        .find(|server| server.uuid == selected_id)
+        .unwrap_or(&overview.servers[0]);
+    let sidebar_width = (ui.available_width() * 0.25).clamp(215.0, 310.0);
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(sidebar_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(
+                    RichText::new(format!("SERVERS  {}", overview.servers.len()))
+                        .size(11.0)
+                        .strong()
+                        .color(MUTED),
+                );
+                ui.add_space(5.0);
+                let p = palette(ui.ctx());
+                for item in &overview.servers {
+                    let selected = item.uuid == selected_id;
+                    let response = egui::Frame::new()
+                        .fill(if selected { p.elevated2 } else { p.elevated })
+                        .stroke(Stroke::new(
+                            if selected { 1.5_f32 } else { 1.0_f32 },
+                            if selected { p.accent } else { p.border },
+                        ))
+                        .corner_radius(CornerRadius::same(9))
+                        .inner_margin(egui::Margin::symmetric(12, 10))
+                        .show(ui, |ui| {
+                            ui.set_min_width(sidebar_width - 24.0);
+                            ui.label(RichText::new(&item.name).strong().color(TEXT));
+                            ui.label(
+                                RichText::new(
+                                    item.status.as_deref().unwrap_or("Status unavailable"),
+                                )
+                                .size(11.0)
+                                .color(TEXT2),
+                            );
+                        });
+                    if ui
+                        .interact(
+                            response.response.rect,
+                            ui.make_persistent_id(&item.uuid),
+                            egui::Sense::click(),
+                        )
+                        .clicked()
+                    {
+                        state.nexeu_select_server(item.uuid.clone());
+                    }
+                    ui.add_space(6.0);
+                }
+            },
+        );
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.set_min_width((ui.available_width() - 8.0).max(300.0));
+            card_frame(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&server.name).size(21.0).strong().color(TEXT));
+                    ui.label(
+                        RichText::new(server.status.as_deref().unwrap_or("Unknown")).color(TEXT2),
+                    );
+                });
+                if let Some(description) = &server.description {
+                    if !description.is_empty() {
+                        ui.label(RichText::new(description).color(TEXT2));
+                    }
                 }
                 if let Some(allocation) = &server.allocation {
                     let host = allocation
@@ -116,85 +164,109 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         .or(allocation.ip.as_deref())
                         .unwrap_or("");
                     if !host.is_empty() {
-                        ui.label(format!("{}:{}", host, allocation.port.unwrap_or(25565)));
+                        ui.label(
+                            RichText::new(format!("{}:{}", host, allocation.port.unwrap_or(25565)))
+                                .monospace()
+                                .color(TEXT2),
+                        );
                     }
                 }
+                ui.add_space(9.0);
+                ui.horizontal_wrapped(|ui| {
+                    if content_primary_button(ui, "Start").clicked() {
+                        state.nexeu_power(server.uuid.clone(), "start");
+                    }
+                    if ui.button("Restart").clicked() {
+                        state.nexeu_power(server.uuid.clone(), "restart");
+                    }
+                    if ui.button("Stop").clicked() {
+                        state.nexeu_power(server.uuid.clone(), "stop");
+                    }
+                    if ui.button("Refresh usage").clicked() {
+                        state.nexeu_select_server(server.uuid.clone());
+                    }
+                });
             });
-            if let Some(description) = &server.description {
-                if !description.is_empty() {
-                    ui.label(description);
-                }
-            }
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .button(if selected { "Refresh usage" } else { "Details" })
-                    .clicked()
-                {
-                    state.nexeu_select_server(server.uuid.clone());
-                }
-                if selected {
-                    ui.menu_button("Power", |ui| {
-                        for (label, action) in
-                            [("Start", "start"), ("Stop", "stop"), ("Restart", "restart")]
-                        {
-                            if ui.button(label).clicked() {
-                                state.nexeu_power(server.uuid.clone(), action);
-                                ui.close();
-                            }
-                        }
-                    });
-                    if ui.button("Logs").clicked() {
+            ui.add_space(10.0);
+            let resources = state.nexeu.resources.as_ref();
+            let state_label = resources
+                .and_then(|value| value.get("state"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Unknown");
+            let cpu = resources
+                .and_then(|value| value.get("cpu_absolute"))
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0);
+            let memory = resources
+                .and_then(|value| value.get("memory_bytes"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let disk = resources
+                .and_then(|value| value.get("disk_bytes"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            ui.columns(4, |columns| {
+                metric(&mut columns[0], "STATUS", state_label);
+                metric(&mut columns[1], "CPU", &format!("{cpu:.1}%"));
+                metric(&mut columns[2], "MEMORY", &format_bytes(memory));
+                metric(&mut columns[3], "DISK", &format_bytes(disk));
+            });
+            ui.add_space(10.0);
+            card_frame(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Console").size(16.0).strong().color(TEXT));
+                    if ui.button("Refresh log").clicked() {
                         state.nexeu_load_logs(server.uuid.clone());
                     }
-                }
-                ui.hyperlink_to("Open panel", "https://game.nexeu.zip/");
-            });
-            if selected {
-                if let Some(resources) = &state.nexeu.resources {
-                    let memory = resources
-                        .get("memory_bytes")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0);
-                    let disk = resources
-                        .get("disk_bytes")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0);
-                    let cpu = resources
-                        .get("cpu_absolute")
-                        .and_then(serde_json::Value::as_f64)
-                        .unwrap_or(0.0);
-                    let running = resources
-                        .get("state")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown");
-                    ui.label(format!(
-                        "{running}  •  RAM {:.1} GiB  •  Disk {:.1} GiB  •  CPU {:.1}%",
-                        memory as f64 / 1_073_741_824.0,
-                        disk as f64 / 1_073_741_824.0,
-                        cpu
-                    ));
-                }
-                if let Some(logs) = &state.nexeu.logs {
-                    egui::ScrollArea::vertical()
-                        .max_height(180.0)
-                        .show(ui, |ui| {
-                            ui.monospace(logs);
-                        });
-                }
-                ui.separator();
-                ui.label(RichText::new("Console command").strong());
+                });
+                let p = palette(ui.ctx());
+                egui::Frame::new()
+                    .fill(p.bg)
+                    .stroke(Stroke::new(1.0_f32, p.border))
+                    .corner_radius(CornerRadius::same(7))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .min_scrolled_height(170.0)
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(
+                                            state.nexeu.logs.as_deref().unwrap_or(
+                                                "Refresh the log to view server output.",
+                                            ),
+                                        )
+                                        .monospace()
+                                        .size(11.5)
+                                        .color(TEXT2),
+                                    )
+                                    .wrap(),
+                                );
+                            });
+                    });
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.add(
+                    let edit = ui.add(
                         egui::TextEdit::singleline(&mut state.nexeu.console_command)
-                            .hint_text("e.g. say Hello players")
-                            .desired_width(300.0),
+                            .hint_text("Send a server command")
+                            .desired_width((ui.available_width() - 90.0).max(160.0)),
                     );
-                    if ui.button("Send").clicked() {
+                    if (ui.button("Send").clicked()
+                        || (edit.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter))))
+                        && !state.nexeu.console_command.trim().is_empty()
+                    {
                         state.nexeu_send_command(server.uuid.clone());
                     }
                 });
+            });
+            ui.add_space(10.0);
+            card_frame(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Backups").strong());
+                    ui.label(RichText::new("Backups").size(16.0).strong().color(TEXT));
                     if ui.button("Refresh").clicked() {
                         state.nexeu_load_backups(server.uuid.clone());
                     }
@@ -202,31 +274,47 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         state.nexeu_create_backup(server.uuid.clone());
                     }
                 });
-                if let Some(backups) = state.nexeu.backups.clone() {
+                if let Some(backups) = &state.nexeu.backups {
                     if backups.is_empty() {
-                        ui.label("No backups yet.");
+                        ui.label(RichText::new("No backups yet.").color(TEXT2));
                     }
                     for backup in backups {
-                        let status = if backup.is_successful == Some(true) {
-                            "Ready"
-                        } else {
-                            "Processing"
-                        };
-                        let size = backup
-                            .bytes
-                            .map(crate::ui::theme::format_bytes)
-                            .unwrap_or_default();
-                        ui.label(format!(
-                            "{} · {} · {} · {}",
-                            backup.name,
-                            status,
-                            size,
-                            backup.created.as_deref().unwrap_or("")
-                        ));
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&backup.name).strong().color(TEXT));
+                            ui.label(
+                                RichText::new(if backup.is_successful == Some(true) {
+                                    "Ready"
+                                } else {
+                                    "Processing"
+                                })
+                                .color(TEXT2),
+                            );
+                            if let Some(bytes) = backup.bytes {
+                                ui.label(RichText::new(format_bytes(bytes)).color(TEXT2));
+                            }
+                        });
                     }
+                } else {
+                    ui.label(RichText::new("Loading backups...").color(TEXT2));
                 }
+            });
+        });
+    });
+    for announcement in overview.announcements.iter().take(2) {
+        ui.add_space(8.0);
+        card_frame(ui, |ui| {
+            ui.label(RichText::new(&announcement.title).strong());
+            if let Some(content) = &announcement.content {
+                ui.label(content);
             }
         });
-        ui.add_space(6.0);
     }
+}
+
+fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
+    card_frame(ui, |ui| {
+        ui.label(RichText::new(label).size(10.5).color(MUTED));
+        ui.label(RichText::new(value).size(15.0).strong().color(TEXT));
+    });
 }

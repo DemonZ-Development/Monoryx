@@ -1,9 +1,9 @@
 #ifndef AppVersion
-  #define AppVersion "1.1.0-beta"
+  #define AppVersion "1.2.0"
 #endif
 #define AppName "MONORYX"
 #define AppPublisher "DemonZDevelopment"
-#define AppURL "https://github.com/DemonZDevelopment/monoryx"
+#define AppURL "https://github.com/DemonZ-Development/Monoryx"
 #define AppExe "monoryx.exe"
 
 [Setup]

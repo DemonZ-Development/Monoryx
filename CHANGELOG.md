@@ -1,93 +1,47 @@
-# MONORYX v1.1.0 beta
+# MONORYX 1.2.0
 
-This update mainly focuses on improving loader handling, cleaning up the interface, reducing resource usage, and fixing a number of window and process related issues.
+This release makes it easier to get back into a game, manage its files, and see what went wrong when Minecraft closes unexpectedly.
 
-## Loader and Metadata Changes
+## Home and instances
 
-* Improved Fabric metadata parsing to support both flat and nested version structures.
+- Home puts the selected instance beside its latest screenshot. The rest of your instances stay in a compact list below, and selecting one no longer moves the cards around.
+- The new instance form walks through the name, Minecraft version, and loader. Version search includes Mojang's changelog when one is available.
+- Worlds & Files shows each world's saved name, icon, game mode, version, last-played time, and size. Backups sit beside the selected world; restoring one creates a separate save.
+- The screenshot gallery collects images from MONORYX instances. You can open the gallery from Home or the sidebar.
+- Library shows the instance you are editing, gives installed content room to breathe, and asks before removing it. Downloads focuses on completed installs and failures instead of every successful file transfer.
 
-* Fabric loader selection now prefers the latest stable release and ignores intermediary or unstable builds where appropriate.
+## Discover and servers
 
-* Reworked Forge and NeoForge metadata fetching with more reliable Maven metadata parsing.
+- Discover uses two columns on wide screens. Project details expand in the results list with a version picker, full rendered description, and image viewer.
+- The installer explains when a project has no compatible build. Downloads, image decoding, and metadata requests now have tighter limits so browsing stays responsive.
+- Nexeu Servers has a native dashboard for server status, resource use, console output, power controls, and backups.
 
-* Added retry handling for temporary server and metadata errors.
+## Discord and game performance
 
-* Forge and NeoForge versions are now sorted more consistently while preserving older version suffixes.
+- Discord activity is on by default for new settings. It shows the current instance and, when detected, the active world or the name saved in Minecraft's server list. Privacy switches and elapsed time remain in Settings.
+- Discord profiles include fixed links to MONORYX and DemonZ Development. Activity now updates while the launcher is hidden, and a renderer reload no longer looks like a disconnect.
+- On Windows, Minecraft's generic third-party server title uses the saved multiplayer server name when the address matches your list.
+- Eco mode is now a lower-memory preset without extra JVM tuning flags. It is off by default for new settings because a lower memory limit can reduce FPS in demanding games. Existing instance choices remain in place.
 
-* Added additional dependency validation during Forge installation to reduce failed installations.
+## Interface and fixes
 
-* Mod search and discovery results are now filtered based on the loader used by the selected instance. This currently supports Fabric, Forge, NeoForge, Quilt, and Vanilla instances.
+- Buttons have consistent sizing and stronger contrast across themes. Monochrome, Gloss, Soft pink, and Soft brown now cover more of the interface.
+- Hover and page transitions are smoother. The instance loader picker animates its selection, and update checks and downloads show activity and progress in the app.
+- Crash reports lead with a plain explanation and useful next steps; the full log is still available below.
+- Windows startup no longer mistakes an older installed launcher for this release. The default window size is 1280×720, and the sidebar and dialogs fit smaller screens better.
+- Update checks include eligible beta releases. On Windows, MONORYX downloads the matching installer and lets you choose when to run it.
 
-## Interface Changes
+# MONORYX 1.1.0 beta
 
-* Simplified several parts of the interface and removed unnecessary borders, duplicate badges, and other visual elements.
+## Loaders and content
 
-* Cleaned up instance cards and sidebar navigation.
+- Fabric metadata handling accepts the API's flat and nested responses and picks a stable loader release.
+- Forge and NeoForge version lists are parsed and sorted more reliably, including older version suffixes. Installer dependency checks catch more broken installs before launch.
+- Discover filters mods by the selected instance's loader. Temporary metadata and server errors are retried.
 
-* Improved page transitions and general interface responsiveness.
+## Launcher
 
-* Reduced unnecessary redraws while the launcher is idle.
-
-* Settings changes, update checks, and background operations now provide immediate notifications.
-
-* Reorganized settings into Launcher, Minecraft, Java and GPU, and About sections.
-
-* Updated the Check for Updates control with clearer loading and status feedback.
-
-## Window Management
-
-* Fixed an issue where the launcher could open partially outside the visible screen area when Windows display scaling was enabled.
-
-* Improved startup window positioning on high DPI displays.
-
-* Start Maximized now uses native Windows window handling for more reliable behaviour.
-
-* Windowed mode now attempts to center the launcher on the primary display.
-
-* Added controls for maximizing the current window, applying a configured window size, and centering the window.
-
-## Memory and Resource Usage
-
-* Reduced launcher memory usage while idle.
-
-* Improved thumbnail and texture cache cleanup.
-
-* Image data that is no longer required can now be released when leaving certain pages.
-
-* Reduced unnecessary interface rendering while the launcher is inactive or Minecraft is running.
-
-* Adjusted background polling behaviour to lower idle CPU and GPU usage.
-
-## Nexeu Server Management
-
-* Added a Nexeu Servers section to the launcher.
-
-* Servers can now be started, restarted, stopped, and terminated directly from the launcher.
-
-* Added a terminal view for streaming server logs.
-
-* Added support for starting and monitoring remote server backups.
-
-## Diagnostics and Crash Handling
-
-* Moved Copy Report and Share on mclo.gs actions to the top of the crash report window.
-
-* Improved detection of several common launch and crash problems.
-
-* Diagnostics can now identify issues involving missing Java installations, invalid JVM arguments, graphics driver conflicts, and memory limits.
-
-## Installer and Process Handling
-
-* Updated the Inno Setup configuration so launcher updates can handle an already running Monoryx process more reliably.
-
-* Improved single instance handling.
-
-* Opening Monoryx while another instance is already running now restores and focuses the existing launcher instead of creating another background process.
-
-## Codebase and Maintenance
-
-* All 153 unit tests are currently passing.
-
-* The project passes Clippy with warnings treated as errors.
-
-* Formatting has been checked across the codebase.
+- The sidebar, instance cards, Settings, and update controls received a simpler layout. Idle rendering and texture cleanup were reduced to use fewer resources.
+- Window positioning was fixed for scaled Windows displays. Maximized and windowed startup, single-instance restore, and running installer updates work more reliably.
+- Nexeu Servers gained power controls, streaming logs, and remote backup creation.
+- Crash diagnostics gained checks for Java setup, JVM arguments, memory limits, and graphics driver problems.

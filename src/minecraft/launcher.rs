@@ -41,7 +41,6 @@ pub struct LaunchContext {
     pub extra_jvm_args: String,
     pub extra_game_args: String,
     pub log_file: PathBuf,
-    pub boost_mode: bool,
     pub skins_restorer_compat: bool,
 }
 
@@ -137,11 +136,7 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
     })?;
 
     let max_mem = ctx.memory_max_mb.max(256);
-    let min_mem = if ctx.boost_mode {
-        ctx.memory_min_mb.clamp(256, 512).min(max_mem)
-    } else {
-        ctx.memory_min_mb.clamp(128, max_mem)
-    };
+    let min_mem = ctx.memory_min_mb.clamp(128, max_mem);
 
     let mut jvm: Vec<String> = vec![format!("-Xms{min_mem}M"), format!("-Xmx{max_mem}M")];
 
@@ -171,53 +166,6 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
     }
 
     let user_jvm_args = split_user_args(&ctx.extra_jvm_args);
-
-    if ctx.boost_mode {
-        let custom_gc = has_custom_gc_flag(&jvm) || has_custom_gc_flag(&user_jvm_args);
-        let boost_args = [
-            "-XX:+IgnoreUnrecognizedVMOptions",
-            "-XX:+UnlockExperimentalVMOptions",
-            "-XX:+UseG1GC",
-            "-XX:+ParallelRefProcEnabled",
-            "-XX:MaxGCPauseMillis=50",
-            "-XX:+DisableExplicitGC",
-            "-XX:G1NewSizePercent=20",
-            "-XX:G1MaxNewSizePercent=30",
-            "-XX:G1ReservePercent=10",
-            "-XX:G1HeapWastePercent=5",
-            "-XX:G1MixedGCCountTarget=4",
-            "-XX:InitiatingHeapOccupancyPercent=15",
-            "-XX:G1MixedGCLiveThresholdPercent=90",
-            "-XX:G1RSetUpdatingPauseTimePercent=5",
-            "-XX:SurvivorRatio=32",
-            "-XX:+PerfDisableSharedMem",
-            "-XX:MaxTenuringThreshold=1",
-            "-XX:+UseStringDeduplication",
-            "-XX:+OptimizeStringConcat",
-            "-XX:+UseCompressedOops",
-            "-XX:+UseCompressedClassPointers",
-            "-XX:G1PeriodicGCInterval=10000",
-            "-XX:G1PeriodicGCSystemLoadThreshold=0",
-            "-XX:MinHeapFreeRatio=10",
-            "-XX:MaxHeapFreeRatio=20",
-            "-XX:-ShrinkHeapInSteps",
-        ];
-        for arg in boost_args {
-            let is_g1_specific = arg.contains("G1") || arg == "-XX:+UseG1GC";
-            if custom_gc && is_g1_specific {
-                continue;
-            }
-            if let Some(key) = vm_option_key(arg) {
-                if !has_matching_vm_option(&jvm, key)
-                    && !has_matching_vm_option(&user_jvm_args, key)
-                {
-                    jvm.push(arg.to_string());
-                }
-            } else if !jvm.iter().any(|a| a == arg) && !user_jvm_args.iter().any(|a| a == arg) {
-                jvm.push(arg.to_string());
-            }
-        }
-    }
 
     jvm.extend(user_jvm_args);
 
@@ -282,39 +230,6 @@ fn logging_path(ctx: &LaunchContext) -> PathBuf {
 
 fn substitute_logging_arg(template: &str, _game_dir: &Path, path: &Path) -> String {
     template.replace("${path}", &path.display().to_string())
-}
-
-fn vm_option_key(arg: &str) -> Option<&str> {
-    if let Some(rest) = arg.strip_prefix("-XX:+") {
-        Some(rest.split('=').next().unwrap_or(rest))
-    } else if let Some(rest) = arg.strip_prefix("-XX:-") {
-        Some(rest.split('=').next().unwrap_or(rest))
-    } else if let Some(rest) = arg.strip_prefix("-XX:") {
-        Some(rest.split('=').next().unwrap_or(rest))
-    } else if let Some(rest) = arg.strip_prefix("-D") {
-        Some(rest.split('=').next().unwrap_or(rest))
-    } else if arg.starts_with("-Xms") {
-        Some("-Xms")
-    } else if arg.starts_with("-Xmx") {
-        Some("-Xmx")
-    } else {
-        None
-    }
-}
-
-fn has_matching_vm_option(args: &[String], key: &str) -> bool {
-    args.iter().any(|a| vm_option_key(a) == Some(key))
-}
-
-fn has_custom_gc_flag(args: &[String]) -> bool {
-    args.iter().any(|a| {
-        a.contains("UseZGC")
-            || a.contains("UseParallelGC")
-            || a.contains("UseSerialGC")
-            || a.contains("UseShenandoahGC")
-            || a.contains("UseEpsilonGC")
-            || a.contains("UseConcMarkSweepGC")
-    })
 }
 
 fn gpu_preference_code(preference: GpuPreference) -> &'static str {
@@ -481,6 +396,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[derive(Debug)]
 pub struct SupervisedProcess {
     state: Arc<Mutex<ProcessState>>,
+    activity: Arc<Mutex<super::activity::GameActivity>>,
     child: Option<tokio::process::Child>,
     log_path: PathBuf,
 }
@@ -491,6 +407,7 @@ impl SupervisedProcess {
             std::fs::create_dir_all(parent)?;
         }
         let state = Arc::new(Mutex::new(ProcessState::Starting));
+        let activity = Arc::new(Mutex::new(super::activity::GameActivity::Loading));
         let mut cmd = tokio::process::Command::new(&plan.java_exe);
         cmd.args(&plan.args)
             .current_dir(&plan.cwd)
@@ -516,15 +433,25 @@ impl SupervisedProcess {
         let stderr = child.stderr.take();
         let log_path = log_file.to_path_buf();
         let state_clone = state.clone();
+        let activity_clone = activity.clone();
         tokio::spawn(async move {
-            let _ = pump_logs(stdout, stderr, &log_path, state_clone).await;
+            let _ = pump_logs(stdout, stderr, &log_path, state_clone, activity_clone).await;
         });
 
         Ok(Self {
             state,
+            activity,
             child: Some(child),
             log_path: log_file.to_path_buf(),
         })
+    }
+
+    pub fn activity_handle(&self) -> Arc<Mutex<super::activity::GameActivity>> {
+        self.activity.clone()
+    }
+
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.as_ref().and_then(tokio::process::Child::id)
     }
 
     #[must_use]
@@ -572,6 +499,7 @@ async fn pump_logs(
     stderr: Option<tokio::process::ChildStderr>,
     log_path: &Path,
     _state: Arc<Mutex<ProcessState>>,
+    activity: Arc<Mutex<super::activity::GameActivity>>,
 ) -> Result<()> {
     let file = tokio::fs::File::create(log_path)
         .await
@@ -582,10 +510,14 @@ async fn pump_logs(
 
     let stdout_fut = {
         let writer = writer.clone();
+        let activity = activity.clone();
         async move {
             if let Some(stdout) = stdout {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
+                    if let Ok(mut activity) = activity.lock() {
+                        activity.observe(&line);
+                    }
                     let mut guard = writer.lock().await;
                     let _ = guard
                         .write_all(format!("[STDOUT] {line}\n").as_bytes())
@@ -601,6 +533,9 @@ async fn pump_logs(
             if let Some(stderr) = stderr {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
+                    if let Ok(mut activity) = activity.lock() {
+                        activity.observe(&line);
+                    }
                     let mut guard = writer.lock().await;
                     let _ = guard
                         .write_all(format!("[STDERR] {line}\n").as_bytes())
@@ -654,7 +589,6 @@ mod tests {
             extra_jvm_args: String::new(),
             extra_game_args: String::new(),
             log_file: PathBuf::from("/tmp/game.log"),
-            boost_mode: false,
             skins_restorer_compat: true,
         }
     }
@@ -677,41 +611,19 @@ mod tests {
     }
 
     #[test]
-    fn boost_mode_injects_ram_and_perf_flags() {
-        let mut c = ctx();
-        c.boost_mode = true;
-        let plan = build_launch_plan(&c).unwrap();
-        assert!(plan
-            .args
-            .contains(&"-XX:+IgnoreUnrecognizedVMOptions".to_string()));
-        assert!(plan
-            .args
-            .contains(&"-XX:+UseStringDeduplication".to_string()));
-        assert!(plan.args.contains(&"-XX:+UseG1GC".to_string()));
-        assert!(plan.args.contains(&"-XX:+UseCompressedOops".to_string()));
-        assert!(plan
-            .args
-            .contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
-        assert!(plan.args.contains(&"-XX:MinHeapFreeRatio=10".to_string()));
-        assert!(plan.args.contains(&"-XX:MaxHeapFreeRatio=20".to_string()));
-        assert!(plan.args.contains(&"-XX:-ShrinkHeapInSteps".to_string()));
-
-        assert!(!plan.args.contains(&"-XX:+AlwaysPreTouch".to_string()));
-
+    fn default_plan_keeps_jvm_defaults() {
+        let plan = build_launch_plan(&ctx()).unwrap();
+        assert!(!plan.args.iter().any(|arg| arg.starts_with("-XX:")));
         assert!(plan.args.contains(&"-Xms512M".to_string()));
     }
 
     #[test]
-    fn boost_mode_respects_custom_gc_and_avoids_collision() {
+    fn custom_jvm_flags_are_left_alone() {
         let mut c = ctx();
-        c.boost_mode = true;
         c.extra_jvm_args = "-XX:+UseZGC -XX:MaxGCPauseMillis=100".to_string();
         let plan = build_launch_plan(&c).unwrap();
 
         assert!(!plan.args.contains(&"-XX:+UseG1GC".to_string()));
-        assert!(!plan
-            .args
-            .contains(&"-XX:G1PeriodicGCInterval=10000".to_string()));
         assert!(plan.args.contains(&"-XX:+UseZGC".to_string()));
 
         assert!(plan.args.contains(&"-XX:MaxGCPauseMillis=100".to_string()));

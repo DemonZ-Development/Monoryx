@@ -64,15 +64,22 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         });
         ui.add_space(4.0);
     }
-    if !state.downloads_history.is_empty() {
+    let history: Vec<_> = state
+        .downloads_history
+        .iter()
+        .filter(|h| {
+            h.state != "completed"
+                || h.label.starts_with("Installing ")
+                || h.id == "mod-install"
+                || h.id == "modpack-install"
+        })
+        .take(20)
+        .cloned()
+        .collect();
+    if !history.is_empty() {
         ui.add_space(8.0);
         ui.label(RichText::new("History").strong().color(TEXT));
-        ui.label(
-            RichText::new("Install results and file transfers appear as separate entries.")
-                .size(11.0)
-                .color(TEXT2),
-        );
-        for h in state.downloads_history.clone().into_iter().take(20) {
+        for h in history {
             card_frame(ui, |ui| {
                 ui.horizontal(|ui| {
                     if h.state == "completed" {

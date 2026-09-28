@@ -21,6 +21,8 @@ By **DemonZDevelopment**. Licensed under **Apache-2.0**.
 - Resource packs and shader packs
 - Repair, export/import, per-instance logs, monochrome theme
 - Nexeu game-panel integration: server list, resource usage, logs, console commands, backups, and power controls
+- Worlds with save thumbnails, metadata, backups, and restore as a separate copy
+- Discord Rich Presence with activity privacy controls and links to MONORYX and DemonZ Development
 
 ## Quick Start
 
@@ -57,7 +59,7 @@ MONORYX supports **offline profiles only** in this release. Your username maps t
 
 ## Modrinth Integration
 
-Public browsing and installation use the official Modrinth API (`https://api.modrinth.com/v2`) with the User-Agent `monoryx/<version> (https://github.com/DemonZDevelopment/monoryx)`. No login required. Rate limits and `Retry-After` are respected. Hashes are verified, required dependencies install recursively, cycles and conflicts are blocked, and installed files are tracked in `content.json` for reliable updates and uninstalls.
+Public browsing and installation use the official Modrinth API (`https://api.modrinth.com/v2`) with the User-Agent `monoryx/<version> (https://github.com/DemonZ-Development/Monoryx)`. No login required. Rate limits and `Retry-After` are respected. Hashes are verified, required dependencies install recursively, cycles and conflicts are blocked, and installed files are tracked in `content.json` for reliable updates and uninstalls.
 
 Discover displays the selected target instance before installing. Already installed projects can be reinstalled or removed. The Library also shows manually copied mods, resource packs, and shaders.
 
@@ -69,7 +71,19 @@ Balance and server creation open Nexeu's client portal. Nexeu does not currently
 
 ## Crash reports
 
-The crash dialog shows the error summary and recent log output in a window that fits the launcher. **Share on mclo.gs** uploads the full crash report or session log only when you click it, then shows a link you can copy. Shared logs are public, so review them for private information first. Local logs and crash reports remain accessible from the dialog.
+The crash dialog explains recognizable errors, suggests next steps, and opens the relevant mods or instance settings. It includes supporting log messages and expandable technical details. Unknown errors remain labelled as uncertain. **Upload to mclo.gs** shares the full report or session log only when you click it; anyone with the resulting link can read it.
+
+## Discord activity
+
+Discord activity is on by default when the desktop app is running. **Settings → Discord** lets you turn it off or hide instance names, world names, server names, elapsed time, and launcher activity. MONORYX uses its public application ID; you don't need a bot or token. The two profile links go to [MONORYX](https://github.com/DemonZ-Development/Monoryx) and [DemonZ Development](https://demonz.org/).
+
+On Windows, modern Java worlds are identified through the active save's session lock and read-only metadata. Multiplayer activity uses game log events and names from `servers.dat`. Unsupported versions or missing details use general activity text; private servers use their address only when server-name sharing is enabled. These profile buttons open websites; they do not join a game automatically. MONORYX reconnects when Discord restarts and clears activity when sharing is turned off.
+
+Activity updates continue while the launcher is hidden. On Windows, Minecraft's generic third-party server title is replaced with the name saved in that instance's multiplayer server list. The launcher checks the supervised game every three seconds and sends Discord updates only when the activity changes; no companion mod or helper process is required.
+
+## Eco mode
+
+Eco mode lowers Minecraft's automatic memory limit when an instance is using the default allocation. This can save RAM, but a busy world or modpack may run less smoothly. It is off by default for new settings. For an existing instance, use **Home → Instance tools → Turn off Eco mode** if FPS drops. The change applies on the next launch. Custom memory limits are left alone. Eco mode no longer adds extra JVM tuning flags.
 
 ## Local and Offline Use
 

@@ -22,13 +22,13 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.1.0-beta" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.2.0" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.1.0-beta" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.2.0" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
           Compress-Archive -Path target\release\monoryx.exe, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist\monoryx-v$version-windows-x64.zip" -Force
@@ -53,7 +53,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.1.0-beta"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.2.0"; fi
           mkdir -p dist/package
           cp target/release/monoryx dist/package/
           chmod +x dist/package/monoryx
@@ -89,13 +89,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.1.0-beta"; fi
+          if [ -z "$TAG" ]; then TAG="v1.2.0"; fi
+          awk -v version="${TAG#v}" '
+            $0 == "# MONORYX " version { keep=1 }
+            keep && /^# MONORYX / && $0 != "# MONORYX " version { exit }
+            keep { print }
+          ' CHANGELOG.md > /tmp/monoryx-release-notes.md
+          if [ ! -s /tmp/monoryx-release-notes.md ]; then cp CHANGELOG.md /tmp/monoryx-release-notes.md; fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "MONORYX $TAG" --notes-file CHANGELOG.md --latest
+            gh release create "$TAG" --title "MONORYX $TAG" --notes-file /tmp/monoryx-release-notes.md --latest
           fi
           for f in release-assets/*; do
             if [ -f "$f" ]; then
               gh release upload "$TAG" "$f" --clobber
             fi
           done
-

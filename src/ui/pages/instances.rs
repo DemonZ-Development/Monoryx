@@ -3,14 +3,14 @@ use crate::instance::config::LoaderKind;
 use crate::ui::components::{
     badge, card_frame, empty_state, field_label, hover_card_frame, page_header, primary_button,
 };
-use crate::ui::theme::{BORDER, DANGER, ELEVATED2, SELECTED, SELECTED_FG, TEXT, TEXT2};
+use crate::ui::theme::{DANGER, TEXT, TEXT2};
 use egui::{CornerRadius, RichText, Stroke};
 
 pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     page_header(
         ui,
         "Instances",
-        "Isolated game directories. Nothing is shared.",
+        "Keep each Minecraft version, its worlds, and its mods together.",
     );
     ui.horizontal(|ui| {
         if primary_button(ui, "+ New instance").clicked() {
@@ -56,6 +56,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .changed()
         {
             state.new_draft.versions = state.selected_version_list();
+            state.save_config();
         }
     });
     ui.add_space(6.0);
@@ -87,7 +88,13 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         if !inst.loader_version.is_empty() {
                             badge(ui, &inst.loader_version);
                         }
-                        badge(ui, &format!("{} mods", state.instances.mod_count(&inst.id)));
+                        badge(
+                            ui,
+                            &format!(
+                                "{} mods",
+                                state.mod_counts.get(&inst.id).copied().unwrap_or(0)
+                            ),
+                        );
                         let ram_text = if boost_on
                             && inst.memory_max_mb == crate::utils::system::default_max_memory_mb()
                         {
@@ -108,15 +115,22 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                                 .strong()
                                 .color(crate::ui::theme::OK),
                         )
-                        .fill(ELEVATED2)
-                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .fill(crate::ui::theme::palette(ui.ctx()).elevated2)
+                        .stroke(Stroke::new(
+                            1.0_f32,
+                            crate::ui::theme::palette(ui.ctx()).border,
+                        ))
                         .corner_radius(CornerRadius::same(8));
                         ui.add_enabled(false, btn);
                     } else if ui
                         .add(
-                            egui::Button::new(RichText::new("Play").strong().color(SELECTED_FG))
-                                .fill(crate::ui::theme::ACCENT)
-                                .corner_radius(CornerRadius::same(8)),
+                            egui::Button::new(
+                                RichText::new("Play")
+                                    .strong()
+                                    .color(crate::ui::theme::palette(ui.ctx()).accent_text),
+                            )
+                            .fill(crate::ui::theme::palette(ui.ctx()).accent)
+                            .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
                     {
@@ -128,12 +142,12 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.small_button("Select").clicked() {
+                if ui.button("Select").clicked() {
                     state.selected_instance = Some(inst.id.clone());
                     state.save_config();
                     state.refresh_library();
                 }
-                if ui.small_button("Edit").clicked() {
+                if ui.button("Edit").clicked() {
                     state.edit_instance = Some(inst.clone());
                 }
                 ui.menu_button("More", |ui| {
@@ -156,7 +170,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         state.global_status = "Repairing...".to_string();
                         crate::app::tasks::repair_instance(state, inst.id.clone());
                     }
-                    if ui.button(RichText::new("Delete").color(DANGER)).clicked() {
+                    if crate::ui::components::danger_button(ui, "Delete instance").clicked() {
                         state.confirm_delete = Some(inst.id.clone());
                         state.confirm_title = format!("Delete \"{}\"?", inst.name);
                     }
@@ -174,9 +188,9 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     .corner_radius(16),
             )
             .show(_ctx, |ui| {
-                ui.set_width((_ctx.screen_rect().width() - 80.0).clamp(280.0, 480.0));
+                ui.set_width((_ctx.screen_rect().width() - 48.0).clamp(280.0, 620.0));
                 egui::ScrollArea::vertical()
-                    .max_height((_ctx.screen_rect().height() - 100.0).max(200.0))
+                    .max_height((_ctx.screen_rect().height() - 48.0).max(200.0))
                     .show(ui, |ui| show_new_dialog(state, ui));
             });
         if response.should_close() {
@@ -195,7 +209,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     if ui.button("Cancel").clicked() {
                         state.confirm_delete = None;
                     }
-                    if ui.button(RichText::new("Delete").color(DANGER)).clicked() {
+                    if crate::ui::components::danger_button(ui, "Delete instance").clicked() {
                         match state.instances.delete(&id, true) {
                             Ok(()) => {
                                 state.confirm_delete = None;
@@ -212,9 +226,15 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
 pub fn open_new_dialog(state: &mut AppState) {
     state.new_draft = Default::default();
-    state.new_draft.loader = LoaderKind::Fabric;
+    state.new_draft.loader = LoaderKind::Vanilla;
+    state.new_draft.version = state
+        .manifest
+        .as_ref()
+        .map(|manifest| manifest.latest.release.clone())
+        .unwrap_or_default();
     state.new_draft.dialog_seq = next_dialog_seq();
     state.show_new_instance = true;
+    state.load_patch_notes();
     if state.manifest.is_none() && !state.manifest_loading {
         state.spawn_initial();
     }
@@ -230,23 +250,91 @@ fn loader_pill(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response
     let fade = ui
         .ctx()
         .animate_bool_with_time(ui.id().with(("loader", label)), selected, 0.18);
-    let fill = ELEVATED2.lerp_to_gamma(SELECTED, fade);
-    let text = TEXT.lerp_to_gamma(SELECTED_FG, fade);
+    let p = crate::ui::theme::palette(ui.ctx());
+    let fill = p.elevated2.lerp_to_gamma(p.accent, fade);
+    let text = TEXT.lerp_to_gamma(p.accent_text, fade);
     ui.add(
         egui::Button::new(RichText::new(label).size(12.5).strong().color(text))
             .fill(fill)
-            .stroke(Stroke::new(1.0_f32, BORDER))
+            .stroke(Stroke::new(
+                1.0_f32,
+                crate::ui::theme::palette(ui.ctx()).border,
+            ))
             .corner_radius(CornerRadius::same(16)),
     )
 }
 
+fn show_version_changelog(state: &mut AppState, ui: &mut egui::Ui) {
+    let version = state.new_draft.version.clone();
+    if version.is_empty() {
+        return;
+    }
+    let entry = state
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.versions.iter().find(|entry| entry.id == version))
+        .cloned();
+    let note = state.patch_notes.get(&version).cloned();
+    egui::CollapsingHeader::new("Version details and changelog")
+        .default_open(true)
+        .show(ui, |ui| {
+            if let Some(entry) = entry {
+                ui.label(
+                    RichText::new(format!(
+                        "{} · Released {}",
+                        entry.kind,
+                        entry.release_time.get(..10).unwrap_or(&entry.release_time)
+                    ))
+                    .color(TEXT2),
+                );
+            }
+            if let Some(note) = note {
+                ui.label(RichText::new(&note.title).strong());
+                if !note.short_text.is_empty() {
+                    ui.label(&note.short_text);
+                }
+                if state.patch_note_full_loading.as_deref() == Some(&version) {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Loading changelog...");
+                    });
+                } else if state
+                    .patch_note_full
+                    .as_ref()
+                    .is_some_and(|(stored, _)| stored == &version)
+                {
+                    if let Some((_, full)) = &state.patch_note_full {
+                        egui::ScrollArea::vertical()
+                            .max_height(230.0)
+                            .show(ui, |ui| {
+                                ui.add(egui::Label::new(full).wrap());
+                            });
+                    }
+                } else if ui.button("Read full changelog").clicked() {
+                    state.load_full_patch_note(&version);
+                }
+            } else if state.patch_notes_loading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Looking up official changelog...");
+                });
+            } else {
+                ui.label(
+                    RichText::new("No changelog entry in Mojang's launcher feed for this version.")
+                        .color(TEXT2),
+                );
+            }
+            if !state.patch_notes_error.is_empty() {
+                ui.label(RichText::new(&state.patch_notes_error).color(TEXT2));
+            }
+            ui.hyperlink_to(
+                "Find official release notes",
+                crate::minecraft::patch_notes::official_search_url(&version),
+            );
+        });
+}
+
 fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
-    let enter = ui.ctx().animate_bool_with_time(
-        egui::Id::new(("new-instance-dialog", state.new_draft.dialog_seq)),
-        true,
-        0.18,
-    );
-    ui.add_space((1.0 - enter) * 10.0);
     page_header(
         ui,
         "New instance",
@@ -255,14 +343,30 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     if state.new_draft.versions.is_empty() {
         state.new_draft.versions = state.selected_version_list();
     }
-    field_label(ui, "Name");
+    field_label(ui, "1  INSTANCE NAME");
     ui.add(
         egui::TextEdit::singleline(&mut state.new_draft.name)
             .hint_text("e.g. Performance")
             .desired_width(f32::INFINITY),
     );
     ui.add_space(10.0);
-    field_label(ui, "Minecraft Version");
+    ui.label(
+        RichText::new("Choose a name you will recognize in Home and Library.")
+            .size(11.5)
+            .color(TEXT2),
+    );
+    ui.add_space(8.0);
+    field_label(ui, "2  MINECRAFT VERSION");
+    if ui
+        .checkbox(
+            &mut state.show_snapshots,
+            "Include snapshots and historical versions",
+        )
+        .changed()
+    {
+        state.new_draft.versions = state.selected_version_list();
+        state.save_config();
+    }
     let current = if state.new_draft.version.is_empty() {
         state
             .manifest
@@ -275,6 +379,20 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     if state.new_draft.version.is_empty() {
         state.new_draft.version = current.clone();
     }
+    ui.add(
+        egui::TextEdit::singleline(&mut state.new_draft.version_query)
+            .hint_text("Search all versions, e.g. 1.20.1 or 26.3")
+            .desired_width(f32::INFINITY),
+    );
+    let query = state.new_draft.version_query.trim().to_ascii_lowercase();
+    let filtered: Vec<String> = state
+        .new_draft
+        .versions
+        .iter()
+        .filter(|version| query.is_empty() || version.to_ascii_lowercase().contains(&query))
+        .take(80)
+        .cloned()
+        .collect();
     egui::ComboBox::from_id_salt("new-mc")
         .selected_text(if current.is_empty() {
             "Loading...".to_string()
@@ -283,10 +401,22 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         })
         .width(ui.available_width())
         .show_ui(ui, |ui| {
-            for v in state.new_draft.versions.clone() {
+            for v in filtered {
                 ui.selectable_value(&mut state.new_draft.version, v.clone(), v);
             }
         });
+    if !query.is_empty()
+        && !state
+            .new_draft
+            .versions
+            .iter()
+            .any(|version| version.to_ascii_lowercase().contains(&query))
+    {
+        ui.label(
+            RichText::new("No matching Minecraft versions. Try a different search.").color(TEXT2),
+        );
+    }
+    show_version_changelog(state, ui);
     if state.manifest_loading {
         ui.horizontal(|ui| {
             ui.spinner();
@@ -308,7 +438,14 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         state.new_draft.error.clear();
     }
     ui.add_space(10.0);
-    field_label(ui, "Loader");
+    field_label(ui, "3  MOD LOADER");
+    ui.label(
+        RichText::new(
+            "Vanilla installs Minecraft only. Choose a loader if this instance will use mods.",
+        )
+        .size(11.5)
+        .color(TEXT2),
+    );
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         for l in LoaderKind::all() {
@@ -325,7 +462,8 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     });
     if state.new_draft.loader != LoaderKind::Vanilla {
         ui.add_space(10.0);
-        field_label(ui, "Loader Version");
+        field_label(ui, "LOADER VERSION");
+        ui.label(RichText::new("The newest compatible loader is selected automatically. Change it only if a modpack needs a specific version.").size(11.5).color(TEXT2));
         let key = format!(
             "{}|{}",
             state.new_draft.version,
@@ -378,7 +516,7 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         if !state.new_draft.loading_loaders && !state.new_draft.loader_versions.is_empty() {
             egui::ComboBox::from_id_salt("new-loader-ver")
                 .selected_text(if state.new_draft.loader_version.is_empty() {
-                    "(newest stable)".to_string()
+                    "Newest compatible".to_string()
                 } else {
                     state.new_draft.loader_version.clone()
                 })
@@ -419,6 +557,23 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     }
     ui.add_space(12.0);
     ui.separator();
+    let version_label = if state.new_draft.version.is_empty() {
+        "No version"
+    } else {
+        state.new_draft.version.as_str()
+    };
+    ui.label(
+        RichText::new(format!(
+            "Install: Minecraft {version_label} · {}{}",
+            state.new_draft.loader.display_name(),
+            if state.new_draft.loader == LoaderKind::Vanilla {
+                "".to_string()
+            } else {
+                format!(" {}", state.new_draft.loader_version)
+            }
+        ))
+        .color(TEXT2),
+    );
     ui.horizontal(|ui| {
         if ui.button("Cancel").clicked() {
             state.show_new_instance = false;
@@ -426,8 +581,18 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         let ready = loader_ready
             && !state.new_draft.name.trim().is_empty()
             && state.new_draft.versions.contains(&state.new_draft.version);
+        if !ready {
+            let reason = if state.new_draft.name.trim().is_empty() {
+                "Enter a name first"
+            } else if !state.new_draft.versions.contains(&state.new_draft.version) {
+                "Choose a Minecraft version"
+            } else {
+                "Waiting for a compatible loader"
+            };
+            ui.label(RichText::new(reason).size(11.5).color(TEXT2));
+        }
         ui.add_enabled_ui(ready, |ui| {
-            if primary_button(ui, "Create & install").clicked() {
+            if primary_button(ui, "Create and install").clicked() {
                 let name = state.new_draft.name.trim().to_string();
                 if name.is_empty() {
                     state.new_draft.error = "Give the instance a name.".to_string();

@@ -1,12 +1,12 @@
 [package]
 name = "monoryx"
-version = "1.1.0-beta"
+version = "1.2.0"
 edition = "2021"
 description = "MONORYX - Minecraft, without the clutter. A lightweight native Minecraft Java Edition launcher."
 authors = ["DemonZDevelopment"]
 license = "Apache-2.0"
-repository = "https://github.com/DemonZDevelopment/monoryx"
-homepage = "https://github.com/DemonZDevelopment/monoryx"
+repository = "https://github.com/DemonZ-Development/Monoryx"
+homepage = "https://github.com/DemonZ-Development/Monoryx"
 readme = "README.md"
 keywords = ["minecraft", "launcher", "egui"]
 categories = ["games"]

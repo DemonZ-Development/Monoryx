@@ -5,7 +5,7 @@ pub const MONORYX_USER_AGENT: &str = concat!("monoryx/", env!("CARGO_PKG_VERSION
 
 pub fn modrinth_user_agent() -> String {
     format!(
-        "monoryx/{} (https://github.com/monoryx/monoryx)",
+        "monoryx/{} (https://github.com/DemonZ-Development/Monoryx)",
         env!("CARGO_PKG_VERSION")
     )
 }

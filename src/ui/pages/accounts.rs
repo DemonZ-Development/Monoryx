@@ -154,8 +154,8 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.add_space(10.0);
 
         egui::Frame::new()
-                .fill(ELEVATED2)
-                .stroke(Stroke::new(1.0_f32, BORDER))
+                .fill(crate::ui::theme::palette(ui.ctx()).elevated2)
+                .stroke(Stroke::new(1.0_f32, crate::ui::theme::palette(ui.ctx()).border))
                 .corner_radius(CornerRadius::same(8))
                 .inner_margin(egui::Margin::symmetric(14, 12))
                 .show(ui, |ui| {
@@ -323,8 +323,8 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.add_space(10.0);
 
         egui::Frame::new()
-                .fill(ELEVATED2)
-                .stroke(Stroke::new(1.0_f32, BORDER))
+                .fill(crate::ui::theme::palette(ui.ctx()).elevated2)
+                .stroke(Stroke::new(1.0_f32, crate::ui::theme::palette(ui.ctx()).border))
                 .corner_radius(CornerRadius::same(8))
                 .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {

@@ -3,6 +3,7 @@ pub mod account;
 pub mod app;
 pub mod config;
 pub mod content;
+pub mod discord;
 pub mod downloads;
 pub mod error;
 pub mod instance;
@@ -18,47 +19,14 @@ pub mod utils;
 use crate::app::state::AppState;
 
 fn monoryx_icon() -> egui::IconData {
-    const S: i32 = 64;
-    const T: i32 = 4;
-    let mut rgba = vec![0u8; (S * S * 4) as usize];
-    for y in 0..S {
-        for x in 0..S {
-            let i = ((y * S + x) * 4) as usize;
-            rgba[i] = 0x09;
-            rgba[i + 1] = 0x09;
-            rgba[i + 2] = 0x09;
-            rgba[i + 3] = 0xFF;
-        }
-    }
-    let mut dot = |x: i32, y: i32| {
-        if x >= 0 && y >= 0 && x < S && y < S {
-            let i = ((y * S + x) * 4) as usize;
-            rgba[i] = 0xF3;
-            rgba[i + 1] = 0xF3;
-            rgba[i + 2] = 0xF3;
-            rgba[i + 3] = 0xFF;
-        }
-    };
-    let mut bar = |x0: i32, y0: i32, x1: i32, y1: i32| {
-        let steps = ((x1 - x0).abs().max((y1 - y0).abs()) * 2).max(1);
-        for s in 0..=steps {
-            let x = x0 + (x1 - x0) * s / steps;
-            let y = y0 + (y1 - y0) * s / steps;
-            for dy in -T..=T {
-                for dx in -T..=T {
-                    dot(x + dx, y + dy);
-                }
-            }
-        }
-    };
-    bar(17, 14, 17, 50);
-    bar(47, 14, 47, 50);
-    bar(17, 14, 32, 38);
-    bar(47, 14, 32, 38);
+    let icon = image::load_from_memory(include_bytes!("../assets/icon.png"))
+        .expect("bundled MONORYX icon is valid")
+        .into_rgba8();
+    let (width, height) = icon.dimensions();
     egui::IconData {
-        rgba,
-        width: S as u32,
-        height: S as u32,
+        rgba: icon.into_raw(),
+        width,
+        height,
     }
 }
 
@@ -84,10 +52,11 @@ fn main() -> eframe::Result<()> {
         &crate::storage::paths::MonoryxPaths::global().config_file(),
     )
     .unwrap_or_default();
+    let app_title = format!("MONORYX v{}", env!("CARGO_PKG_VERSION"));
     let mut viewport = egui::ViewportBuilder::default()
         .with_min_inner_size([850.0, 560.0])
         .with_maximized(startup_config.start_maximized)
-        .with_title("MONORYX v1.1.0 Beta")
+        .with_title(app_title.clone())
         .with_icon(monoryx_icon());
     if !startup_config.start_maximized {
         viewport = viewport.with_inner_size([
@@ -101,7 +70,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "MONORYX v1.1.0 Beta",
+        &app_title,
         options,
         Box::new(|cc| {
             crate::ui::theme::apply_theme(&cc.egui_ctx);

@@ -126,6 +126,12 @@ pub async fn install_mrpack(
     let mut done = 0usize;
     let mut skipped = 0usize;
     for (i, file) in files.iter().enumerate() {
+        if !file.hashes.contains_key("sha512") && !file.hashes.contains_key("sha1") {
+            return Err(MonoryxError::Archive(format!(
+                "{} has no checksum, so the download cannot be verified",
+                file.path
+            )));
+        }
         report(
             format!("Downloading {} ({}/{})", file.path, i + 1, total.max(1)),
             i,

@@ -66,7 +66,11 @@ pub fn create_and_install(
     let op_id = uuid::Uuid::new_v4().to_string();
     let _ = tx.send(AppEvent::OperationStarted(
         op_id.clone(),
-        format!("Installing {name}..."),
+        if loader == LoaderKind::Vanilla {
+            format!("Installing Minecraft for {name}")
+        } else {
+            format!("Installing {} loader for {name}", loader.display_name())
+        },
         None,
     ));
     state.runtime.spawn(async move {
@@ -187,6 +191,8 @@ pub fn play_instance(state: &mut AppState, instance_id: String) {
     let config = state.config.clone();
     let java_list = state.java_list.clone();
     let egui_ctx = state.egui_ctx.clone();
+    state.sync_discord();
+    let discord = state.discord.clone();
     state.runtime.spawn(async move {
         let _ = tx.send(AppEvent::PlayStarted(instance_id.clone()));
         egui_ctx.request_repaint();
@@ -200,13 +206,14 @@ pub fn play_instance(state: &mut AppState, instance_id: String) {
             &instance_id,
             &tx,
             &egui_ctx,
+            &discord,
         )
         .await
         {
             Ok((code, log_file, launched_at)) => {
                 crate::utils::system::show_window_for_current_process(true);
                 let _ = tx.send(AppEvent::PlayFinished {
-                    id: instance_id,
+                    id: instance_id.clone(),
                     code,
                     log_file: Some(log_file),
                     launched_at: Some(launched_at),
@@ -216,9 +223,10 @@ pub fn play_instance(state: &mut AppState, instance_id: String) {
                 crate::utils::system::show_window_for_current_process(true);
                 let _ = tx.send(AppEvent::OperationFinished(operation_id, Err(e.clone())));
                 let _ = tx.send(AppEvent::Error(e));
-                let _ = tx.send(AppEvent::PlayFailed(instance_id));
+                let _ = tx.send(AppEvent::PlayFailed(instance_id.clone()));
             }
         }
+        discord.game_finished(&instance_id);
         crate::utils::system::show_window_for_current_process(true);
         egui_ctx.request_repaint();
     });
@@ -235,6 +243,7 @@ async fn play_inner(
     instance_id: &str,
     tx: &std::sync::mpsc::Sender<AppEvent>,
     egui_ctx: &egui::Context,
+    discord: &crate::discord::Presence,
 ) -> std::result::Result<(i32, std::path::PathBuf, std::time::SystemTime), String> {
     use crate::java::runtime::{required_major_for_version, select_runtime, JavaMode};
     let operation_id = format!("launch-{instance_id}");
@@ -249,6 +258,12 @@ async fn play_inner(
     };
     phase("Checking installation...");
     let mut cfg = instances.get(instance_id).map_err(|e| e.user_message())?;
+    discord.game_started(
+        instance_id,
+        &cfg.name,
+        &cfg.minecraft_version,
+        cfg.loader.display_name(),
+    );
     let profile = config
         .profile
         .clone()
@@ -364,14 +379,12 @@ async fn play_inner(
         uuid: profile.uuid,
         access_token: "0".to_string(),
         memory_min_mb: cfg.memory_min_mb,
-        memory_max_mb: {
-            let is_boost = cfg.boost_mode.unwrap_or(config.boost_mode);
-            if is_boost && cfg.memory_max_mb == crate::utils::system::default_max_memory_mb() {
-                crate::utils::system::default_boost_max_memory_mb()
-            } else {
-                cfg.memory_max_mb
-            }
-        },
+        memory_max_mb: crate::utils::system::game_memory_limit_mb(
+            cfg.memory_max_mb,
+            cfg.boost_mode.unwrap_or(config.boost_mode),
+            crate::utils::system::default_max_memory_mb(),
+            crate::utils::system::default_boost_max_memory_mb(),
+        ),
         resolution: match (cfg.width, cfg.height) {
             (Some(w), Some(h)) => Some((w, h)),
             _ => None,
@@ -388,7 +401,6 @@ async fn play_inner(
             cfg.game_args.clone()
         },
         log_file: log_file.clone(),
-        boost_mode: cfg.boost_mode.unwrap_or(config.boost_mode),
         skins_restorer_compat: config.skins_restorer_compat,
     };
     let plan = crate::minecraft::launcher::build_launch_plan(&ctx).map_err(|e| e.user_message())?;
@@ -417,7 +429,38 @@ async fn play_inner(
         crate::utils::system::show_window_for_current_process(false);
     }
     egui_ctx.request_repaint();
-    let wait_res = proc.wait().await;
+    let activity = proc.activity_handle();
+    let mut game_window = crate::minecraft::game_window::GameWindow::new(proc.process_id());
+    let wait = proc.wait();
+    tokio::pin!(wait);
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut previous = None;
+    let wait_res = loop {
+        tokio::select! {
+            result = &mut wait => break result,
+            _ = ticker.tick() => {
+                let current = activity.lock().map(|value| value.clone()).unwrap_or_default();
+                let game = plan.cwd.clone();
+                let observed_before = current.clone();
+                let mut window = game_window.clone();
+                let Ok((window, resolved)) = tokio::task::spawn_blocking(move || {
+                    let resolved = window.update(&game, current);
+                    (window, resolved)
+                }).await else { continue; };
+                game_window = window;
+                if let Ok(mut observed) = activity.lock() {
+                    if *observed == observed_before { *observed = resolved.clone(); }
+                }
+                if previous.as_ref() != Some(&resolved) {
+                    discord.game_activity(instance_id, resolved.clone());
+                    previous = Some(resolved.clone());
+                    let _ = tx.send(AppEvent::GameActivity(instance_id.to_string(), resolved));
+                    egui_ctx.request_repaint();
+                }
+            }
+        }
+    };
     crate::utils::system::show_window_for_current_process(true);
     let code = wait_res.map_err(|e| e.user_message())?;
     if code != 0 {
@@ -437,17 +480,28 @@ pub fn install_mod(
     title: String,
     version_id: Option<String>,
 ) {
+    let kind = match state.discover_tab {
+        crate::modrinth::search::DiscoverTab::ResourcePacks => ContentKind::Resourcepack,
+        crate::modrinth::search::DiscoverTab::Shaders => ContentKind::Shader,
+        _ => ContentKind::Mod,
+    };
+    install_content(state, project_id, slug, title, kind, version_id);
+}
+
+pub fn install_content(
+    state: &AppState,
+    project_id: String,
+    slug: String,
+    title: String,
+    kind: ContentKind,
+    version_id: Option<String>,
+) {
     let Some(cfg) = state.selected() else {
         state
             .tx
             .send(AppEvent::Error("Select an instance first.".to_string()))
             .ok();
         return;
-    };
-    let kind = match state.discover_tab {
-        crate::modrinth::search::DiscoverTab::ResourcePacks => ContentKind::Resourcepack,
-        crate::modrinth::search::DiscoverTab::Shaders => ContentKind::Shader,
-        _ => ContentKind::Mod,
     };
     if kind == ContentKind::Mod && cfg.loader == LoaderKind::Vanilla {
         state
@@ -706,19 +760,27 @@ pub fn install_modpack(state: &AppState, slug: String, title: String) {
 pub fn open_project_page(state: &AppState, slug: String) {
     let mr = state.mr.clone();
     let tx = state.tx.clone();
+    let slots = state.metadata_slots.clone();
     state.runtime.spawn(async move {
+        let Ok(permit) = slots.clone().acquire_owned().await else {
+            return;
+        };
         let p = mr.project(&slug).await.map_err(|e| e.user_message());
+        drop(permit);
         let slug2 = slug.clone();
         let mr2 = mr.clone();
         let tx2 = tx.clone();
-        let _ = tx.send(AppEvent::ProjectDetail(p));
+        let _ = tx.send(AppEvent::ProjectDetail(slug.clone(), p));
         let tx3 = tx2;
         tokio::spawn(async move {
+            let Ok(_permit) = slots.acquire_owned().await else {
+                return;
+            };
             let v = mr2
                 .project_versions(&slug2, None, None)
                 .await
                 .map_err(|e| e.user_message());
-            let _ = tx3.send(AppEvent::ProjectVersions(v));
+            let _ = tx3.send(AppEvent::ProjectVersions(slug2, v));
         });
     });
 }
@@ -737,6 +799,115 @@ pub fn check_launcher_update(state: &AppState) {
     state.runtime.spawn(async move {
         let r = crate::app::updater::check_launcher_update(&http).await;
         let _ = tx.send(AppEvent::LauncherUpdate(r));
+        ctx.request_repaint();
+    });
+}
+
+pub fn download_launcher_update(state: &AppState, url: String, version: String) {
+    let http = state.http.clone();
+    let tx = state.tx.clone();
+    let ctx = state.egui_ctx.clone();
+    let root = state.paths.root().to_path_buf();
+    state.runtime.spawn(async move {
+        let result = async {
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (&http, &url, &version, &root);
+                return Err(
+                    "In-app installation is currently available on Windows only.".to_string(),
+                );
+            }
+            #[cfg(target_os = "windows")]
+            {
+                use futures::StreamExt;
+                use tokio::io::AsyncWriteExt;
+
+                let trusted_prefix =
+                    "https://github.com/demonz-development/monoryx/releases/download/";
+                if !url.to_ascii_lowercase().starts_with(trusted_prefix) {
+                    return Err(
+                        "Update asset URL is not from the MONORYX release page.".to_string()
+                    );
+                }
+                let parsed_version = semver::Version::parse(&version)
+                    .map_err(|_| "Invalid update version.".to_string())?;
+                let dir = root.join("updates");
+                tokio::fs::create_dir_all(&dir)
+                    .await
+                    .map_err(|e| format!("Could not prepare update folder: {e}"))?;
+                let target = dir.join(format!("MONORYX-Setup-{parsed_version}.exe"));
+                let partial = dir.join(format!("MONORYX-Setup-{parsed_version}.part"));
+                let response = http.get(&url).send().await.map_err(|e| e.to_string())?;
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "Update download failed: HTTP {}",
+                        response.status()
+                    ));
+                }
+                const MAX_SIZE: u64 = 512 * 1024 * 1024;
+                let total = response.content_length();
+                if total.is_some_and(|size| size > MAX_SIZE) {
+                    return Err("Update installer is unexpectedly large.".to_string());
+                }
+                let mut file = tokio::fs::File::create(&partial)
+                    .await
+                    .map_err(|e| format!("Could not save update installer: {e}"))?;
+                let mut stream = response.bytes_stream();
+                let mut received = 0_u64;
+                let download_result: Result<(), String> = async {
+                    while let Some(chunk) = stream.next().await {
+                        let chunk =
+                            chunk.map_err(|e| format!("Update download interrupted: {e}"))?;
+                        received += chunk.len() as u64;
+                        if received > MAX_SIZE {
+                            return Err("Update installer is unexpectedly large.".to_string());
+                        }
+                        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+                        let progress = total
+                            .filter(|size| *size > 0)
+                            .map(|size| (received as f32 / size as f32).clamp(0.0, 1.0));
+                        let _ = tx.send(AppEvent::LauncherUpdateDownloadProgress(progress));
+                        ctx.request_repaint();
+                    }
+                    file.sync_all().await.map_err(|e| e.to_string())?;
+                    if total.is_some_and(|size| size != received) {
+                        return Err("Update download was incomplete.".to_string());
+                    }
+                    Ok(())
+                }
+                .await;
+                drop(file);
+                if let Err(error) = download_result {
+                    let _ = tokio::fs::remove_file(&partial).await;
+                    return Err(error);
+                }
+                use tokio::io::AsyncReadExt;
+                let mut header_file = tokio::fs::File::open(&partial)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut header = [0_u8; 2];
+                header_file
+                    .read_exact(&mut header)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if &header != b"MZ" {
+                    let _ = tokio::fs::remove_file(&partial).await;
+                    return Err("Downloaded update is not a Windows installer.".to_string());
+                }
+                drop(header_file);
+                if target.exists() {
+                    tokio::fs::remove_file(&target)
+                        .await
+                        .map_err(|e| format!("Could not replace existing update installer: {e}"))?;
+                }
+                tokio::fs::rename(&partial, &target)
+                    .await
+                    .map_err(|e| format!("Could not finalize update installer: {e}"))?;
+                Ok(target)
+            }
+        }
+        .await;
+        let _ = tx.send(AppEvent::LauncherUpdateDownloaded(result));
         ctx.request_repaint();
     });
 }

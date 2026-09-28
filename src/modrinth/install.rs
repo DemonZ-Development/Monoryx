@@ -88,11 +88,7 @@ pub async fn install_project(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            if matched.is_empty() {
-                versions.clone()
-            } else {
-                matched
-            }
+            matched
         };
         if game_versions.is_empty() {
             return Err(MonoryxError::DependencyConflict(format!(
@@ -104,6 +100,18 @@ pub async fn install_project(
             .cloned()
             .unwrap_or_else(|| game_versions[0].clone())
     };
+    if req.kind != ContentKind::Mod
+        && !chosen.game_versions.is_empty()
+        && !chosen
+            .game_versions
+            .iter()
+            .any(|version| version == &req.minecraft_version)
+    {
+        return Err(MonoryxError::DependencyConflict(format!(
+            "selected version does not support Minecraft {}",
+            req.minecraft_version
+        )));
+    }
     if req.kind == ContentKind::Mod {
         let loader_id = loader_id_outer.clone();
         if !is_compatible(&chosen, &req.minecraft_version, &loader_id) {
@@ -167,6 +175,12 @@ pub async fn install_project(
         let file = primary_file(ver).ok_or_else(|| {
             MonoryxError::Modrinth("version has no downloadable files".to_string())
         })?;
+        if file.sha512().is_none() && file.sha1().is_none() {
+            return Err(MonoryxError::Modrinth(format!(
+                "{} has no file checksum, so the download cannot be verified",
+                file.filename
+            )));
+        }
         let kind = if ver.project_id == chosen.project_id {
             req.kind
         } else {

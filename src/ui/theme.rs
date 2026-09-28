@@ -1,11 +1,78 @@
+use crate::config::ThemeKind;
 use egui::{Color32, CornerRadius, Stroke, Visuals};
+
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub bg: Color32,
+    pub elevated: Color32,
+    pub elevated2: Color32,
+    pub border: Color32,
+    pub hover: Color32,
+    pub accent: Color32,
+    pub accent_hover: Color32,
+    pub accent_text: Color32,
+}
+
+pub fn palette_for(theme: ThemeKind) -> Palette {
+    match theme {
+        ThemeKind::Monochrome => Palette {
+            bg: BG,
+            elevated: ELEVATED,
+            elevated2: ELEVATED2,
+            border: BORDER,
+            hover: HOVER,
+            accent: ACCENT,
+            accent_hover: ACCENT_HOVER,
+            accent_text: SELECTED_FG,
+        },
+        ThemeKind::Gloss => Palette {
+            bg: Color32::from_rgb(10, 15, 24),
+            elevated: Color32::from_rgb(22, 30, 44),
+            elevated2: Color32::from_rgb(31, 42, 59),
+            border: Color32::from_rgb(71, 95, 125),
+            hover: Color32::from_rgb(42, 58, 79),
+            accent: Color32::from_rgb(179, 223, 255),
+            accent_hover: Color32::from_rgb(215, 240, 255),
+            accent_text: Color32::from_rgb(10, 23, 40),
+        },
+        ThemeKind::SoftPink => Palette {
+            bg: Color32::from_rgb(30, 20, 30),
+            elevated: Color32::from_rgb(44, 30, 44),
+            elevated2: Color32::from_rgb(57, 38, 57),
+            border: Color32::from_rgb(94, 63, 88),
+            hover: Color32::from_rgb(70, 45, 68),
+            accent: Color32::from_rgb(246, 177, 210),
+            accent_hover: Color32::from_rgb(255, 210, 231),
+            accent_text: Color32::from_rgb(47, 22, 39),
+        },
+        ThemeKind::SoftBrown => Palette {
+            bg: Color32::from_rgb(29, 23, 19),
+            elevated: Color32::from_rgb(43, 33, 27),
+            elevated2: Color32::from_rgb(57, 43, 34),
+            border: Color32::from_rgb(95, 73, 56),
+            hover: Color32::from_rgb(70, 52, 40),
+            accent: Color32::from_rgb(221, 183, 143),
+            accent_hover: Color32::from_rgb(242, 208, 169),
+            accent_text: Color32::from_rgb(45, 29, 20),
+        },
+    }
+}
+
+pub fn palette(ctx: &egui::Context) -> Palette {
+    palette_for(current_theme(ctx))
+}
+
+pub fn current_theme(ctx: &egui::Context) -> ThemeKind {
+    ctx.data(|data| data.get_temp::<ThemeKind>(egui::Id::new("active-theme")))
+        .unwrap_or_default()
+}
 
 pub const BG: Color32 = Color32::from_rgb(11, 12, 14);
 pub const ELEVATED: Color32 = Color32::from_rgb(18, 19, 22);
-pub const ELEVATED2: Color32 = Color32::from_rgb(23, 24, 29);
-pub const BORDER: Color32 = Color32::from_rgb(35, 37, 43);
+pub const ELEVATED2: Color32 = Color32::from_rgb(32, 34, 40);
+pub const BORDER: Color32 = Color32::from_rgb(53, 56, 65);
 pub const BORDER_ACCENT: Color32 = Color32::from_rgb(60, 63, 72);
-pub const HOVER: Color32 = Color32::from_rgb(28, 29, 34);
+pub const HOVER: Color32 = Color32::from_rgb(44, 47, 55);
 
 pub const ACCENT: Color32 = Color32::from_rgb(255, 255, 255);
 pub const ACCENT_HOVER: Color32 = Color32::from_rgb(238, 238, 242);
@@ -20,8 +87,8 @@ pub const BOOST_HOVER: Color32 = ECO_MODE_HOVER;
 pub const BOOST_BG: Color32 = ECO_MODE_BG;
 
 pub const TEXT: Color32 = Color32::from_rgb(245, 245, 247);
-pub const TEXT2: Color32 = Color32::from_rgb(136, 142, 155);
-pub const MUTED: Color32 = Color32::from_rgb(98, 103, 114);
+pub const TEXT2: Color32 = Color32::from_rgb(163, 169, 181);
+pub const MUTED: Color32 = Color32::from_rgb(126, 133, 148);
 
 pub const SELECTED: Color32 = ACCENT;
 pub const SELECTED_FG: Color32 = Color32::from_rgb(0, 0, 0);
@@ -32,55 +99,65 @@ pub const WARNING: Color32 = Color32::from_rgb(225, 175, 70);
 pub const INFO: Color32 = Color32::from_rgb(205, 210, 218);
 
 pub fn apply_theme(ctx: &egui::Context) {
+    apply_selected_theme(ctx, ThemeKind::Monochrome);
+}
+
+pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("active-theme"), theme));
+    let p = palette_for(theme);
     let mut visuals = Visuals::dark();
     visuals.dark_mode = true;
-    visuals.panel_fill = BG;
-    visuals.window_fill = ELEVATED;
-    visuals.extreme_bg_color = BG;
-    visuals.code_bg_color = ELEVATED2;
-    visuals.faint_bg_color = ELEVATED;
+    visuals.panel_fill = p.bg;
+    visuals.window_fill = p.elevated;
+    visuals.extreme_bg_color = p.bg;
+    visuals.code_bg_color = p.elevated2;
+    visuals.faint_bg_color = p.elevated;
 
-    visuals.widgets.noninteractive.bg_fill = ELEVATED;
+    visuals.widgets.noninteractive.bg_fill = p.elevated;
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT2);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.border);
 
-    visuals.widgets.inactive.bg_fill = ELEVATED2;
+    visuals.widgets.inactive.bg_fill = p.elevated2;
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.border);
 
-    visuals.widgets.hovered.bg_fill = HOVER;
+    visuals.widgets.hovered.bg_fill = p.hover;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(50, 53, 62));
+    visuals.widgets.hovered.bg_stroke =
+        Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.35));
 
-    visuals.widgets.active.bg_fill = SELECTED;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, SELECTED_FG);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, SELECTED);
+    visuals.widgets.active.bg_fill = p.hover.lerp_to_gamma(p.accent, 0.12);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, TEXT);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
 
-    visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 30);
-    visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
+    visuals.selection.bg_fill = p.elevated2.lerp_to_gamma(p.accent, 0.18);
+    visuals.selection.stroke = Stroke::new(1.0_f32, p.accent);
 
-    visuals.widgets.inactive.weak_bg_fill = ELEVATED2;
-    visuals.widgets.hovered.weak_bg_fill = HOVER;
-    visuals.widgets.active.weak_bg_fill = SELECTED;
+    visuals.widgets.inactive.weak_bg_fill = p.elevated2;
+    visuals.widgets.hovered.weak_bg_fill = p.hover;
+    visuals.widgets.active.weak_bg_fill = visuals.widgets.active.bg_fill;
+    visuals.widgets.hovered.expansion = 0.0;
+    visuals.widgets.active.expansion = 0.0;
 
-    visuals.widgets.open.bg_fill = ELEVATED2;
-    visuals.widgets.open.weak_bg_fill = ELEVATED2;
+    visuals.widgets.open.bg_fill = p.elevated2;
+    visuals.widgets.open.weak_bg_fill = p.elevated2;
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, p.border);
 
-    visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.window_stroke = Stroke::new(1.0_f32, p.border);
     visuals.window_corner_radius = CornerRadius::same(10);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(8);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(8);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(8);
     visuals.widgets.active.corner_radius = CornerRadius::same(8);
+    visuals.widgets.open.corner_radius = CornerRadius::same(8);
 
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
-    style.animation_time = 0.18;
-    style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-    style.spacing.button_padding = egui::vec2(14.0, 8.0);
+    style.animation_time = 0.12;
+    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    style.spacing.button_padding = egui::vec2(14.0, 7.0);
     style.spacing.interact_size = egui::vec2(38.0, 34.0);
     style.spacing.text_edit_width = 260.0;
     style.spacing.combo_height = 260.0;

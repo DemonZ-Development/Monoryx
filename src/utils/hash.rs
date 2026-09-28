@@ -1,19 +1,31 @@
 use crate::error::{MonoryxError, Result};
 use sha1::Digest as _;
+use std::io::{BufReader, Read};
 use std::path::Path;
 
+fn stream_file(path: &Path, mut update: impl FnMut(&[u8])) -> Result<()> {
+    let mut reader = BufReader::new(std::fs::File::open(path)?);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        update(&buffer[..count]);
+    }
+    Ok(())
+}
+
 pub fn sha1_file(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)?;
     let mut h = sha1::Sha1::new();
-    h.update(&bytes);
+    stream_file(path, |bytes| h.update(bytes))?;
     Ok(hex::encode(h.finalize()))
 }
 
 pub fn sha512_file(path: &Path) -> Result<String> {
     use sha2::Digest as _;
-    let bytes = std::fs::read(path)?;
     let mut h = sha2::Sha512::new();
-    h.update(&bytes);
+    stream_file(path, |bytes| h.update(bytes))?;
     Ok(hex::encode(h.finalize()))
 }
 

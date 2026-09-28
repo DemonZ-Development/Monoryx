@@ -33,6 +33,15 @@ pub fn default_boost_max_memory_mb() -> u64 {
 }
 
 #[must_use]
+pub fn game_memory_limit_mb(configured: u64, eco: bool, standard: u64, eco_limit: u64) -> u64 {
+    if eco && configured == standard {
+        eco_limit
+    } else {
+        configured
+    }
+}
+
+#[must_use]
 pub const fn default_min_memory_mb() -> u64 {
     512
 }
@@ -155,8 +164,24 @@ pub async fn detect_gpus_force() -> Vec<GpuInfo> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub const SINGLE_INSTANCE_PORT: u16 = 41928;
+#[cfg(not(target_os = "windows"))]
 pub const SINGLE_INSTANCE_PORT_FALLBACK: u16 = 41929;
+
+#[cfg(target_os = "windows")]
+fn version_instance_ports(version: &str) -> [u16; 2] {
+    let hash = version.bytes().fold(0_u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(byte))
+    });
+    let first = 45000 + (hash % 9000) as u16 * 2;
+    [first, first + 1]
+}
+
+#[cfg(target_os = "windows")]
+fn is_current_launcher_title(title: &str) -> bool {
+    title == format!("MONORYX v{}", env!("CARGO_PKG_VERSION"))
+}
 
 pub enum SingleInstanceStatus {
     Primary(std::net::TcpListener),
@@ -164,6 +189,22 @@ pub enum SingleInstanceStatus {
     Standalone,
 }
 
+#[cfg(target_os = "windows")]
+pub fn try_acquire_single_instance() -> SingleInstanceStatus {
+    if !find_monoryx_windows(None).is_empty() {
+        restore_any_running_monoryx_window();
+        return SingleInstanceStatus::AlreadyRunning;
+    }
+    for port in version_instance_ports(env!("CARGO_PKG_VERSION")) {
+        if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            let _ = listener.set_nonblocking(true);
+            return SingleInstanceStatus::Primary(listener);
+        }
+    }
+    SingleInstanceStatus::Standalone
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn try_acquire_single_instance() -> SingleInstanceStatus {
     match std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT)) {
         Ok(listener) => {
@@ -183,18 +224,10 @@ pub fn try_acquire_single_instance() -> SingleInstanceStatus {
                 if let Ok(n) = stream.read(&mut buf) {
                     if let Ok(resp) = std::str::from_utf8(&buf[..n]) {
                         if resp.contains("MONORYX_ACK") {
-                            #[cfg(target_os = "windows")]
-                            restore_any_running_monoryx_window();
                             return SingleInstanceStatus::AlreadyRunning;
                         }
                     }
                 }
-            }
-
-            #[cfg(target_os = "windows")]
-            if !find_monoryx_windows(None).is_empty() {
-                restore_any_running_monoryx_window();
-                return SingleInstanceStatus::AlreadyRunning;
             }
 
             if let Ok(listener) =
@@ -239,7 +272,7 @@ pub fn find_monoryx_windows(target_pid: Option<u32>) -> Vec<windows_sys::Win32::
                 let len = GetWindowTextW(hwnd, title.as_mut_ptr(), 64);
                 if len > 0 {
                     let title_str = String::from_utf16_lossy(&title[..len as usize]);
-                    if title_str.starts_with("MONORYX") {
+                    if is_current_launcher_title(&title_str) {
                         ctx.found.push(hwnd);
                     }
                 }
@@ -440,6 +473,23 @@ async fn query_windows_gpus() -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn startup_does_not_match_installed_older_version_or_explorer() {
+        assert!(is_current_launcher_title(&format!(
+            "MONORYX v{}",
+            env!("CARGO_PKG_VERSION")
+        )));
+        assert!(!is_current_launcher_title("MONORYX v1.1.0 Beta"));
+        assert!(!is_current_launcher_title(
+            "MONORYX-v1.2.0-windows-x64 - File Explorer"
+        ));
+        let ports = version_instance_ports(env!("CARGO_PKG_VERSION"));
+        assert!(!ports.contains(&41928));
+        assert!(!ports.contains(&41929));
+        assert_ne!(ports, version_instance_ports("1.1.0"));
+    }
+
     #[test]
     fn dedicated_gpu_names() {
         assert!(is_dedicated_gpu_name("NVIDIA GeForce RTX 4060"));
@@ -463,6 +513,13 @@ mod tests {
         assert!(validate_memory(512, 2048).is_ok());
         assert!(validate_memory(4096, 512).is_err());
         assert!(validate_memory(64, 512).is_err());
+    }
+
+    #[test]
+    fn eco_mode_only_reduces_the_automatic_memory_limit() {
+        assert_eq!(game_memory_limit_mb(3072, true, 3072, 2560), 2560);
+        assert_eq!(game_memory_limit_mb(3072, false, 3072, 2560), 3072);
+        assert_eq!(game_memory_limit_mb(4096, true, 3072, 2560), 4096);
     }
 
     #[test]

@@ -7,6 +7,7 @@ pub struct CrashInfo {
     pub instance_name: String,
     pub exit_code: i32,
     pub summary: String,
+    pub advice: super::diagnostics::Advice,
     pub details: String,
     pub source_label: String,
     pub report_path: Option<PathBuf>,
@@ -471,6 +472,7 @@ pub fn detect_crash(
             .and_then(|n| n.to_str())
             .unwrap_or("crash-report.txt");
         return CrashInfo {
+            advice: super::diagnostics::explain(&content, exit_code),
             instance_id: instance_id.to_string(),
             instance_name: instance_name.to_string(),
             exit_code,
@@ -488,6 +490,7 @@ pub fn detect_crash(
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("log");
         let details = tail_lines(&content, 200);
         return CrashInfo {
+            advice: super::diagnostics::explain(&content, exit_code),
             instance_id: instance_id.to_string(),
             instance_name: instance_name.to_string(),
             exit_code,
@@ -509,6 +512,7 @@ pub fn detect_crash(
     );
 
     CrashInfo {
+        advice: super::diagnostics::explain("", exit_code),
         instance_id: instance_id.to_string(),
         instance_name: instance_name.to_string(),
         exit_code,
@@ -547,7 +551,6 @@ mod tests {
     fn extract_summary_from_minecraft_crash_report() {
         let report = r#"
 ---- Minecraft Crash Report ----
-// Don't do that.
 
 Time: 2026-09-17 15:34:47
 Description: Loading library LWJGL system

@@ -53,7 +53,7 @@ impl InstanceManager {
                 }
             }
         }
-        out.sort_by_key(|a| a.name.to_lowercase());
+        out.sort_by(|a, b| natural_name_cmp(&a.name, &b.name));
         Ok(out)
     }
 
@@ -261,6 +261,59 @@ fn load_config(path: &Path) -> Result<InstanceConfig> {
     toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))
 }
 
+fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let left = left.to_lowercase();
+    let right = right.to_lowercase();
+    let mut a = left.as_bytes().iter().copied().peekable();
+    let mut b = right.as_bytes().iter().copied().peekable();
+    loop {
+        match (a.peek(), b.peek()) {
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let mut a_digits = Vec::new();
+                let mut b_digits = Vec::new();
+                while a.peek().is_some_and(u8::is_ascii_digit) {
+                    a_digits.push(a.next().unwrap());
+                }
+                while b.peek().is_some_and(u8::is_ascii_digit) {
+                    b_digits.push(b.next().unwrap());
+                }
+                let a_number = a_digits
+                    .iter()
+                    .skip_while(|&&c| c == b'0')
+                    .copied()
+                    .collect::<Vec<_>>();
+                let b_number = b_digits
+                    .iter()
+                    .skip_while(|&&c| c == b'0')
+                    .copied()
+                    .collect::<Vec<_>>();
+                let cmp = a_number
+                    .len()
+                    .cmp(&b_number.len())
+                    .then_with(|| a_number.cmp(&b_number));
+                if cmp != Ordering::Equal {
+                    return cmp;
+                }
+                let cmp = a_digits.len().cmp(&b_digits.len());
+                if cmp != Ordering::Equal {
+                    return cmp;
+                }
+            }
+            (Some(_), Some(_)) => {
+                let cmp = a.next().cmp(&b.next());
+                if cmp != Ordering::Equal {
+                    return cmp;
+                }
+            }
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +387,25 @@ mod tests {
         assert!(!m.mods_dir(&c.id).join("sodium.jar").exists());
         m.set_mod_enabled(&c.id, "sodium.jar", true).unwrap();
         assert!(m.mods_dir(&c.id).join("sodium.jar").exists());
+    }
+
+    #[test]
+    fn names_sort_numbers_naturally() {
+        let mut names = [
+            "Placeholder 10",
+            "Placeholder 2",
+            "placeholder 1",
+            "Placeholder 9",
+        ];
+        names.sort_by(|a, b| natural_name_cmp(a, b));
+        assert_eq!(
+            names,
+            [
+                "placeholder 1",
+                "Placeholder 2",
+                "Placeholder 9",
+                "Placeholder 10"
+            ]
+        );
     }
 }
