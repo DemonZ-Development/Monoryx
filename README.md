@@ -30,7 +30,7 @@ Installing Monoryx is quick and straightforward. Follow the steps below to downl
 
 ### Downloading Monoryx
 
-To install Monoryx, first download the latest version from our [releases page](https://github.com/DemonZ-Development/Monoryx/releases).
+To install Monoryx, first download the latest version from our [releases page](https://github.com/DemonZ-Development/Monoryx/releases). If you want to compile the launcher yourself, you can follow our [guide for building Monoryx from source](#building-monoryx-from-source).
 
 On the releases page, choose the version that best suits your needs. **We strongly recommend using the Installation Wizard**, as it provides the easiest way to install and configure Monoryx.
 
@@ -105,6 +105,8 @@ The installation may take a moment while the required files are copied to your c
 
 Once the installation has finished, Monoryx is ready to use.
 
+
+
 ### First Launch
 
 When you open Monoryx for the first time, you will be greeted by the **onboarding screen**.
@@ -127,7 +129,9 @@ Once you have completed the onboarding process, you're ready to start using **Mo
 
 Enjoy your new Minecraft launcher!
 
-## Quick Start for developers
+## Building Monoryx from Source
+
+This is for indeviduals who dont want to download and install a precompiled version of the launcher and would rather compile it themselves.
 
 ### Requirements
 
@@ -148,7 +152,7 @@ cargo run --release
 
 Windows release build produces `target/release/monoryx.exe` with no console window. Linux/macOS produce `target/release/monoryx`.
 
-### First Run
+## First Run
 
 1. Start MONORYX.
 2. Enter an offline username (3-16 chars, letters/numbers/underscore).
