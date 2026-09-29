@@ -24,7 +24,110 @@ By **DemonZDevelopment**. Licensed under **Apache-2.0**.
 - Worlds with save thumbnails, metadata, backups, and restore as a separate copy
 - Discord Rich Presence with activity privacy controls and links to MONORYX and DemonZ Development
 
-## Quick Start
+## Installing Monoryx
+
+Installing Monoryx is quick and straightforward. Follow the steps below to download and install the launcher on your computer.
+
+### Downloading Monoryx
+
+To install Monoryx, first download the latest version from our [releases page](https://github.com/DemonZ-Development/Monoryx/releases).
+
+On the releases page, choose the version that best suits your needs. **We strongly recommend using the Installation Wizard**, as it provides the easiest way to install and configure Monoryx.
+
+![Image1](./assets/instalation-guide/Screenshot%202026-09-29%20110323.png)
+
+Once you have downloaded the Installation Wizard for your operating system, open your **Downloads** folder.
+
+On Windows, you can quickly access it by opening **File Explorer** and selecting **Downloads** from the navigation panel on the left.
+
+![Image2](./assets/instalation-guide/Screenshot%202026-09-29%20110659.png)
+
+Locate the Monoryx Installation Wizard and double-click it to start the installation.
+
+Depending on your Windows security settings, Windows may display a **"Windows protected your PC"** message. This can occur because the installer is not signed with a Microsoft-verified publisher certificate.
+
+If this message appears, click **More info**.
+
+![Image3](./assets/instalation-guide/Screenshot%202026-09-29%20110706.png)
+
+You will then see additional information about the application. Click **Run anyway** to launch the Monoryx installer.
+
+![Image4}](./assets/instalation-guide/Screenshot%202026-09-29%20110712.png)
+
+### Installing Monoryx
+
+Once the installer opens, the first thing you need to choose is who Monoryx should be installed for.
+
+You will have two options:
+
+- **Only for me** — Installs Monoryx for your Windows user account. **This is the recommended option for most users.**
+    
+- **For all users** — Installs Monoryx for every user account on the computer.
+    
+
+Select the option that works best for you and continue.
+
+![Image5](./assets/instalation-guide/Screenshot%202026-09-29%20110722.png)
+
+You will then need to review and accept the **Monoryx Terms and Conditions**.
+
+Read through the terms and, if you agree to them, select the option to accept them before continuing.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110748.png)
+
+After accepting the Terms and Conditions, you will be asked where Monoryx should be installed.
+
+The default installation location is recommended for most users. If you want Monoryx installed somewhere else, you can change the location here.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110755.png)
+
+Next, you will be asked to choose the **Start Menu folder** for Monoryx.
+
+For most users, the default location is recommended, so you can simply continue without changing anything.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110801.png)
+
+The installer will then show you a few **additional installation tasks**.
+
+Select whichever options you want enabled. If you're unsure, the default selections are generally fine.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110809.png)
+
+The installer is now ready to install Monoryx.
+
+Review your selected options and click **Install** to begin the installation.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110818.png)
+
+The installation may take a moment while the required files are copied to your computer.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110825.png)
+
+Once the installation has finished, Monoryx is ready to use.
+
+### First Launch
+
+When you open Monoryx for the first time, you will be greeted by the **onboarding screen**.
+
+The onboarding process allows you to configure some of Monoryx's basic settings before using the launcher.
+
+You can configure your **offline account username** and choose some of Monoryx's default launcher settings.
+
+Follow the prompts shown on screen and configure the launcher to your preferences.
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111129.png)
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111149.png)
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111157.png)
+
+![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111203.png)
+
+Once you have completed the onboarding process, you're ready to start using **Monoryx**.
+
+Enjoy your new Minecraft launcher!
+
+## Quick Start for developers
 
 ### Requirements
 
