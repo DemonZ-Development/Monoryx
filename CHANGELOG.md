@@ -1,3 +1,12 @@
+# MONORYX 1.2.1
+
+Well... turns out our GPU preference logic was doing the exact opposite of what it was supposed to do. Quick patch so your actual graphics card gets used.
+
+## Fixes
+
+- Fixed Minecraft ignoring your dedicated graphics card and maxing out integrated graphics instead. Turns out Windows DirectX uses `2` for High Performance and `1` for Power Saving, and we had them backwards. So clicking "High performance" was essentially begging Windows to run the game on Intel UHD/integrated graphics. That should actually be fixed now.
+- Added a trailing semicolon to the DirectX GPU registry value so Windows doesn't get confused reading it.
+
 # MONORYX 1.2.0
 
 This release makes it easier to get back into a game, manage its files, and see what went wrong when Minecraft closes unexpectedly.

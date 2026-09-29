@@ -235,8 +235,8 @@ fn substitute_logging_arg(template: &str, _game_dir: &Path, path: &Path) -> Stri
 fn gpu_preference_code(preference: GpuPreference) -> &'static str {
     match preference {
         GpuPreference::System => "0",
-        GpuPreference::HighPerformance => "1",
-        GpuPreference::PowerSaving => "2",
+        GpuPreference::HighPerformance => "2",
+        GpuPreference::PowerSaving => "1",
     }
 }
 
@@ -249,7 +249,7 @@ fn gpu_reg_args(java_exe: &Path, code: &str) -> Vec<String> {
         "/t".to_string(),
         "REG_SZ".to_string(),
         "/d".to_string(),
-        format!("GpuPreference={code}"),
+        format!("GpuPreference={code};"),
         "/f".to_string(),
     ]
 }
@@ -665,8 +665,8 @@ mod tests {
         let java_exe = Path::new(r"C:\Program Files\Java\bin\javaw.exe");
         for (preference, code) in [
             (GpuPreference::System, "0"),
-            (GpuPreference::HighPerformance, "1"),
-            (GpuPreference::PowerSaving, "2"),
+            (GpuPreference::HighPerformance, "2"),
+            (GpuPreference::PowerSaving, "1"),
         ] {
             let args = gpu_reg_args(java_exe, gpu_preference_code(preference));
             assert_eq!(args[0], "add");
@@ -679,7 +679,7 @@ mod tests {
             assert_eq!(args[4], "/t");
             assert_eq!(args[5], "REG_SZ");
             assert_eq!(args[6], "/d");
-            assert_eq!(args[7], format!("GpuPreference={code}"));
+            assert_eq!(args[7], format!("GpuPreference={code};"));
             assert_eq!(args[8], "/f");
         }
     }
