@@ -1587,8 +1587,12 @@ impl AppState {
                 self.launcher_update_download_loading = false;
                 match result {
                     Ok(path) => {
-                        self.launcher_update_downloaded = Some(path);
-                        self.notify("Update downloaded. Run the installer when ready.");
+                        self.launcher_update_downloaded = Some(path.clone());
+                        self.notify("Update downloaded. Starting installer...");
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = std::process::Command::new(&path).spawn();
+                        }
                     }
                     Err(error) => self.launcher_update_download_error = Some(error),
                 }

@@ -1,3 +1,13 @@
+# MONORYX 1.2.2
+
+Another quick hotfix because updating wasn't feeling as seamless as it should be.
+
+## Fixes
+
+- The installer now actually opens itself automatically once the update finishes downloading, so you're not left staring at the screen wondering if it did anything.
+- Swapped the main button to "Run installer" once the download finishes, just in case you closed the installer wizard and need to run it again.
+- Bumped the update download timeout to 10 minutes so slower connections don't randomly cut off with "error decoding response body" near the end.
+
 # MONORYX 1.2.1
 
 Well... turns out our GPU preference logic was doing the exact opposite of what it was supposed to do. Quick patch so your actual graphics card gets used.

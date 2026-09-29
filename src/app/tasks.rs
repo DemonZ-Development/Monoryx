@@ -837,7 +837,12 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
                     .map_err(|e| format!("Could not prepare update folder: {e}"))?;
                 let target = dir.join(format!("MONORYX-Setup-{parsed_version}.exe"));
                 let partial = dir.join(format!("MONORYX-Setup-{parsed_version}.part"));
-                let response = http.get(&url).send().await.map_err(|e| e.to_string())?;
+                let response = http
+                    .get(&url)
+                    .timeout(std::time::Duration::from_secs(600))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if !response.status().is_success() {
                     return Err(format!(
                         "Update download failed: HTTP {}",

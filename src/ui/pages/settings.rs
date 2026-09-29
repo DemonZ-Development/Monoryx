@@ -157,7 +157,29 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                if let Some(_dl) = &update.download_url {
+                                #[cfg(target_os = "windows")]
+                                if let Some(path) = state.launcher_update_downloaded.clone() {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("Run installer")
+                                                    .strong()
+                                                    .color(
+                                                        crate::ui::theme::palette(ui.ctx()).accent_text,
+                                                    ),
+                                            )
+                                            .fill(crate::ui::theme::palette(ui.ctx()).accent),
+                                        )
+                                        .clicked()
+                                    {
+                                        match std::process::Command::new(path).spawn() {
+                                            Ok(_) => state.notify("Installer launched"),
+                                            Err(error) => state.fail(format!(
+                                                "Could not launch installer: {error}"
+                                            )),
+                                        }
+                                    }
+                                } else if let Some(_dl) = &update.download_url {
                                     if ui
                                         .add(
                                             egui::Button::new(
@@ -178,23 +200,27 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                         .clicked()
                                         && !state.launcher_update_download_loading
                                     {
-                                        #[cfg(target_os = "windows")]
                                         state.download_launcher_update();
-                                        #[cfg(not(target_os = "windows"))]
-                                        let _ = open::that(_dl);
                                     }
                                 }
-                                #[cfg(target_os = "windows")]
-                                if let Some(path) = state.launcher_update_downloaded.clone() {
-                                    if ui.button("Run installer").clicked() {
-                                        match std::process::Command::new(path).spawn() {
-                                            Ok(_) => state.notify("Installer launched"),
-                                            Err(error) => state.fail(format!(
-                                                "Could not launch installer: {error}"
-                                            )),
+                                #[cfg(not(target_os = "windows"))]
+                                if let Some(_dl) = &update.download_url {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("Download Update")
+                                                    .strong()
+                                                    .color(
+                                                        crate::ui::theme::palette(ui.ctx()).accent_text,
+                                                    ),
+                                                )
+                                                .fill(crate::ui::theme::palette(ui.ctx()).accent),
+                                            )
+                                            .clicked()
+                                        {
+                                            let _ = open::that(_dl);
                                         }
                                     }
-                                }
                                 if ui.button("View on GitHub").clicked() {
                                     let _ = open::that(&update.html_url);
                                 }
