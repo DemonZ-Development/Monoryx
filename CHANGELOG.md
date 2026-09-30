@@ -1,3 +1,53 @@
+# MONORYX 1.3.0
+
+This release introduces a redesigned onboarding experience, full keyboard navigation with a global command palette, enhanced content safety and updater verification, flexible world backup compression, and comprehensive data management during uninstallation.
+
+## Onboarding and navigation
+
+- Redesigned the onboarding wizard into a focused, centered modal with a themed backdrop graphic and a step rail (`Step N of 3`) tracking your progress.
+- Added profile preview cards for offline accounts with clean badge placement.
+- Added complete keyboard navigation for the wizard: `Enter` to continue, `Escape` to step back.
+- Introduced a global Command Palette (`Ctrl+K`) to quickly search and jump between pages, instances, and common launcher actions.
+- Added keyboard shortcuts (`Ctrl+1` through `Ctrl+9` for direct page navigation, `F2` to open the screenshot gallery).
+
+## Discover and content safety
+
+- Added one-click loader filter pills (Fabric, Forge, NeoForge, Quilt, Vanilla) directly above the search bar for faster filtering.
+- Prevented installing mods into instances whose base game files have not been downloaded, with clear guidance on creating or downloading the instance first.
+- Loader filter pills now adapt to the loaders you actually have installed locally.
+- Rebuilt the search field into a unified control with an integrated search icon, quick-clear button, and accented focus styling.
+- Discover now displays a "CurseForge coming soon" indicator while backend integration is prepared.
+
+## Security and data protection
+
+- Self-updater downloads are now cryptographically validated against published SHA-256 checksums before launching the installer.
+- Modpack overrides extraction now enforces safety caps (up to 10,000 files and 4 GiB uncompressed) to protect against decompression bomb archives.
+- The Windows uninstaller now prompts before deleting user data, giving clear choice between keeping saves and configs (default) or performing a complete wipe.
+- The About tab now displays the app data storage location with details on what is stored there.
+
+## World backups
+
+- Added backup compression modes in Settings: Fast (standard deflate), Maximum (deflate 9), and Smallest (zstd).
+- World backups now use a streaming zip writer to handle large worlds efficiently without excessive memory overhead.
+
+## Interface and quality of life
+
+- Added character limits and real-time visual capacity indicators (`used/max`) across all text fields (usernames, instance names, JVM arguments, paths, server addresses, search).
+- The sidebar width now scales adaptively with the window size.
+- Pages now preserve their scroll positions when switching tabs.
+- Progress bars now report transfer speeds, downloaded bytes, throughput, and estimated time remaining.
+- Improved contrast between secondary and disabled text tones across all themes.
+
+## Performance and engineering
+
+- Cut executable size in half (from ~41 MB down to ~19 MB) for faster downloads and a lighter desktop footprint.
+- Added automated CI workflows covering formatting, strict Clippy checks, and test suites across Windows and Linux.
+- Added automated UI flow test coverage for the onboarding sequence and installer integrity verification.
+
+## Community and documentation
+
+- Added an end-to-end installation walkthrough to the README with step-by-step instructions for Windows. Special thanks to @SniffBakaSniff for contributing the guide!
+
 # MONORYX 1.2.2
 
 Another quick hotfix because updating wasn't feeling as seamless as it should be.

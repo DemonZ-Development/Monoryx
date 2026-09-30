@@ -3,6 +3,9 @@ pub mod account;
 pub mod app;
 pub mod config;
 pub mod content;
+
+#[allow(dead_code)]
+pub mod curseforge;
 pub mod discord;
 pub mod downloads;
 pub mod error;
@@ -53,16 +56,26 @@ fn main() -> eframe::Result<()> {
     )
     .unwrap_or_default();
     let app_title = format!("MONORYX v{}", env!("CARGO_PKG_VERSION"));
+
+    let first_run = startup_config.is_first_run();
     let mut viewport = egui::ViewportBuilder::default()
         .with_min_inner_size([850.0, 560.0])
-        .with_maximized(startup_config.start_maximized)
+        .with_maximized(startup_config.start_maximized && !first_run)
         .with_title(app_title.clone())
         .with_icon(monoryx_icon());
     if !startup_config.start_maximized {
-        viewport = viewport.with_inner_size([
-            startup_config.window_width.clamp(850.0, 2560.0),
-            startup_config.window_height.clamp(560.0, 1440.0),
-        ]);
+        let (width, height) = if first_run {
+            (
+                crate::ui::theme::metrics::ONBOARDING_WINDOW[0],
+                crate::ui::theme::metrics::ONBOARDING_WINDOW[1],
+            )
+        } else {
+            (
+                startup_config.window_width.clamp(850.0, 2560.0),
+                startup_config.window_height.clamp(560.0, 1440.0),
+            )
+        };
+        viewport = viewport.with_inner_size([width, height]);
     }
     let options = eframe::NativeOptions {
         viewport,
@@ -78,7 +91,7 @@ fn main() -> eframe::Result<()> {
 
             #[cfg(target_os = "windows")]
             crate::utils::system::ensure_window_positioned(
-                startup_config.start_maximized,
+                startup_config.start_maximized && !first_run,
                 !startup_config.start_maximized,
             );
 

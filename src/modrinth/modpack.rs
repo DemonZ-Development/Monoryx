@@ -198,10 +198,15 @@ pub async fn install_mrpack(
     })
 }
 
+const MAX_OVERRIDE_FILES: usize = 10_000;
+const MAX_OVERRIDE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 fn extract_overrides(mrpack_path: &Path, game: &Path) -> Result<usize> {
+    use std::io::Read as _;
     let f = std::fs::File::open(mrpack_path)?;
     let mut zip = zip::ZipArchive::new(f).map_err(|e| MonoryxError::Archive(e.to_string()))?;
     let mut count = 0usize;
+    let mut total_bytes = 0u64;
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)
@@ -224,12 +229,32 @@ fn extract_overrides(mrpack_path: &Path, game: &Path) -> Result<usize> {
         if !crate::utils::fs::is_within_root(game, &dest) {
             return Err(MonoryxError::UnsafePath(name));
         }
+        count += 1;
+        if count > MAX_OVERRIDE_FILES {
+            return Err(MonoryxError::Archive(
+                "Modpack exceeds maximum allowed override file count".to_string(),
+            ));
+        }
+        let uncompressed_size = entry.size();
+        total_bytes = total_bytes.checked_add(uncompressed_size).ok_or_else(|| {
+            MonoryxError::Archive("Modpack overrides exceed size limit".to_string())
+        })?;
+        if total_bytes > MAX_OVERRIDE_BYTES {
+            return Err(MonoryxError::Archive(
+                "Modpack overrides exceed safe size limit".to_string(),
+            ));
+        }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let mut out = std::fs::File::create(&dest)?;
-        std::io::copy(&mut entry, &mut out)?;
-        count += 1;
+        let mut limited = (&mut entry).take(uncompressed_size);
+        let copied = std::io::copy(&mut limited, &mut out)?;
+        if copied != uncompressed_size {
+            return Err(MonoryxError::Archive(
+                "Incomplete or corrupt file in modpack overrides".to_string(),
+            ));
+        }
     }
     Ok(count)
 }

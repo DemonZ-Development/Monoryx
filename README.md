@@ -52,7 +52,7 @@ If this message appears, click **More info**.
 
 You will then see additional information about the application. Click **Run anyway** to launch the Monoryx installer.
 
-![Image4}](./assets/instalation-guide/Screenshot%202026-09-29%20110712.png)
+![Image4](./assets/instalation-guide/Screenshot%202026-09-29%20110712.png)
 
 ### Installing Monoryx
 
@@ -117,13 +117,13 @@ You can configure your **offline account username** and choose some of Monoryx's
 
 Follow the prompts shown on screen and configure the launcher to your preferences.
 
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111129.png)
+![Onboarding Step 1 - Welcome](./assets/instalation-guide/Screenshot%202026-09-29%20111129.png)
 
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111149.png)
+![Onboarding Step 2 - Choose offline username](./assets/instalation-guide/Screenshot%202026-09-29%20111149.png)
 
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111157.png)
+![Onboarding Step 3 - Launcher defaults](./assets/instalation-guide/Screenshot%202026-09-29%20111157.png)
 
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20111203.png)
+![Monoryx Home Screen](./assets/instalation-guide/Screenshot%202026-09-29%20111203.png)
 
 Once you have completed the onboarding process, you're ready to start using **Monoryx**.
 

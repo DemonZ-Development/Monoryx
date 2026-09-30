@@ -1,3 +1,4 @@
+use crate::app::events::Page;
 use crate::app::state::AppState;
 use crate::modrinth::search::{DiscoverTab, SortOrder};
 use crate::ui::components::{
@@ -16,40 +17,83 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     if state.discover_tab != DiscoverTab::Modpacks {
         let current = state.selected();
-        ui.horizontal(|ui| {
+        let installable = state.installable_instances();
+        let blocked = state.install_blocker();
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("Install into:").strong().color(TEXT));
-            let mut selection = state.selected_instance.clone();
-            egui::ComboBox::from_id_salt("discover-target-instance")
-                .selected_text(
-                    current
-                        .as_ref()
-                        .map_or("Choose an instance", |cfg| cfg.name.as_str()),
-                )
-                .show_ui(ui, |ui| {
-                    for instance in &state.instance_list {
-                        ui.selectable_value(
-                            &mut selection,
-                            Some(instance.id.clone()),
-                            format!(
-                                "{} · MC {} · {}",
-                                instance.name,
-                                instance.minecraft_version,
-                                instance.loader.display_name()
-                            ),
-                        );
+            if installable.is_empty() {
+                let label = if state.instance_list.is_empty() {
+                    "No instances yet"
+                } else {
+                    "No downloaded instances"
+                };
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(RichText::new(label).size(12.0).color(MUTED))
+                        .min_size(egui::vec2(220.0, 28.0)),
+                );
+                if state.instance_list.is_empty() {
+                    if ui.link("Create an instance").clicked() {
+                        crate::ui::pages::instances::open_new_dialog(state);
+                        state.set_page(Page::Instances);
                     }
-                });
-            if selection != state.selected_instance {
-                state.selected_instance = selection;
-                state.save_config();
-                state.refresh_library();
-                state.search.game_version.clear();
-                state.search.loader.clear();
-                state.sync_search_filters();
-                state.search.offset = 0;
-                state.run_search();
+                } else if ui.link("Repair files").clicked() {
+                    if let Some(cfg) = current.clone() {
+                        crate::app::tasks::repair_instance(state, cfg.id);
+                    }
+                }
+            } else {
+                let mut selection = state.selected_instance.clone();
+                egui::ComboBox::from_id_salt("discover-target-instance")
+                    .selected_text(
+                        current
+                            .as_ref()
+                            .map_or("Choose an instance", |cfg| cfg.name.as_str()),
+                    )
+                    .show_ui(ui, |ui| {
+                        for instance in &installable {
+                            ui.selectable_value(
+                                &mut selection,
+                                Some(instance.id.clone()),
+                                format!(
+                                    "{} · MC {} · {}",
+                                    instance.name,
+                                    instance.minecraft_version,
+                                    instance.loader.display_name()
+                                ),
+                            );
+                        }
+                    });
+                if selection != state.selected_instance {
+                    state.selected_instance = selection;
+                    state.save_config();
+                    state.refresh_library();
+
+                    let allowed = state.installable_loaders();
+                    if !allowed
+                        .iter()
+                        .any(|kind| kind.as_str() == state.search.loader)
+                    {
+                        state.search.loader = allowed
+                            .first()
+                            .map_or(String::new(), |kind| kind.as_str().to_string());
+                    }
+                    state.search.game_version.clear();
+                    state.sync_search_filters();
+                    state.search.offset = 0;
+                    state.run_search();
+                }
             }
         });
+        if let Some(reason) = &blocked {
+            ui.label(
+                RichText::new(format!(
+                    "{reason} You can still browse and queue downloads."
+                ))
+                .size(11.0)
+                .color(MUTED),
+            );
+        }
         ui.add_space(8.0);
     }
 
@@ -73,6 +117,39 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     ui.add_space(10.0);
 
+    if state.discover_tab == DiscoverTab::Mods || state.discover_tab == DiscoverTab::Modpacks {
+        let available = state.installable_loaders();
+        if !available.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Mod Loader:").size(12.0).color(TEXT2));
+                if let Some(loader) =
+                    crate::ui::components::loader_pills(ui, &state.search.loader, &available)
+                {
+                    if loader != state.search.loader {
+                        state.search.loader = loader;
+                        state.sync_search_filters();
+                        state.search.offset = 0;
+                        state.run_search();
+                    }
+                }
+            });
+            ui.add_space(8.0);
+        }
+    }
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Source:").size(12.0).color(TEXT2));
+        ui.label(RichText::new("Modrinth").size(12.0).color(TEXT));
+        badge(ui, "CurseForge coming soon");
+        if ui
+            .link("Learn more")
+            .on_hover_text("CurseForge browsing is on the way")
+            .clicked()
+        {
+            let _ = open::that("https://www.curseforge.com/minecraft");
+        }
+    });
+    ui.add_space(8.0);
     egui::Frame::new()
         .fill(crate::ui::theme::palette(ui.ctx()).elevated)
         .stroke(Stroke::new(
@@ -83,24 +160,18 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut state.search.query)
-                        .hint_text("Search Modrinth")
-                        .desired_width((ui.available_width() - 170.0).max(150.0)),
+                let (_resp, enter) = crate::ui::components::search_field(
+                    ui,
+                    "discover-search",
+                    &mut state.search.query,
+                    crate::ui::components::limits::SEARCH,
+                    "Search Modrinth for mods, modpacks, resource packs…",
                 );
-                if resp.changed() {
+                if _resp.changed() {
                     state.search_debounce = Some(std::time::Instant::now());
                 }
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if enter {
                     state.search_debounce = None;
-                    state.run_search();
-                }
-
-                if !state.search.query.is_empty()
-                    && ui.button("Clear").on_hover_text("Clear query").clicked()
-                {
-                    state.search.query.clear();
-                    state.search.offset = 0;
                     state.run_search();
                 }
 
@@ -139,7 +210,8 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                             ui.add(
                                 egui::TextEdit::singleline(&mut state.search.game_version)
                                     .desired_width(75.0)
-                                    .hint_text("All"),
+                                    .hint_text("All")
+                                    .char_limit(crate::ui::components::limits::ADDRESS),
                             );
                             if !state.search.game_version.is_empty() && ui.button("Clear").clicked()
                             {
@@ -565,16 +637,24 @@ fn show_hit_summary(
                         && entry.kind.as_str() == hit.project_type
                 })
                 .cloned();
-            if content_primary_button(
+
+            let blocker = state.install_blocker();
+            let install = content_primary_button(
                 ui,
                 if installed.is_some() {
                     "Reinstall"
                 } else {
                     "Install"
                 },
-            )
-            .clicked()
-            {
+            );
+            let install = if let Some(reason) = &blocker {
+                install.on_hover_text(format!(
+                    "{reason}\nBrowse the project anyway to see versions and details."
+                ))
+            } else {
+                install
+            };
+            if install.clicked() {
                 open_hit_details(state, hit);
             }
             if let Some(installed) = installed {
@@ -821,6 +901,12 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
         if let Some(reason) = &compatibility_issue {
             ui.label(RichText::new(reason).color(TEXT2));
         }
+
+        let readiness_issue = state.install_blocker();
+        let can_install = compatibility_issue.is_none() && readiness_issue.is_none();
+        if let Some(reason) = &readiness_issue {
+            ui.label(RichText::new(reason).color(MUTED));
+        }
         let control_width = ((ui.available_width() - 8.0) / 2.0).clamp(150.0, 250.0);
         ui.horizontal(|ui| {
             if p.project_type == "modpack" {
@@ -833,7 +919,7 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
                 ui,
                 install_label,
                 true,
-                !state.detail_versions_loading && compatibility_issue.is_none(),
+                !state.detail_versions_loading && can_install,
                 control_width,
             )
             .clicked()

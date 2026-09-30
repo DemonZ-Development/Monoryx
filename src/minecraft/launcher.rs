@@ -232,6 +232,7 @@ fn substitute_logging_arg(template: &str, _game_dir: &Path, path: &Path) -> Stri
     template.replace("${path}", &path.display().to_string())
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn gpu_preference_code(preference: GpuPreference) -> &'static str {
     match preference {
         GpuPreference::System => "0",
@@ -240,6 +241,7 @@ fn gpu_preference_code(preference: GpuPreference) -> &'static str {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn gpu_reg_args(java_exe: &Path, code: &str) -> Vec<String> {
     vec![
         "add".to_string(),
@@ -254,11 +256,13 @@ fn gpu_reg_args(java_exe: &Path, code: &str) -> Vec<String> {
     ]
 }
 
+#[cfg(target_os = "windows")]
 fn system_reg_exe() -> PathBuf {
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
     PathBuf::from(system_root).join("System32").join("reg.exe")
 }
 
+#[cfg(target_os = "windows")]
 fn windows_registry_error(context: &str, status: Option<i32>) -> MonoryxError {
     MonoryxError::Launch(format!(
         "{context} failed{}",
@@ -304,6 +308,7 @@ async fn query_gpu_preference(java_exe: &Path) -> Result<Option<String>> {
     ))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn parse_reg_query_value(text: &str, value_name: &str) -> Option<String> {
     for line in text.lines() {
         let trimmed = line.trim_start();
@@ -355,10 +360,7 @@ async fn write_gpu_preference(java_exe: &Path, code: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn apply_gpu_preference(
-    java_exe: &Path,
-    preference: crate::config::GpuPreference,
-) -> Result<()> {
+pub async fn apply_gpu_preference(java_exe: &Path, preference: GpuPreference) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         apply_gpu_preference_windows(java_exe, preference).await
@@ -367,7 +369,7 @@ pub async fn apply_gpu_preference(
     {
         let _ = java_exe;
         match preference {
-            crate::config::GpuPreference::System => Ok(()),
+            GpuPreference::System => Ok(()),
             _ => Err(MonoryxError::Launch(
                 "GPU preference is only supported on Windows".to_string(),
             )),
@@ -388,6 +390,7 @@ async fn apply_gpu_preference_windows(java_exe: &Path, preference: GpuPreference
     write_gpu_preference(java_exe, code).await
 }
 
+#[cfg(target_os = "windows")]
 const REG_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[cfg(target_os = "windows")]

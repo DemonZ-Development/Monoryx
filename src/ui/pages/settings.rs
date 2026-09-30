@@ -162,11 +162,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                     if ui
                                         .add(
                                             egui::Button::new(
-                                                RichText::new("Run installer")
-                                                    .strong()
-                                                    .color(
-                                                        crate::ui::theme::palette(ui.ctx()).accent_text,
-                                                    ),
+                                                RichText::new("Run installer").strong().color(
+                                                    crate::ui::theme::palette(ui.ctx()).accent_text,
+                                                ),
                                             )
                                             .fill(crate::ui::theme::palette(ui.ctx()).accent),
                                         )
@@ -208,19 +206,17 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                     if ui
                                         .add(
                                             egui::Button::new(
-                                                RichText::new("Download Update")
-                                                    .strong()
-                                                    .color(
-                                                        crate::ui::theme::palette(ui.ctx()).accent_text,
-                                                    ),
-                                                )
-                                                .fill(crate::ui::theme::palette(ui.ctx()).accent),
+                                                RichText::new("Download Update").strong().color(
+                                                    crate::ui::theme::palette(ui.ctx()).accent_text,
+                                                ),
                                             )
-                                            .clicked()
-                                        {
-                                            let _ = open::that(_dl);
-                                        }
+                                            .fill(crate::ui::theme::palette(ui.ctx()).accent),
+                                        )
+                                        .clicked()
+                                    {
+                                        let _ = open::that(_dl);
                                     }
+                                }
                                 if ui.button("View on GitHub").clicked() {
                                     let _ = open::that(&update.html_url);
                                 }
@@ -650,14 +646,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             );
             if state.config.java.mode == "custom" {
                 field_label(ui, "Custom Java path");
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut state.config.java.custom_path);
-                    if ui.button("Browse").clicked() {
-                        if let Some(p) = rfd::FileDialog::new().pick_file() {
-                            state.config.java.custom_path = p.display().to_string();
-                        }
+                crate::ui::components::limited_text_edit(
+                    ui,
+                    "settings-java-path",
+                    &mut state.config.java.custom_path,
+                    crate::ui::components::limits::PATH,
+                    "C:\\Program Files\\Java\\bin\\javaw.exe",
+                );
+                if ui.button("Browse").clicked() {
+                    if let Some(p) = rfd::FileDialog::new().pick_file() {
+                        state.config.java.custom_path = p.display().to_string();
                     }
-                });
+                }
             }
             ui.add_space(4.0);
             gpu_preference_selector(ui, &mut state.config.gpu_preference);
@@ -679,14 +679,62 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     .color(TEXT),
             );
             field_label(ui, "Default min memory (MB)");
-            ui.text_edit_singleline(&mut state.settings_mem_min);
+            crate::ui::components::limited_text_edit(
+                ui,
+                "settings-mem-min",
+                &mut state.settings_mem_min,
+                7,
+                "512",
+            );
             field_label(ui, "Default max memory (MB)");
-            ui.text_edit_singleline(&mut state.settings_mem_max);
+            crate::ui::components::limited_text_edit(
+                ui,
+                "settings-mem-max",
+                &mut state.settings_mem_max,
+                7,
+                "3072",
+            );
+            field_label(ui, "Backup compression");
+            for option in [
+                crate::config::BackupCompression::Fast,
+                crate::config::BackupCompression::Maximum,
+                crate::config::BackupCompression::Zstd,
+            ] {
+                ui.selectable_value(&mut state.config.backup_compression, option, option.label());
+            }
+            ui.label(
+                RichText::new(state.config.backup_compression.hint())
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            ui.label(
+                RichText::new(
+                    "A world's region files are already compressed by Minecraft, so raising \
+                     this helps most on a save with lots of loose files, datapacks or \
+                     resource packs in it.",
+                )
+                .size(11.0)
+                .color(MUTED),
+            );
             ui.collapsing("Advanced launch arguments", |ui| {
                 field_label(ui, "Default JVM arguments");
-                ui.text_edit_singleline(&mut state.settings_jvm);
+                crate::ui::components::limited_text_edit_with_hint(
+                    ui,
+                    "settings-jvm-args",
+                    &mut state.settings_jvm,
+                    crate::ui::components::limits::JVM_ARGS,
+                    "-Xmx4G",
+                    "Applied to new instances. Existing ones keep their own value.",
+                );
                 field_label(ui, "Default game arguments");
-                ui.text_edit_singleline(&mut state.settings_game_args);
+                crate::ui::components::limited_text_edit_with_hint(
+                    ui,
+                    "settings-game-args",
+                    &mut state.settings_game_args,
+                    crate::ui::components::limits::GAME_ARGS,
+                    "--username Steve",
+                    "Appended to the game command line.",
+                );
             });
             if ui.button("Save Minecraft defaults").clicked() {
                 match (
@@ -743,6 +791,35 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     let _ = open::that(state.paths.logs_dir());
                 }
             });
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Where your data lives")
+                    .size(13.5)
+                    .strong()
+                    .color(TEXT),
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(state.paths.root().display().to_string())
+                        .monospace()
+                        .size(11.5)
+                        .color(TEXT2),
+                )
+                .wrap(),
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Everything lives here: your instances, mods, worlds, world backups, \
+                         screenshots, settings, plus the Minecraft files, Java runtimes and \
+                         assets MONORYX downloaded. Uninstalling asks whether to delete this \
+                         folder, and you can always say no and delete it yourself here instead.",
+                    )
+                    .size(11.0)
+                    .color(MUTED),
+                )
+                .wrap(),
+            );
         });
     }
 }

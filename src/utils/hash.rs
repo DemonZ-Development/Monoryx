@@ -22,6 +22,13 @@ pub fn sha1_file(path: &Path) -> Result<String> {
     Ok(hex::encode(h.finalize()))
 }
 
+pub fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    stream_file(path, |bytes| h.update(bytes))?;
+    Ok(hex::encode(h.finalize()))
+}
+
 pub fn sha512_file(path: &Path) -> Result<String> {
     use sha2::Digest as _;
     let mut h = sha2::Sha512::new();
@@ -32,6 +39,14 @@ pub fn sha512_file(path: &Path) -> Result<String> {
 #[must_use]
 pub fn sha1_bytes(bytes: &[u8]) -> String {
     let mut h = sha1::Sha1::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
+
+#[must_use]
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
 }
@@ -48,6 +63,7 @@ pub fn verify_file(path: &Path, algo: &str, expected: &str) -> Result<()> {
     let expected = expected.to_lowercase();
     let actual = match algo {
         "sha1" => sha1_file(path)?,
+        "sha256" => sha256_file(path)?,
         "sha512" => sha512_file(path)?,
         other => {
             return Err(MonoryxError::Download(format!(
@@ -69,6 +85,7 @@ pub fn verify_bytes(bytes: &[u8], algo: &str, expected: &str) -> Result<()> {
     let expected = expected.to_lowercase();
     let actual = match algo {
         "sha1" => sha1_bytes(bytes),
+        "sha256" => sha256_bytes(bytes),
         "sha512" => sha512_bytes(bytes),
         other => {
             return Err(MonoryxError::Download(format!(
@@ -95,6 +112,14 @@ mod tests {
         assert_eq!(
             sha1_bytes(b"hello"),
             "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
+    }
+
+    #[test]
+    fn sha256_known_vector() {
+        assert_eq!(
+            sha256_bytes(b"hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
     }
 

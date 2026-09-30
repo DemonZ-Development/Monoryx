@@ -1,6 +1,6 @@
 use crate::app::events::Page;
 use crate::app::state::AppState;
-use crate::ui::theme::{ACCENT, DANGER, INFO, MUTED, SELECTED_FG, TEXT, TEXT2};
+use crate::ui::theme::{metrics, type_scale, ACCENT, DANGER, MUTED, SELECTED_FG, TEXT, TEXT2};
 use egui::{Color32, CornerRadius, RichText, Stroke};
 
 pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -13,10 +13,15 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
             #[cfg(target_os = "windows")]
             crate::utils::system::ensure_window_positioned(true, false);
         } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                state.config.window_width.clamp(850.0, 2560.0),
-                state.config.window_height.clamp(560.0, 1440.0),
-            )));
+            let (w, h) = if state.config.is_first_run() {
+                (metrics::ONBOARDING_WINDOW[0], metrics::ONBOARDING_WINDOW[1])
+            } else {
+                (
+                    state.config.window_width.clamp(850.0, 2560.0),
+                    state.config.window_height.clamp(560.0, 1440.0),
+                )
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             #[cfg(target_os = "windows")]
             crate::utils::system::ensure_window_positioned(false, startup_passes == 0);
         }
@@ -39,17 +44,18 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
     crate::ui::theme::apply_selected_theme(ctx, state.config.theme);
     let theme = crate::ui::theme::palette(ctx);
 
+    crate::ui::palette::handle_shortcuts(state, ctx);
+
     if state.page == Page::Onboarding {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(10.0);
-            });
             crate::ui::pages::onboarding::show(state, ctx, ui);
         });
         handle_overlays(state, ctx);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
         return;
     }
+
+    crate::ui::pages::onboarding::release_background(ctx);
 
     if let Some(update) = state.launcher_update.clone() {
         if update.has_update && state.show_update_banner {
@@ -104,7 +110,7 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
     }
 
     egui::SidePanel::left("sidebar")
-        .exact_width(225.0)
+        .exact_width(crate::ui::theme::sidebar_width(ctx))
         .resizable(false)
         .frame(
             egui::Frame::new()
@@ -115,12 +121,7 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
         .show(ctx, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("MONORYX")
-                        .size(20.0)
-                        .strong()
-                        .color(TEXT),
-                );
+                ui.label(RichText::new("MONORYX").size(20.0).strong().color(TEXT));
             });
             ui.label(
                 RichText::new("Play. Modify. Nothing else.")
@@ -144,162 +145,25 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                         }
                         let sel = state.page == page;
                         let has_update_badge = page == Page::Settings
-                            && state
-                                .launcher_update
-                                .as_ref()
-                                .is_some_and(|u| u.has_update);
+                            && state.launcher_update.as_ref().is_some_and(|u| u.has_update);
 
-                        let resp = sidebar_item(ui, ctx, page.label(), sel, has_update_badge);
+                        let resp = sidebar_item(ui, ctx, page, sel, has_update_badge);
                         if resp.clicked() {
                             state.set_page(page);
                         }
                     }
 
                     ui.add_space(12.0);
-                    let op_phase = state.operations.values().next().map(|o| o.phase.clone());
-                    if !state.global_status.is_empty()
-                        || state.global_frac.is_some()
-                        || op_phase.is_some()
-                    {
-                        egui::Frame::new()
-                            .fill(theme.elevated2)
-                            .stroke(Stroke::new(1.0_f32, theme.border))
-                            .corner_radius(CornerRadius::same(8))
-                            .inner_margin(egui::Margin::same(10))
-                            .show(ui, |ui| {
-                                if let Some(phase) = &op_phase {
-                                    ui.label(RichText::new(phase).size(11.0).color(TEXT));
-                                } else {
-                                    ui.label(RichText::new(&state.global_status).size(11.0).color(TEXT));
-                                }
-                                crate::ui::components::thin_progress(ui, state.global_frac);
-                                if ui.button("Downloads").clicked() {
-                                    state.set_page(Page::Downloads);
-                                }
-                            });
-                    }
-
+                    status_card(state, ui, theme);
                 });
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                            .size(10.5)
-                            .color(MUTED),
-                    );
-                    if let Some(u) = &state.launcher_update {
-                        if u.has_update
-                            && ui
-                                .button(RichText::new("Update").size(10.5).color(INFO))
-                                .clicked()
-                        {
-                            state.set_page(Page::Settings);
-                        }
-                    }
-                });
-
-                ui.add_space(6.0);
-
-                if let Some(p) = state.config.profile.clone() {
-                    let card_id = ui.make_persistent_id("bottom_profile_card");
-                    let hovered = ui.ctx().data(|d| d.get_temp::<bool>(card_id).unwrap_or(false));
-                    let fade = ui.ctx().animate_bool_with_time(card_id.with("hover"), hovered, 0.15);
-                    if fade > 0.001 && fade < 0.999 {
-                        ctx.request_repaint();
-                    }
-                    let fill = theme.elevated2.lerp_to_gamma(theme.hover, fade);
-                    let border_color = theme.border.lerp_to_gamma(theme.accent, fade * 0.28);
-
-                    let frame_resp = egui::Frame::new()
-                        .fill(fill)
-                        .stroke(Stroke::new(1.0_f32, border_color))
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(10, 7))
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                let (avatar_rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                                ui.painter().circle_filled(avatar_rect.center(), 11.0, theme.elevated);
-                                ui.painter().circle_stroke(avatar_rect.center(), 11.0, Stroke::new(1.0_f32, theme.border));
-                                let initial = p.username.chars().next().unwrap_or('?').to_uppercase().to_string();
-                                ui.painter().text(
-                                    avatar_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    initial,
-                                    egui::FontId::proportional(11.5),
-                                    TEXT,
-                                );
-
-                                ui.add_space(4.0);
-                                let uname_display = if p.username.len() > 11 {
-                                    format!("{}…", &p.username[..10])
-                                } else {
-                                    p.username.clone()
-                                };
-                                ui.label(RichText::new(uname_display).size(12.5).strong().color(TEXT));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    egui::Frame::new()
-                                        .fill(theme.elevated)
-                                        .stroke(Stroke::new(1.0_f32, theme.border))
-                                        .corner_radius(CornerRadius::same(4))
-                                        .inner_margin(egui::Margin::symmetric(6, 2))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("Offline").size(10.0).color(TEXT2));
-                                        });
-                                });
-                            });
-                        });
-
-                    let resp = ui.interact(frame_resp.response.rect, card_id, egui::Sense::click());
-                    ui.ctx().data_mut(|d| d.insert_temp(card_id, resp.hovered()));
-                    if resp.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    if resp.on_hover_text(format!("Offline account: {}\nSkinsRestorer active (Click to manage in Accounts)", p.username)).clicked() {
-                        state.set_page(Page::Accounts);
-                    }
-                } else {
-                    let card_id = ui.make_persistent_id("bottom_no_profile_card");
-                    let hovered = ui.ctx().data(|d| d.get_temp::<bool>(card_id).unwrap_or(false));
-                    let fade = ui.ctx().animate_bool_with_time(card_id.with("hover"), hovered, 0.15);
-                    if fade > 0.001 && fade < 0.999 {
-                        ctx.request_repaint();
-                    }
-                    let fill = theme.elevated2.lerp_to_gamma(theme.hover, fade);
-                    let border_color = theme.border.lerp_to_gamma(theme.accent, fade * 0.28);
-
-                    let frame_resp = egui::Frame::new()
-                        .fill(fill)
-                        .stroke(Stroke::new(1.0_f32, border_color))
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(10, 8))
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Configure Account").size(11.5).strong().color(TEXT));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Set").size(11.0).color(TEXT2));
-                                });
-                            });
-                        });
-                    let resp = ui.interact(frame_resp.response.rect, card_id, egui::Sense::click());
-                    ui.ctx().data_mut(|d| d.insert_temp(card_id, resp.hovered()));
-                    if resp.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    if resp.on_hover_text("Click to configure an account").clicked() {
-                        state.set_page(Page::Accounts);
-                    }
-                }
-            });
+            sidebar_footer(state, ui);
         });
 
     egui::CentralPanel::default()
         .frame(
             egui::Frame::new()
                 .fill(theme.bg)
-                .inner_margin(egui::Margin::same(26)),
+                .inner_margin(egui::Margin::same(metrics::PAGE_MARGIN)),
         )
         .show(ctx, |ui| {
             let page_id = egui::Id::new("page-transition");
@@ -317,7 +181,9 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
             if enter > 0.001 && enter < 0.999 {
                 ctx.request_repaint();
             }
+
             egui::ScrollArea::vertical()
+                .id_salt(("page-scroll", state.page.as_str()))
                 .auto_shrink([false, false])
                 .show(ui, |ui| match state.page {
                     Page::Home => crate::ui::pages::home::show(state, ctx, ui),
@@ -334,6 +200,8 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                     Page::Onboarding => {}
                 });
         });
+
+    crate::ui::palette::show(state, ctx);
 
     handle_overlays(state, ctx);
 
@@ -628,7 +496,13 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     };
 
     ui.label(RichText::new("Name").size(11.0).color(TEXT2));
-    ui.text_edit_singleline(&mut cfg.name);
+    crate::ui::components::limited_text_edit(
+        ui,
+        "edit-instance-name",
+        &mut cfg.name,
+        crate::ui::components::limits::INSTANCE_NAME,
+        "Instance name",
+    );
 
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("Minecraft {}", cfg.minecraft_version)).color(TEXT));
@@ -707,10 +581,24 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
     });
 
     ui.label(RichText::new("JVM arguments").size(11.0).color(TEXT2));
-    ui.text_edit_singleline(&mut cfg.jvm_args);
+    crate::ui::components::limited_text_edit_with_hint(
+        ui,
+        "edit-instance-jvm",
+        &mut cfg.jvm_args,
+        crate::ui::components::limits::JVM_ARGS,
+        "-Xmx4G",
+        "Passed to the JVM before the game class.",
+    );
 
     ui.label(RichText::new("Game arguments").size(11.0).color(TEXT2));
-    ui.text_edit_singleline(&mut cfg.game_args);
+    crate::ui::components::limited_text_edit_with_hint(
+        ui,
+        "edit-instance-game-args",
+        &mut cfg.game_args,
+        crate::ui::components::limits::GAME_ARGS,
+        "--username Steve",
+        "Appended to the game command line.",
+    );
 
     ui.horizontal(|ui| {
         let mut w = cfg.width.map(|v| v.to_string()).unwrap_or_default();
@@ -752,7 +640,13 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
                 );
             });
         if cfg.java_mode == crate::instance::config::JavaMode::Custom {
-            ui.text_edit_singleline(&mut cfg.java_path);
+            crate::ui::components::limited_text_edit(
+                ui,
+                "edit-instance-java-path",
+                &mut cfg.java_path,
+                crate::ui::components::limits::PATH,
+                "C:\\Program Files\\Java\\bin\\javaw.exe",
+            );
             if ui.button("Browse").clicked() {
                 if let Some(p) = rfd::FileDialog::new().pick_file() {
                     cfg.java_path = p.display().to_string();
@@ -821,10 +715,11 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
 fn sidebar_item(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    label: &str,
+    page: Page,
     selected: bool,
     has_badge: bool,
 ) -> egui::Response {
+    let label = page.label();
     let id = ui.make_persistent_id(format!("sidebar_item_{label}"));
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
@@ -852,9 +747,8 @@ fn sidebar_item(
         TEXT2.lerp_to_gamma(TEXT, fade)
     };
 
-    let text_pos = egui::pos2(rect.min.x + 14.0, rect.center().y);
     ui.painter().text(
-        text_pos,
+        egui::pos2(rect.min.x + 14.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         if selected {
@@ -866,11 +760,10 @@ fn sidebar_item(
     );
 
     if has_badge && !selected {
-        let badge_pos = egui::pos2(rect.max.x - 12.0, rect.center().y);
         ui.painter().text(
-            badge_pos,
+            egui::pos2(rect.max.x - 12.0, rect.center().y),
             egui::Align2::RIGHT_CENTER,
-            "•",
+            "\u{2022}",
             egui::FontId::proportional(14.0),
             ACCENT,
         );
@@ -879,8 +772,172 @@ fn sidebar_item(
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-
     response
+}
+fn status_card(state: &mut AppState, ui: &mut egui::Ui, theme: crate::ui::theme::Palette) {
+    let op_phase = state.operations.values().next().map(|o| o.phase.clone());
+    if state.global_status.is_empty() && state.global_frac.is_none() && op_phase.is_none() {
+        return;
+    }
+    let text = op_phase.unwrap_or_else(|| state.global_status.clone());
+    let frac = state.global_frac;
+    egui::Frame::new()
+        .fill(theme.elevated2)
+        .stroke(Stroke::new(1.0_f32, theme.border))
+        .corner_radius(CornerRadius::same(metrics::CARD_RADIUS))
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(RichText::new(&text).size(type_scale::CAPTION).color(TEXT));
+            crate::ui::components::progress_row(
+                ui,
+                frac,
+                Some(crate::ui::components::ProgressDetail::default()),
+            );
+            if crate::ui::components::button(ui, "Downloads", crate::ui::components::Tone::Ghost)
+                .clicked()
+            {
+                state.set_page(Page::Downloads);
+            }
+        });
+}
+
+fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
+    let profile = state.config.profile.clone();
+    let has_update = state.launcher_update.as_ref().is_some_and(|u| u.has_update);
+    let version = env!("CARGO_PKG_VERSION").to_string();
+
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+        if let Some(p) = profile {
+            let card_id = ui.make_persistent_id("bottom_profile_card");
+            let hovered = ui
+                .ctx()
+                .data(|d| d.get_temp::<bool>(card_id).unwrap_or(false));
+            let fade = ui
+                .ctx()
+                .animate_bool_with_time(card_id.with("hover"), hovered, 0.15);
+            if fade > 0.001 && fade < 0.999 {
+                ui.ctx().request_repaint();
+            }
+            let theme = crate::ui::theme::palette(ui.ctx());
+            let fill = theme.elevated2.lerp_to_gamma(theme.hover, fade);
+            let border_color = theme.border.lerp_to_gamma(theme.accent, fade * 0.28);
+
+            let frame_resp = egui::Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0_f32, border_color))
+                .corner_radius(CornerRadius::same(metrics::CARD_RADIUS))
+                .inner_margin(egui::Margin::symmetric(10, 7))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (avatar, _) =
+                            ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+                        ui.painter()
+                            .circle_filled(avatar.center(), 11.0, theme.elevated);
+                        ui.painter().circle_stroke(
+                            avatar.center(),
+                            11.0,
+                            Stroke::new(1.0_f32, theme.border),
+                        );
+                        let initial: String = p
+                            .username
+                            .chars()
+                            .next()
+                            .unwrap_or('?')
+                            .to_uppercase()
+                            .collect();
+                        ui.painter().text(
+                            avatar.center(),
+                            egui::Align2::CENTER_CENTER,
+                            initial,
+                            egui::FontId::proportional(type_scale::CAPTION),
+                            TEXT,
+                        );
+                        ui.add_space(6.0);
+
+                        let badge_width = 42.0_f32;
+                        let name_width = (ui.available_width() - badge_width).max(24.0);
+                        let (name_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(name_width, 22.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().with_clip_rect(name_rect).text(
+                            name_rect.left_center(),
+                            egui::Align2::LEFT_CENTER,
+                            crate::ui::components::elide(&p.username, 16),
+                            egui::FontId::new(type_scale::LABEL, egui::FontFamily::Proportional),
+                            TEXT,
+                        );
+                        let (badge, _) = ui.allocate_exact_size(
+                            egui::vec2(badge_width, 22.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().text(
+                            badge.right_center(),
+                            egui::Align2::RIGHT_CENTER,
+                            "Offline",
+                            egui::FontId::proportional(type_scale::MICRO),
+                            MUTED,
+                        );
+                    });
+                });
+
+            let resp = ui.interact(frame_resp.response.rect, card_id, egui::Sense::click());
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(card_id, resp.hovered()));
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if resp
+                .on_hover_text(format!(
+                    "Offline account: {}\nSkinsRestorer active (click to manage in Accounts)",
+                    p.username
+                ))
+                .clicked()
+            {
+                state.set_page(Page::Accounts);
+            }
+        } else if crate::ui::components::button(
+            ui,
+            "Configure account",
+            crate::ui::components::Tone::Secondary,
+        )
+        .on_hover_text("Set an offline username to get started")
+        .clicked()
+        {
+            state.set_page(Page::Accounts);
+        }
+
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("v{version}"))
+                    .size(type_scale::MICRO)
+                    .color(MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if has_update
+                    && crate::ui::components::button(
+                        ui,
+                        "Update",
+                        crate::ui::components::Tone::Ghost,
+                    )
+                    .on_hover_text("A newer MONORYX is available.")
+                    .clicked()
+                {
+                    state.set_page(Page::Settings);
+                }
+                if crate::ui::components::button(ui, "Search", crate::ui::components::Tone::Ghost)
+                    .on_hover_text("Command palette (Ctrl+K)")
+                    .clicked()
+                {
+                    state.command_palette_open = true;
+                }
+            });
+        });
+    });
 }
 
 fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {

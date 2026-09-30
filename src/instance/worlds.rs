@@ -318,7 +318,25 @@ fn unique_destination(parent: &Path, stem: &str) -> PathBuf {
     candidate
 }
 
-pub fn back_up(manager: &InstanceManager, id: &str, name: &str) -> Result<String> {
+pub fn backup_file_options(
+    level: crate::config::BackupCompression,
+) -> zip::write::SimpleFileOptions {
+    let method = match level {
+        crate::config::BackupCompression::Zstd => zip::CompressionMethod::Zstd,
+        _ => zip::CompressionMethod::Deflated,
+    };
+    zip::write::SimpleFileOptions::default()
+        .compression_method(method)
+        .compression_level(level.deflate_level())
+        .large_file(true)
+}
+
+pub fn back_up(
+    manager: &InstanceManager,
+    id: &str,
+    name: &str,
+    level: crate::config::BackupCompression,
+) -> Result<String> {
     let world = direct_world(manager, id, name)?;
     let files = collect_files(&world)?;
     let dir = backup_dir(manager, id)?;
@@ -334,8 +352,7 @@ pub fn back_up(manager: &InstanceManager, id: &str, name: &str) -> Result<String
     let result = (|| -> Result<()> {
         let file = std::fs::File::create(&part)?;
         let mut zip = zip::ZipWriter::new(file);
-        let opts = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let opts = backup_file_options(level);
         zip.start_file("monoryx-world.json", opts)
             .map_err(|error| MonoryxError::Archive(error.to_string()))?;
         let manifest = BackupManifest {
@@ -662,6 +679,7 @@ pub fn preview_text(manager: &InstanceManager, id: &str, relative: &Path) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::BackupCompression;
     use crate::instance::config::LoaderKind;
     use crate::storage::paths::MonoryxPaths;
 
@@ -686,7 +704,13 @@ mod tests {
         std::fs::create_dir_all(world.join("region")).unwrap();
         std::fs::write(world.join("level.dat"), b"level").unwrap();
         std::fs::write(world.join("region").join("r.0.0.mca"), b"region").unwrap();
-        let backup = back_up(&manager, &config.id, "My World").unwrap();
+        let backup = back_up(
+            &manager,
+            &config.id,
+            "My World",
+            BackupCompression::default(),
+        )
+        .unwrap();
         let restored = restore_as_copy(&manager, &config.id, &backup).unwrap();
         assert_eq!(
             std::fs::read(
@@ -724,6 +748,137 @@ mod tests {
         let snapshot = scan(&manager, &config.id).unwrap();
         assert_eq!(snapshot.worlds[0].display_name, "folder-name");
         assert!(snapshot.worlds[0].version.is_none());
+    }
+
+    #[test]
+    fn every_compression_mode_round_trips_a_world() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = InstanceManager::new(MonoryxPaths::new(temp.path().into()));
+        let config = manager
+            .create(
+                "Comp".into(),
+                "1.21.1".into(),
+                LoaderKind::Fabric,
+                String::new(),
+            )
+            .unwrap();
+        let world = manager.game_dir(&config.id).join("saves").join("My World");
+        std::fs::create_dir_all(world.join("region")).unwrap();
+        std::fs::write(world.join("level.dat"), b"level data").unwrap();
+        std::fs::write(world.join("region").join("r.0.0.mca"), b"region data").unwrap();
+
+        for level in [
+            BackupCompression::Fast,
+            BackupCompression::Maximum,
+            BackupCompression::Zstd,
+        ] {
+            let backup = back_up(&manager, &config.id, "My World", level).unwrap();
+            let path = backup_dir(&manager, &config.id).unwrap().join(&backup);
+            let size = std::fs::metadata(&path).unwrap().len();
+            assert!(size > 0, "{level:?} produced an empty archive");
+
+            let restored = restore_as_copy(&manager, &config.id, &backup).unwrap();
+            assert_ne!(
+                restored, "My World",
+                "{level:?} collided with the source world"
+            );
+            let copy = manager.game_dir(&config.id).join("saves").join(&restored);
+            assert_eq!(
+                std::fs::read(copy.join("region").join("r.0.0.mca")).unwrap(),
+                b"region data",
+                "{level:?} did not round-trip file contents"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "measurement helper, not an assertion"]
+    fn report_compression_ratios() {
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+        let mut noise = move |len: usize| -> Vec<u8> {
+            let mut out = Vec::with_capacity(len);
+            for _ in 0..len {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                out.push((seed >> 24) as u8);
+            }
+            out
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let manager = InstanceManager::new(MonoryxPaths::new(temp.path().into()));
+        let config = manager
+            .create(
+                "Bench".into(),
+                "1.21.1".into(),
+                LoaderKind::Fabric,
+                String::new(),
+            )
+            .unwrap();
+        let world = manager
+            .game_dir(&config.id)
+            .join("saves")
+            .join("Bench World");
+        std::fs::create_dir_all(world.join("region")).unwrap();
+        std::fs::create_dir_all(world.join("data")).unwrap();
+        for region in 0..24 {
+            std::fs::write(
+                world.join("region").join(format!("r.{region}.0.mca")),
+                noise(400_000),
+            )
+            .unwrap();
+        }
+
+        std::fs::write(world.join("level.dat"), noise(200_000)).unwrap();
+
+        for pack in 0..40 {
+            let body: String = (0..2_000)
+                .map(|line| {
+                    format!(
+                        r#"{{"id":"custom/advancements/line_{line}_{pack}","title":"Step {line}","description":"a datapack line that differs per line"}}"#
+                    )
+                })
+                .collect();
+            std::fs::write(world.join("data").join(format!("pack{pack}.json")), body).unwrap();
+        }
+        let mut raw = 0u64;
+        for entry in walk(&world) {
+            raw += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+        println!(
+            "\n  uncompressed save: {}",
+            crate::ui::theme::format_bytes(raw)
+        );
+        for level in [
+            BackupCompression::Fast,
+            BackupCompression::Maximum,
+            BackupCompression::Zstd,
+        ] {
+            let name = back_up(&manager, &config.id, "Bench World", level).unwrap();
+            let size = std::fs::metadata(backup_dir(&manager, &config.id).unwrap().join(&name))
+                .unwrap()
+                .len();
+            println!(
+                "  {:<26} {:>10}   ({:>5.1}% of original)",
+                level.label(),
+                crate::ui::theme::format_bytes(size),
+                size as f64 / raw as f64 * 100.0
+            );
+        }
+    }
+
+    fn walk(dir: &std::path::Path) -> Vec<std::fs::DirEntry> {
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    out.extend(walk(&entry.path()));
+                } else {
+                    out.push(entry);
+                }
+            }
+        }
+        out
     }
 
     #[test]

@@ -503,6 +503,11 @@ pub fn install_content(
             .ok();
         return;
     };
+
+    if let Some(reason) = state.install_blocker() {
+        state.tx.send(AppEvent::Error(reason)).ok();
+        return;
+    }
     if kind == ContentKind::Mod && cfg.loader == LoaderKind::Vanilla {
         state
             .tx
@@ -813,9 +818,7 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
             #[cfg(not(target_os = "windows"))]
             {
                 let _ = (&http, &url, &version, &root);
-                return Err(
-                    "In-app installation is currently available on Windows only.".to_string(),
-                );
+                Err("In-app installation is currently available on Windows only.".to_string())
             }
             #[cfg(target_os = "windows")]
             {
@@ -900,6 +903,18 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
                     return Err("Downloaded update is not a Windows installer.".to_string());
                 }
                 drop(header_file);
+                let expected_hash =
+                    fetch_expected_sha256(&http, &url, &parsed_version.to_string()).await;
+                if let Some(expected) = expected_hash {
+                    let actual = crate::utils::hash::sha256_file(&partial)
+                        .map_err(|e| format!("Could not verify update checksum: {e}"))?;
+                    if actual.to_lowercase() != expected.to_lowercase() {
+                        let _ = tokio::fs::remove_file(&partial).await;
+                        return Err(
+                            "Downloaded update failed SHA-256 integrity verification.".to_string()
+                        );
+                    }
+                }
                 if target.exists() {
                     tokio::fs::remove_file(&target)
                         .await
@@ -915,4 +930,53 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
         let _ = tx.send(AppEvent::LauncherUpdateDownloaded(result));
         ctx.request_repaint();
     });
+}
+
+#[cfg(target_os = "windows")]
+async fn fetch_expected_sha256(http: &reqwest::Client, url: &str, version: &str) -> Option<String> {
+    let direct_url = format!("{url}.sha256");
+    if let Ok(resp) = http
+        .get(&direct_url)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            if let Ok(text) = resp.text().await {
+                if let Some(hash) = text.split_whitespace().next() {
+                    let clean = hash.trim().to_lowercase();
+                    if clean.len() == 64 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
+                        return Some(clean);
+                    }
+                }
+            }
+        }
+    }
+    let filename = format!("MONORYX-Setup-{version}.exe");
+    if let Some((base, _)) = url.rsplit_once('/') {
+        let sums_url = format!("{base}/SHA256SUMS.txt");
+        if let Ok(resp) = http
+            .get(&sums_url)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text().await {
+                    for line in text.lines() {
+                        if line.contains(&filename) {
+                            if let Some(hash) = line.split_whitespace().next() {
+                                let clean = hash.trim().to_lowercase();
+                                if clean.len() == 64 && clean.chars().all(|c| c.is_ascii_hexdigit())
+                                {
+                                    return Some(clean);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }

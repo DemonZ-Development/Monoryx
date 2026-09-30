@@ -129,7 +129,13 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.add_enabled_ui(!is_playing, |ui| {
             field_label(ui, "Username (3-16 letters, numbers or underscores)");
-            let edit_resp = ui.text_edit_singleline(&mut draft);
+            let edit_resp = crate::ui::components::limited_text_edit(
+                ui,
+                "accounts-username",
+                &mut draft,
+                crate::ui::components::limits::USERNAME,
+                "Steve",
+            );
             let enter_pressed =
                 edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 

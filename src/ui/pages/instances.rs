@@ -1,7 +1,8 @@
 use crate::app::state::AppState;
 use crate::instance::config::LoaderKind;
 use crate::ui::components::{
-    badge, card_frame, empty_state, field_label, hover_card_frame, page_header, primary_button,
+    badge, badge_warning, card_frame, empty_state, field_label, hover_card_frame, page_header,
+    primary_button,
 };
 use crate::ui::theme::{DANGER, TEXT, TEXT2};
 use egui::{CornerRadius, RichText, Stroke};
@@ -87,6 +88,16 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         badge(ui, inst.loader.display_name());
                         if !inst.loader_version.is_empty() {
                             badge(ui, &inst.loader_version);
+                        }
+
+                        match state.instance_readiness(&inst) {
+                            crate::instance::Readiness::Ready => {}
+                            crate::instance::Readiness::Installing => {
+                                badge(ui, "Installing");
+                            }
+                            crate::instance::Readiness::NotDownloaded => {
+                                badge_warning(ui, "Not downloaded");
+                            }
                         }
                         badge(
                             ui,
@@ -344,10 +355,12 @@ fn show_new_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         state.new_draft.versions = state.selected_version_list();
     }
     field_label(ui, "1  INSTANCE NAME");
-    ui.add(
-        egui::TextEdit::singleline(&mut state.new_draft.name)
-            .hint_text("e.g. Performance")
-            .desired_width(f32::INFINITY),
+    crate::ui::components::limited_text_edit(
+        ui,
+        "new-instance-name",
+        &mut state.new_draft.name,
+        crate::ui::components::limits::INSTANCE_NAME,
+        "e.g. Performance",
     );
     ui.add_space(10.0);
     ui.label(

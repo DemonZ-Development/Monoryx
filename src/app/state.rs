@@ -210,6 +210,8 @@ pub struct AppState {
     pub crash_share_loading: bool,
     pub crash_share_url: Option<String>,
     pub crash_share_error: String,
+    pub command_palette_open: bool,
+    pub command_palette_query: String,
 }
 
 impl AppState {
@@ -392,6 +394,8 @@ impl AppState {
             crash_share_loading: false,
             crash_share_url: None,
             crash_share_error: String::new(),
+            command_palette_open: false,
+            command_palette_query: String::new(),
         };
         s.settings_jvm = s.config.default_jvm_args.clone();
         s.settings_game_args = s.config.default_game_args.clone();
@@ -484,6 +488,47 @@ impl AppState {
         self.selected_instance
             .as_ref()
             .and_then(|id| self.instance_list.iter().find(|c| &c.id == id).cloned())
+    }
+
+    pub fn instance_readiness(&self, cfg: &InstanceConfig) -> crate::instance::Readiness {
+        crate::instance::readiness::readiness(
+            &self.paths,
+            cfg,
+            self.busy_install.contains_key(&cfg.id),
+        )
+    }
+
+    pub fn installable_instances(&self) -> Vec<InstanceConfig> {
+        self.instance_list
+            .iter()
+            .filter(|cfg| self.instance_readiness(cfg).is_ready())
+            .cloned()
+            .collect()
+    }
+
+    pub fn installable_loaders(&self) -> Vec<crate::instance::LoaderKind> {
+        crate::instance::readiness::installable_loaders(
+            self.instance_list.iter(),
+            &self.paths,
+            &self.busy_install,
+        )
+    }
+
+    pub fn install_blocker(&self) -> Option<String> {
+        let Some(cfg) = self.selected() else {
+            return Some("Choose an instance to install into.".to_string());
+        };
+        match self.instance_readiness(&cfg) {
+            crate::instance::Readiness::Ready => None,
+            crate::instance::Readiness::Installing => Some(format!(
+                "{} is still downloading. Wait for it to finish, or repair it.",
+                cfg.name
+            )),
+            crate::instance::Readiness::NotDownloaded => Some(format!(
+                "{} has not been downloaded yet. Finish creating it, or repair its files, before installing mods.",
+                cfg.name
+            )),
+        }
     }
 
     pub fn set_page(&mut self, page: Page) {
@@ -658,12 +703,13 @@ impl AppState {
         let manager = self.instances.clone();
         let tx = self.tx.clone();
         let ctx = self.egui_ctx.clone();
+        let level = self.config.backup_compression;
         self.runtime.spawn(async move {
             let is_new_instance = matches!(action, WorldActionKind::ImportGameFolder(..));
             let result = tokio::task::spawn_blocking(move || {
                 match action {
                     WorldActionKind::BackUp(name) => {
-                        crate::instance::worlds::back_up(&manager, &id, &name)
+                        crate::instance::worlds::back_up(&manager, &id, &name, level)
                             .map(|file| format!("Backed up {name} to {file}"))
                     }
                     WorldActionKind::Restore(file) => {

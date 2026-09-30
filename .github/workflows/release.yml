@@ -22,16 +22,21 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.2.0" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.3.0" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.2.0" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.3.0" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
           Compress-Archive -Path target\release\monoryx.exe, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist\monoryx-v$version-windows-x64.zip" -Force
+          Get-ChildItem dist\*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            Set-Content -Path "$($_.FullName).sha256" -Value "$hash  $($_.Name)"
+          }
+          Get-FileHash dist\* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path -Leaf $_.Path)" } | Set-Content dist\SHA256SUMS.txt
       - name: Upload Windows Assets
         uses: actions/upload-artifact@v4
         with:
@@ -53,7 +58,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.2.0"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.3.0"; fi
           mkdir -p dist/package
           cp target/release/monoryx dist/package/
           chmod +x dist/package/monoryx
@@ -89,7 +94,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.2.0"; fi
+          if [ -z "$TAG" ]; then TAG="v1.3.0"; fi
           awk -v version="${TAG#v}" '
             $0 == "# MONORYX " version { keep=1 }
             keep && /^# MONORYX / && $0 != "# MONORYX " version { exit }

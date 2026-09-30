@@ -1,10 +1,11 @@
 #ifndef AppVersion
-  #define AppVersion "1.2.2"
+  #define AppVersion "1.3.0"
 #endif
 #define AppName "MONORYX"
 #define AppPublisher "DemonZDevelopment"
 #define AppURL "https://github.com/DemonZ-Development/Monoryx"
 #define AppExe "monoryx.exe"
+#define AppDataDir "{userappdata}\DemonZDevelopment\MONORYX"
 
 [Setup]
 AppId={{A6CF77C4-A848-4D19-B0BD-3713A4A565EA}
@@ -68,6 +69,9 @@ Root: HKA; Subkey: "Software\Classes\monoryx\shell\open\command"; ValueType: str
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  RemoveSavedData: Boolean;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
@@ -76,10 +80,92 @@ begin
   Result := '';
 end;
 
+function TreeSize(const Root: String): Int64;
+var
+  R: TFindRec;
+begin
+  Result := 0;
+  if not DirExists(Root) then
+    Exit;
+  if FindFirst(Root + '\*', R) then
+  begin
+    try
+      repeat
+        if (R.Name <> '.') and (R.Name <> '..') then
+        begin
+          if (R.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+            Result := Result + TreeSize(Root + '\' + R.Name)
+          else
+            Result := Result + (Int64(R.SizeHigh) * 4294967296) + Int64(R.SizeLow);
+        end;
+      until not FindNext(R);
+    finally
+      FindClose(R);
+    end;
+  end;
+end;
+
+function HumanSize(Bytes: Int64): String;
+begin
+  if Bytes >= 1073741824 then
+    Result := Format('%.1f GB', [Bytes / 1073741824.0])
+  else if Bytes >= 1048576 then
+    Result := Format('%.0f MB', [Bytes / 1048576.0])
+  else if Bytes >= 1024 then
+    Result := Format('%.0f KB', [Bytes / 1024.0])
+  else
+    Result := IntToStr(Bytes) + ' bytes';
+end;
+
 function InitializeUninstall(): Boolean;
 var
   ResultCode: Integer;
+  Answer: Integer;
+  Saved: Int64;
+  SavedText: String;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  RemoveSavedData := False;
+
+  Saved := TreeSize(ExpandConstant('{#AppDataDir}'));
+  if Saved > 0 then
+    SavedText := 'It currently holds ' + HumanSize(Saved) + ' of your data.'
+  else
+    SavedText := 'No saved data was found.';
+
+  Answer := MsgBox(
+    'Uninstall {#AppName}' + #13#10 + #13#10 +
+    'Do you also want to delete everything {#AppName} has saved?' + #13#10 + #13#10 +
+    SavedText + #13#10 + #13#10 +
+    'This permanently deletes:' + #13#10 +
+    '    every instance and its mods' + #13#10 +
+    '    every world, including your world backups' + #13#10 +
+    '    screenshots' + #13#10 +
+    '    downloaded Minecraft, Java and assets' + #13#10 +
+    '    your settings and account' + #13#10 + #13#10 +
+    'Worlds and world backups are NOT moved anywhere else first. There is no undo.' + #13#10 + #13#10 +
+    'Yes    delete it all' + #13#10 +
+    'No     keep my data' + #13#10 +
+    'Cancel stop the uninstall',
+    mbConfirmation, MB_YESNOCANCEL);
+
+  if Answer = IDCANCEL then
+  begin
+    Result := False;
+    Exit;
+  end;
+  RemoveSavedData := (Answer = IDYES);
   Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: String;
+begin
+  if (CurUninstallStep = usPostUninstall) and RemoveSavedData then
+  begin
+    DataDir := ExpandConstant('{#AppDataDir}');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+  end;
 end;

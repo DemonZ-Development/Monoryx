@@ -52,6 +52,29 @@ impl Page {
             Self::Logs,
         ]
     }
+
+    pub const fn group_header(self) -> Option<&'static str> {
+        match self {
+            Self::Onboarding | Self::Home => None,
+            Self::Accounts => Some("MANAGE"),
+            _ => None,
+        }
+    }
+
+    pub const fn shortcut(self) -> Option<&'static str> {
+        match self {
+            Self::Home => Some("Ctrl+1"),
+            Self::Instances => Some("Ctrl+2"),
+            Self::Worlds => Some("Ctrl+3"),
+            Self::Discover => Some("Ctrl+4"),
+            Self::Library => Some("Ctrl+5"),
+            Self::Screenshots => Some("F2"),
+            Self::Downloads => Some("Ctrl+7"),
+            Self::Accounts => Some("Ctrl+8"),
+            Self::Settings => Some("Ctrl+9"),
+            Self::Nexeu | Self::Logs | Self::Onboarding => None,
+        }
+    }
     pub fn from_page_str(s: &str) -> Self {
         match s {
             "instances" => Self::Instances,

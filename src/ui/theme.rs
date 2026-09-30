@@ -1,5 +1,84 @@
 use crate::config::ThemeKind;
-use egui::{Color32, CornerRadius, Stroke, Visuals};
+use egui::{Color32, CornerRadius, RichText, Stroke, Visuals};
+
+pub mod metrics {
+
+    pub const BUTTON_H: f32 = 36.0;
+    pub const BUTTON_W: f32 = 100.0;
+    pub const SIDEBAR_ITEM_H: f32 = 34.0;
+    pub const WIZARD_CARD_W: f32 = 460.0;
+    pub const ONBOARDING_WINDOW: [f32; 2] = [880.0, 660.0];
+    pub const SIDEBAR_MIN: f32 = 200.0;
+    pub const SIDEBAR_MAX: f32 = 236.0;
+
+    pub const CARD_RADIUS: u8 = 10;
+    pub const CONTROL_RADIUS: u8 = 8;
+    pub const PILL_RADIUS: u8 = 6;
+    pub const CARD_MARGIN: i8 = 16;
+    pub const PAGE_MARGIN: i8 = 26;
+}
+
+pub mod type_scale {
+    pub const DISPLAY: f32 = 26.0;
+    pub const TITLE: f32 = 20.0;
+    pub const HEADING: f32 = 19.0;
+    pub const BODY: f32 = 13.5;
+    pub const LABEL: f32 = 12.0;
+    pub const CAPTION: f32 = 11.5;
+    pub const MICRO: f32 = 10.5;
+}
+
+#[must_use]
+pub fn display(text: impl Into<String>) -> RichText {
+    RichText::new(text)
+        .size(type_scale::DISPLAY)
+        .strong()
+        .color(TEXT)
+}
+
+#[must_use]
+pub fn title(text: impl Into<String>) -> RichText {
+    RichText::new(text)
+        .size(type_scale::TITLE)
+        .strong()
+        .color(TEXT)
+}
+
+#[must_use]
+pub fn heading(text: impl Into<String>) -> RichText {
+    RichText::new(text)
+        .size(type_scale::HEADING)
+        .strong()
+        .color(TEXT)
+}
+
+#[must_use]
+pub fn body(text: impl Into<String>) -> RichText {
+    RichText::new(text).size(type_scale::BODY).color(TEXT)
+}
+
+#[must_use]
+pub fn body_secondary(text: impl Into<String>) -> RichText {
+    RichText::new(text).size(type_scale::BODY).color(TEXT2)
+}
+
+#[must_use]
+pub fn label(text: impl Into<String>) -> RichText {
+    RichText::new(text).size(type_scale::LABEL).color(TEXT2)
+}
+
+#[must_use]
+pub fn caption(text: impl Into<String>) -> RichText {
+    RichText::new(text).size(type_scale::CAPTION).color(MUTED)
+}
+
+#[must_use]
+pub fn section_label(text: impl Into<String>) -> RichText {
+    RichText::new(text)
+        .size(type_scale::MICRO)
+        .strong()
+        .color(MUTED)
+}
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -87,8 +166,12 @@ pub const BOOST_HOVER: Color32 = ECO_MODE_HOVER;
 pub const BOOST_BG: Color32 = ECO_MODE_BG;
 
 pub const TEXT: Color32 = Color32::from_rgb(245, 245, 247);
-pub const TEXT2: Color32 = Color32::from_rgb(163, 169, 181);
-pub const MUTED: Color32 = Color32::from_rgb(126, 133, 148);
+
+pub const TEXT2: Color32 = Color32::from_rgb(170, 176, 188);
+
+pub const MUTED: Color32 = Color32::from_rgb(122, 129, 144);
+
+pub const TEXT_DISABLED: Color32 = Color32::from_rgb(96, 102, 115);
 
 pub const SELECTED: Color32 = ACCENT;
 pub const SELECTED_FG: Color32 = Color32::from_rgb(0, 0, 0);
@@ -128,7 +211,8 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
 
     visuals.widgets.active.bg_fill = p.hover.lerp_to_gamma(p.accent, 0.12);
     visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
+
+    visuals.widgets.active.bg_stroke = Stroke::new(1.5_f32, p.accent);
 
     visuals.selection.bg_fill = p.elevated2.lerp_to_gamma(p.accent, 0.18);
     visuals.selection.stroke = Stroke::new(1.0_f32, p.accent);
@@ -145,27 +229,27 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
     visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, p.border);
 
     visuals.window_stroke = Stroke::new(1.0_f32, p.border);
-    visuals.window_corner_radius = CornerRadius::same(10);
-    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(8);
-    visuals.widgets.inactive.corner_radius = CornerRadius::same(8);
-    visuals.widgets.hovered.corner_radius = CornerRadius::same(8);
-    visuals.widgets.active.corner_radius = CornerRadius::same(8);
-    visuals.widgets.open.corner_radius = CornerRadius::same(8);
+    visuals.window_corner_radius = CornerRadius::same(12);
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
+    visuals.widgets.active.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
+    visuals.widgets.open.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
 
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
     style.animation_time = 0.12;
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(14.0, 7.0);
-    style.spacing.interact_size = egui::vec2(38.0, 34.0);
+    style.spacing.button_padding = egui::vec2(14.0, 8.0);
+    style.spacing.interact_size = egui::vec2(38.0, metrics::BUTTON_H);
     style.spacing.text_edit_width = 260.0;
     style.spacing.combo_height = 260.0;
 
     for (kind, size) in [
-        (egui::TextStyle::Body, 13.5),
-        (egui::TextStyle::Button, 13.5),
-        (egui::TextStyle::Small, 11.5),
+        (egui::TextStyle::Body, type_scale::BODY),
+        (egui::TextStyle::Button, type_scale::BODY),
+        (egui::TextStyle::Small, type_scale::CAPTION),
     ] {
         style
             .text_styles
@@ -173,7 +257,7 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
     }
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(22.0, egui::FontFamily::Proportional),
+        egui::FontId::new(type_scale::TITLE, egui::FontFamily::Proportional),
     );
     ctx.set_style(style);
 }
@@ -257,6 +341,36 @@ pub fn format_last_played(raw: Option<&str>) -> String {
     }
 }
 
+#[must_use]
+pub fn sidebar_width(ctx: &egui::Context) -> f32 {
+    let fraction = ctx.available_rect().width() * 0.155;
+    fraction.clamp(metrics::SIDEBAR_MIN, metrics::SIDEBAR_MAX)
+}
+
+#[must_use]
+pub fn format_eta(downloaded: u64, total: u64, speed_bps: f64) -> String {
+    if speed_bps <= 1.0 || total == 0 || downloaded >= total {
+        return String::new();
+    }
+    let seconds = (total - downloaded) as f64 / speed_bps;
+    if !seconds.is_finite() || seconds > 86_400.0 {
+        return String::new();
+    }
+    let seconds = seconds as u64;
+    if seconds < 60 {
+        format!("{seconds}s left")
+    } else if seconds < 3600 {
+        format!("{}m left", seconds / 60)
+    } else {
+        format!("{}h {}m left", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
+#[must_use]
+pub fn format_percent(fraction: f32) -> String {
+    format!("{:.0}%", (fraction.clamp(0.0, 1.0) * 100.0).round())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +399,68 @@ mod tests {
         assert!(!formatted.contains("902901900"));
         assert!(!formatted.contains("+00:00"));
         assert!(formatted.len() < 24);
+    }
+
+    #[test]
+    fn format_eta_scales_with_speed() {
+        assert_eq!(format_eta(0, 1_000, 100.0), "10s left");
+        assert_eq!(format_eta(0, 6_000, 100.0), "1m left");
+        assert_eq!(format_eta(0, 36_000, 100.0), "6m left");
+        assert_eq!(format_eta(0, 540_000, 100.0), "1h 30m left");
+    }
+
+    #[test]
+    fn format_eta_is_blank_when_useless() {
+        assert_eq!(format_eta(0, 1_000, 0.0), "");
+        assert_eq!(format_eta(0, 0, 500.0), "");
+        assert_eq!(format_eta(1_000, 1_000, 500.0), "");
+        assert_eq!(format_eta(0, u64::MAX, 1.0), "");
+    }
+
+    #[test]
+    fn format_percent_clamps() {
+        assert_eq!(format_percent(0.0), "0%");
+        assert_eq!(format_percent(0.5), "50%");
+        assert_eq!(format_percent(1.0), "100%");
+        assert_eq!(format_percent(-1.0), "0%");
+        assert_eq!(format_percent(4.0), "100%");
+    }
+
+    #[test]
+    fn secondary_and_tertiary_text_are_distinguishable() {
+        let gap = (TEXT2.r() as i32 - TEXT_DISABLED.r() as i32).abs()
+            + (TEXT2.g() as i32 - TEXT_DISABLED.g() as i32).abs()
+            + (TEXT2.b() as i32 - TEXT_DISABLED.b() as i32).abs();
+        assert!(
+            gap >= 120,
+            "TEXT2 and TEXT_DISABLED must not read as the same tone"
+        );
+        let tertiary = (MUTED.r() as i32 - TEXT_DISABLED.r() as i32).abs()
+            + (MUTED.g() as i32 - TEXT_DISABLED.g() as i32).abs()
+            + (MUTED.b() as i32 - TEXT_DISABLED.b() as i32).abs();
+        assert!(tertiary >= 30);
+    }
+
+    #[test]
+    fn sidebar_width_stays_inside_bounds() {
+        let ctx = egui::Context::default();
+        for width in [850.0_f32, 1280.0, 1920.0, 2560.0] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let w = sidebar_width(ctx);
+                    assert!(
+                        (metrics::SIDEBAR_MIN..=metrics::SIDEBAR_MAX).contains(&w),
+                        "sidebar {w} out of range at window width {width}"
+                    );
+                },
+            );
+        }
     }
 }

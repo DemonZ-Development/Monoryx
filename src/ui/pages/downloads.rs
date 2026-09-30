@@ -1,5 +1,5 @@
 use crate::app::state::AppState;
-use crate::ui::components::{card_frame, empty_state, page_header};
+use crate::ui::components::{card_frame, empty_state, page_header, progress_row, ProgressDetail};
 use crate::ui::theme::{TEXT, TEXT2};
 use egui::RichText;
 
@@ -13,11 +13,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         card_frame(ui, |ui| {
             ui.label(RichText::new(&op.label).strong().color(TEXT));
             ui.label(RichText::new(&op.phase).size(11.0).color(TEXT2));
-            if let Some(frac) = op.fraction() {
-                crate::ui::components::thin_progress(ui, Some(frac));
-            } else {
-                crate::ui::components::thin_progress(ui, None);
-            }
+            progress_row(ui, op.fraction(), Some(ProgressDetail::default()));
         });
         ui.add_space(4.0);
     }
@@ -40,27 +36,26 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     0.0
                 }
             });
+            let eta = crate::ui::theme::format_eta(d.downloaded, d.total.unwrap_or(0), d.speed_bps);
+            progress_row(
+                ui,
+                frac,
+                Some(ProgressDetail {
+                    downloaded: Some(d.downloaded),
+                    total: d.total,
+                    speed_bps: Some(d.speed_bps),
+                    completed: None,
+                    eta: Some(&eta),
+                }),
+            );
             let state_icon = match d.state.as_str() {
-                "queued" => " (queued)",
-                "cancelled" => " (cancelled)",
+                "queued" => "Queued — waiting for a free download slot.",
+                "cancelled" => "Cancelled.",
                 _ => "",
             };
-            crate::ui::components::thin_progress(ui, frac);
-            let total_str = d
-                .total
-                .map(crate::ui::theme::format_bytes)
-                .unwrap_or_else(|| "?".to_string());
-            ui.label(
-                RichText::new(format!(
-                    "{} / {} - {}{}",
-                    crate::ui::theme::format_bytes(d.downloaded),
-                    total_str,
-                    crate::ui::theme::format_speed(d.speed_bps),
-                    state_icon,
-                ))
-                .size(11.0)
-                .color(TEXT2),
-            );
+            if !state_icon.is_empty() {
+                ui.label(RichText::new(state_icon).size(11.0).color(TEXT2));
+            }
         });
         ui.add_space(4.0);
     }

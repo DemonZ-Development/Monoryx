@@ -107,6 +107,65 @@ pub struct JavaDefaults {
     pub custom_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CurseForgeSettings {
+    #[serde(default)]
+    pub api_key: String,
+}
+
+impl CurseForgeSettings {
+    #[must_use]
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.trim().is_empty()
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupCompression {
+    #[default]
+    Fast,
+
+    Maximum,
+
+    Zstd,
+}
+
+impl BackupCompression {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast (default deflate)",
+            Self::Maximum => "Maximum (deflate 9)",
+            Self::Zstd => "Smallest (zstd)",
+        }
+    }
+
+    #[must_use]
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::Fast => "Quickest to write. Choose this if you back up often.",
+            Self::Maximum => "Smaller files, slower to write and read.",
+            Self::Zstd => {
+                "Smallest files and still fast. MONORYX restores these fine, but Windows \
+                 Explorer cannot open them."
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn deflate_level(self) -> Option<i64> {
+        match self {
+            Self::Fast => None,
+            Self::Maximum | Self::Zstd => Some(9),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
     #[serde(default)]
@@ -151,11 +210,12 @@ pub struct LauncherConfig {
     pub auto_check_updates: bool,
     #[serde(default = "default_true")]
     pub skins_restorer_compat: bool,
+    #[serde(default)]
+    pub curseforge: CurseForgeSettings,
+    #[serde(default)]
+    pub backup_compression: BackupCompression,
 }
 
-fn default_true() -> bool {
-    true
-}
 fn default_last_page() -> String {
     "home".to_string()
 }
@@ -196,6 +256,10 @@ impl Default for LauncherConfig {
             boost_mode: false,
             auto_check_updates: true,
             skins_restorer_compat: true,
+            curseforge: CurseForgeSettings {
+                api_key: String::new(),
+            },
+            backup_compression: BackupCompression::default(),
         }
     }
 }
