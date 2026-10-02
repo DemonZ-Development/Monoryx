@@ -34,6 +34,77 @@ fn monoryx_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result<()> {
+    let raw_args: Vec<String> = std::env::args().collect();
+    if raw_args
+        .iter()
+        .any(|a| a == "--update-source" || a == "--source")
+    {
+        let mut source = None;
+        let mut target = None;
+        let mut wait_pid: Option<u32> = None;
+        let mut relaunch = false;
+        let mut iter = raw_args.into_iter().skip(1);
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--update-source" | "--source" => {
+                    source = iter.next().map(std::path::PathBuf::from)
+                }
+                "--target-dest" | "--target" => target = iter.next().map(std::path::PathBuf::from),
+                "--wait-pid" | "--pid" => wait_pid = iter.next().and_then(|v| v.parse().ok()),
+                "--relaunch" => relaunch = true,
+                _ => {}
+            }
+        }
+        if let (Some(s), Some(t)) = (source, target) {
+            if let Some(pid) = wait_pid {
+                let start = std::time::Instant::now();
+                while start.elapsed() < std::time::Duration::from_secs(25) {
+                    #[cfg(target_os = "windows")]
+                    let alive = {
+                        unsafe {
+                            let handle = windows_sys::Win32::System::Threading::OpenProcess(
+                                0x00100000, 0, pid,
+                            );
+                            if handle.is_null() {
+                                false
+                            } else {
+                                let wait =
+                                    windows_sys::Win32::System::Threading::WaitForSingleObject(
+                                        handle, 150,
+                                    );
+                                windows_sys::Win32::Foundation::CloseHandle(handle);
+                                wait == 0x00000102
+                            }
+                        }
+                    };
+                    #[cfg(not(target_os = "windows"))]
+                    let alive = std::path::Path::new(&format!("/proc/{pid}")).exists();
+                    if !alive {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let old_backup = t.with_file_name(format!(
+                "{}.old",
+                t.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            let _ = std::fs::remove_file(&old_backup);
+            if t.exists() {
+                let _ = std::fs::rename(&t, &old_backup);
+            }
+            if std::fs::copy(&s, &t).is_ok() {
+                let _ = std::fs::remove_file(&old_backup);
+                let _ = std::fs::remove_file(&s);
+                if relaunch {
+                    let _ = std::process::Command::new(&t).spawn();
+                }
+            }
+            std::process::exit(0);
+        }
+    }
+
     init_logging();
     tracing::info!("MONORYX {} starting", env!("CARGO_PKG_VERSION"));
 

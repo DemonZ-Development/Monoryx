@@ -73,6 +73,14 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
         hover_card_frame(ui, &inst.id, |ui| {
             ui.horizontal(|ui| {
+                crate::ui::components::render_instance_thumbnail(
+                    ui,
+                    36.0,
+                    &inst.name,
+                    inst.loader.display_name(),
+                    is_selected,
+                );
+                ui.add_space(8.0);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&inst.name).size(17.0).strong().color(TEXT));
@@ -152,7 +160,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 });
             });
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button("Select").clicked() {
                     state.selected_instance = Some(inst.id.clone());
                     state.save_config();

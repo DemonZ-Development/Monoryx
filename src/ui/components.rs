@@ -228,6 +228,43 @@ pub fn content_primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     button(ui, text, Tone::Primary)
 }
 
+pub fn action_button_with_feedback(ui: &mut egui::Ui, text: &str, busy: bool) -> egui::Response {
+    if !busy {
+        return button(ui, text, Tone::Primary);
+    }
+    let p = crate::ui::theme::palette(ui.ctx());
+    ui.add_enabled(
+        false,
+        egui::Button::new(RichText::new(text).size(type_scale::BODY))
+            .min_size(egui::vec2(220.0, metrics::BUTTON_H))
+            .fill(p.accent),
+    )
+    .on_hover_cursor(egui::CursorIcon::Wait)
+}
+
+pub fn spinner(ui: &mut egui::Ui, size: f32) {
+    let p = crate::ui::theme::palette(ui.ctx());
+    let origin = ui.cursor().min;
+    let rect = egui::Rect::from_min_size(origin, egui::vec2(size, size));
+    let painter = ui.painter_at(rect);
+    let center = rect.center();
+    let radius = size / 2.0 - 1.2;
+    for i in 0..8_u32 {
+        let angle = std::f32::consts::FRAC_PI_2 * (i as f32) / 4.0;
+        let alpha = 0.15 + 0.85 * ((i as f32) / 8.0).min(1.0);
+        let dir = egui::pos2(angle.cos(), angle.sin());
+        painter.line_segment(
+            [
+                center + dir.to_vec2() * (radius - 2.2),
+                center + dir.to_vec2() * radius,
+            ],
+            egui::Stroke::new(1.8_f32, p.accent.gamma_multiply(alpha)),
+        );
+    }
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(90));
+}
+
 pub fn content_secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     secondary_button(ui, text)
 }
@@ -513,6 +550,254 @@ pub fn sized_action_button(
     )
 }
 
+pub fn draw_cute_avatar(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    username: &str,
+    is_microsoft: bool,
+) {
+    let center = rect.center();
+    let size = rect.width().min(rect.height());
+    let r = size * 0.44;
+
+    let hash = username
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let base_colors = [
+        Color32::from_rgb(180, 205, 237),
+        Color32::from_rgb(255, 195, 205),
+        Color32::from_rgb(200, 230, 201),
+        Color32::from_rgb(225, 190, 231),
+        Color32::from_rgb(255, 224, 178),
+        Color32::from_rgb(178, 235, 242),
+    ];
+    let bg_color = base_colors[(hash as usize) % base_colors.len()];
+
+    let ear_dx = r * 0.55;
+    let ear_dy = r * 0.62;
+    let ear_r = r * 0.32;
+    painter.circle_filled(center + egui::vec2(-ear_dx, -ear_dy), ear_r, bg_color);
+    painter.circle_filled(
+        center + egui::vec2(-ear_dx, -ear_dy),
+        ear_r * 0.52,
+        Color32::from_rgba_unmultiplied(255, 140, 160, 200),
+    );
+    painter.circle_filled(center + egui::vec2(ear_dx, -ear_dy), ear_r, bg_color);
+    painter.circle_filled(
+        center + egui::vec2(ear_dx, -ear_dy),
+        ear_r * 0.52,
+        Color32::from_rgba_unmultiplied(255, 140, 160, 200),
+    );
+
+    painter.circle_filled(center, r, bg_color);
+    painter.circle_stroke(
+        center,
+        r,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 0, 0, 45)),
+    );
+
+    let eye_dx = r * 0.34;
+    let eye_y = center.y - r * 0.04;
+    let eye_r = (r * 0.16).max(1.8);
+    let eye_color = Color32::from_rgb(28, 30, 42);
+
+    let left_eye = egui::pos2(center.x - eye_dx, eye_y);
+    painter.circle_filled(left_eye, eye_r, eye_color);
+    painter.circle_filled(
+        left_eye + egui::vec2(eye_r * 0.3, -eye_r * 0.3),
+        (eye_r * 0.36).max(1.0),
+        Color32::WHITE,
+    );
+
+    let right_eye = egui::pos2(center.x + eye_dx, eye_y);
+    painter.circle_filled(right_eye, eye_r, eye_color);
+    painter.circle_filled(
+        right_eye + egui::vec2(eye_r * 0.3, -eye_r * 0.3),
+        (eye_r * 0.36).max(1.0),
+        Color32::WHITE,
+    );
+
+    let blush_r = (r * 0.17).max(1.5);
+    let blush_y = eye_y + eye_r * 1.45;
+    painter.circle_filled(
+        egui::pos2(center.x - eye_dx * 1.25, blush_y),
+        blush_r,
+        Color32::from_rgba_unmultiplied(255, 120, 150, 160),
+    );
+    painter.circle_filled(
+        egui::pos2(center.x + eye_dx * 1.25, blush_y),
+        blush_r,
+        Color32::from_rgba_unmultiplied(255, 120, 150, 160),
+    );
+
+    let nose_pos = egui::pos2(center.x, center.y + r * 0.13);
+    painter.circle_filled(
+        nose_pos,
+        (r * 0.08).max(1.0),
+        Color32::from_rgb(240, 100, 130),
+    );
+
+    let mouth_y = center.y + r * 0.26;
+    let mouth_w = (r * 0.16).max(1.5);
+    painter.line_segment(
+        [
+            egui::pos2(center.x - mouth_w, mouth_y),
+            egui::pos2(center.x, mouth_y + (r * 0.08).max(1.0)),
+        ],
+        Stroke::new(1.2_f32, Color32::from_rgb(60, 45, 55)),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(center.x, mouth_y + (r * 0.08).max(1.0)),
+            egui::pos2(center.x + mouth_w, mouth_y),
+        ],
+        Stroke::new(1.2_f32, Color32::from_rgb(60, 45, 55)),
+    );
+
+    if is_microsoft {
+        let badge_r = (r * 0.30).clamp(2.5, 7.0);
+        let badge_pos = center + egui::vec2(r * 0.65, -r * 0.65);
+        painter.circle_filled(badge_pos, badge_r, Color32::from_rgb(255, 204, 0));
+        painter.circle_stroke(
+            badge_pos,
+            badge_r,
+            Stroke::new(1.0_f32, Color32::from_rgb(180, 140, 0)),
+        );
+        painter.text(
+            badge_pos,
+            egui::Align2::CENTER_CENTER,
+            "★",
+            egui::FontId::proportional((badge_r * 1.3).max(4.0)),
+            Color32::from_rgb(60, 45, 0),
+        );
+    }
+}
+
+pub fn draw_instance_thumbnail(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    _name: &str,
+    loader: &str,
+    is_selected: bool,
+) {
+    let p = rect.min;
+    let w = rect.width();
+    let h = rect.height();
+
+    let block_rect = rect.shrink(1.0);
+    painter.rect(
+        block_rect,
+        6.0,
+        Color32::from_rgb(32, 35, 44),
+        Stroke::new(
+            if is_selected { 1.5_f32 } else { 1.0_f32 },
+            if is_selected {
+                Color32::from_rgb(140, 175, 255)
+            } else {
+                Color32::from_rgb(60, 65, 80)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+
+    let loader_lower = loader.to_ascii_lowercase();
+    let (top_color, side_color, symbol) = if loader_lower.contains("fabric") {
+        (
+            Color32::from_rgb(215, 195, 160),
+            Color32::from_rgb(70, 130, 180),
+            "F",
+        )
+    } else if loader_lower.contains("neoforge") {
+        (
+            Color32::from_rgb(255, 140, 60),
+            Color32::from_rgb(180, 70, 20),
+            "N",
+        )
+    } else if loader_lower.contains("forge") {
+        (
+            Color32::from_rgb(220, 110, 50),
+            Color32::from_rgb(140, 55, 25),
+            "⚙",
+        )
+    } else if loader_lower.contains("quilt") {
+        (
+            Color32::from_rgb(180, 140, 220),
+            Color32::from_rgb(110, 60, 160),
+            "Q",
+        )
+    } else {
+        (
+            Color32::from_rgb(92, 160, 54),
+            Color32::from_rgb(134, 96, 67),
+            "⛏",
+        )
+    };
+
+    let pad = 2.0_f32;
+    let inner_w = (w - pad * 2.0).max(1.0);
+    let inner_h = (h - pad * 2.0).max(1.0);
+    let top_h = inner_h * 0.38;
+
+    let top_rect = egui::Rect::from_min_size(p + egui::vec2(pad, pad), egui::vec2(inner_w, top_h));
+    painter.rect_filled(
+        top_rect,
+        CornerRadius {
+            nw: 5,
+            ne: 5,
+            sw: 0,
+            se: 0,
+        },
+        top_color,
+    );
+
+    let fringe_y = p.y + pad + top_h;
+    let bot_rect = egui::Rect::from_min_size(
+        egui::pos2(p.x + pad, fringe_y),
+        egui::vec2(inner_w, (inner_h - top_h).max(1.0)),
+    );
+    painter.rect_filled(
+        bot_rect,
+        CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 5,
+            se: 5,
+        },
+        side_color,
+    );
+
+    let step = inner_w / 4.0;
+    for i in 0..4 {
+        let fx = p.x + pad + (i as f32) * step;
+        let drop = if i % 2 == 0 { 3.0 } else { 1.5 };
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(fx, fringe_y), egui::vec2(step, drop)),
+            0,
+            top_color,
+        );
+    }
+
+    painter.text(
+        rect.center() + egui::vec2(0.0, 1.0),
+        egui::Align2::CENTER_CENTER,
+        symbol,
+        egui::FontId::proportional((h * 0.36).max(10.0)),
+        Color32::from_rgba_unmultiplied(255, 255, 255, 230),
+    );
+}
+
+pub fn render_instance_thumbnail(
+    ui: &mut egui::Ui,
+    size: f32,
+    name: &str,
+    loader: &str,
+    is_selected: bool,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    draw_instance_thumbnail(ui.painter(), rect, name, loader, is_selected);
+    resp
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn instance_choice(
     ui: &mut egui::Ui,
@@ -561,19 +846,7 @@ pub fn instance_choice(
             rect.left_top() + egui::vec2(13.0, 17.0),
             egui::vec2(38.0, 38.0),
         );
-        ui.painter().rect_filled(icon, 7, p.hover);
-        ui.painter().text(
-            icon.center(),
-            egui::Align2::CENTER_CENTER,
-            title
-                .chars()
-                .next()
-                .unwrap_or('M')
-                .to_uppercase()
-                .to_string(),
-            egui::FontId::proportional(18.0),
-            p.accent,
-        );
+        draw_instance_thumbnail(ui.painter(), icon, title, subtitle, selected);
         let text_rect = egui::Rect::from_min_max(
             rect.left_top() + egui::vec2(63.0, 10.0),
             rect.right_bottom() - egui::vec2(88.0, 8.0),
@@ -889,6 +1162,23 @@ pub fn loader_pills(
 }
 pub fn field_label(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(TEXT2));
+}
+
+#[must_use]
+pub fn dialog_backdrop(ctx: &egui::Context) -> bool {
+    let mut clicked = false;
+    egui::Area::new(egui::Id::new("dialog-backdrop"))
+        .order(egui::Order::Background)
+        .fixed_pos(egui::Pos2::ZERO)
+        .interactable(true)
+        .show(ctx, |ui| {
+            let rect = ui.ctx().screen_rect();
+            let response = ui.interact(rect, ui.id().with("hit"), egui::Sense::click());
+            if response.clicked() {
+                clicked = true;
+            }
+        });
+    clicked
 }
 
 pub fn limited_text_edit(

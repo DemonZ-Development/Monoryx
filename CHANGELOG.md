@@ -1,3 +1,123 @@
+# MONORYX 1.4.0
+
+Universal macOS builds, integrated CurseForge browser with smart update scanning, in-place companion updater, Microsoft device authentication in the onboarding, and visual refinements.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## macOS Package Release
+- Universal 2 binary packages monoryx-v1.4.0-macos-universal.dmg built for Apple Silicon (M1/M2/M3/M4) and Intel Macs alike.
+- Drag-and-drop .dmg contains MONORYX.app with Retina icons, app metadata and /Applications shortcut.
+- Portable command-line and Homebrew-friendly monoryx-v1.4.0-macos.tar.gz for CLI-centric users.
+
+## CurseForge Integration + Smart Updates
+- Browse both Modrinth and CurseForge directly in Discover tab with dual-source filtering.
+- Built-in MONORYX proxy transparently caches CurseForge resources with optional API key auth in Settings.
+- Detect existing mods in instance folders via Murmur2 checksums even if copied manually.
+- Smart update engine cross-references all installed jars with update sources and offers Update All.
+- Forge CDN fallback on failed download attempts for jars and resource packs from both sources.
+- Mods installed from CurseForge marked with source badge in the Library.
+
+## Authentication and Onboarding
+- Microsoft authentication via Step 2 of the initial onboarding wizard.
+- OAuth 2.0 Device Code flow via microsoft.com/link is used for browser-based sign-ins and doesn't require local ports to be open or trigger any firewall prompts.
+- Offline profiles can be created with custom username, but will have deterministic offline UUIDs.
+- Tokens are automatically refreshed before starting any instance to keep in-memory and disk states in sync.
+- Error conditions while refreshing tokens are shown as actionable errors explaining why account isn't working: license not claimed, no java profile name set on the account, or account banned.
+- "Replay Onboarding Tour" action in the Settings menu allows restarting the onboarding wizard at any time.
+
+## Companion Updater (monoryx-updater)
+- Standalone helper binary hot-swaps the launcher executable after it exits.
+- Native process synchronization waits for the main process to exit cleanly, implemented as WaitForSingleObject on Windows and /proc fs reading on Linux.
+- Updates are downloaded to background and atomically applied through the companion updater.
+- Update banner and Settings > General > Restart to apply update.
+
+## Interface and Visuals
+- Procedural vector avatars allow rendering glinting eyes, blushing cheeks, cat ears or any other accessories with no disk assets.
+- Procedural 3D isometric block generation for instance thumbnails by mod loader type (Fabric, NeoForge, Forge, Quilt, Vanilla).
+- Right-aligned Library context actions keep Remove | Disable | Open Folder in a single column.
+- Settings page has columns stretched to equal width for easier visual scanning across tabs.
+- Custom memory allocation UI reverts to -Xmx when auto-memory option is selected during onboarding.
+- Full UI setup instructions moved to [INSTALLATION.md](INSTALLATION.md).
+
+---
+
+# MONORYX 1.3.1
+
+Faster launches, less memory held for no reason, and several interface fixes.
+
+## Startup speed
+
+- **Faster pre-launch check.** The default `Fast check` verifies that game files exist and
+  are the right size, and no longer hashes every jar before each launch. Set
+  `Before launching, verify` to `Full check` in Settings to hash everything as before.
+  `Repair game files` always does a complete hash check, so a repair is still a real audit.
+- **No more asset index parsing at launch.** The multi-megabyte asset index is no longer
+  read during the pre-launch check. It is only parsed during a full verification.
+- **JVM tuning preset, on by default.** An Aikar-style G1 flag set for smoother play. It is
+  only applied to instances that have no arguments of their own, so it can never override a
+  choice you made. `AlwaysPreTouch` is deliberately left out, because committing the whole
+  heap up front makes startup slower.
+- **Startup archive (AppCDS), off by default.** Lets the JVM reuse class files it has already
+  loaded. It is offered in Settings but not enabled, because it never demonstrated a win on a
+  real Fabric instance: an archive binds to one exact classpath order and to the JVM's module
+  flags, so it silently stops applying after a mod or library changes. When it is enabled,
+  MONORYX now records the classpath order alongside the mod list, and asks the JVM to log its
+  own verdict, so a rejected archive produces a visible message instead of nothing.
+
+## Fixes
+
+- **Eco mode actually works now.** It only applied when the memory field was left at the
+  default, so for anyone with a hand-set value the toggle displayed "Eco Mode ON" while the
+  game launched with the uncapped number. It is a cap, and now behaves like one. The Home
+  page also explains when Eco is what is limiting the number on screen.
+- **Stale startup archives are detected.** An archive only matches the exact mod set it was
+  recorded against. Changing your mods used to make the JVM quietly fall back with no
+  visible sign, so the speed-up just disappeared. Settings now compares a fingerprint of
+  your mods and config and offers to re-record.
+- **Long error messages are no longer cut off.** Download failures carry a file name, and the
+  dialog clipped the tail at the window edge.
+- **The startup archive no longer fails silently.** When the JVM cannot archive a classpath,
+  the reason is shown in the app instead of only going to a log file.
+- **Clicking outside a dialog now closes it** for the screenshot viewer, project images,
+  content removal, error dialog, crash dialog and Edit Instance. `Escape` now closes the
+  same set, which it previously did not.
+- **Backup compression is saved.** The setting applied for the session and reverted on exit.
+- **Installer log tails are read once** from the end of the file instead of loading a
+  multi-megabyte log in full on every frame of the Logs page.
+
+## Downloads and updates
+
+- **A correct download is no longer rejected over a stale size.** Modrinth metadata and the
+  CDN can disagree. The hash is now the deciding check, and a size that differs by a small
+  amount is logged rather than turned into a hard "Download failed" that left the mod
+  uninstalled. A large discrepancy is still refused, since that means a different file.
+- **One failed update no longer cancels the rest.** `Update All` used to stop at the first
+  error, so a single bad file left every later mod unapplied. Failures are now collected, the
+  successful updates are applied, and the outcome is reported.
+- **`Update All` clears its work when it succeeds.** The Library no longer keeps offering an
+  update for a version that was just installed.
+- **An update whose version id has been superseded falls back** to the newest compatible
+  build instead of failing, since the version list can change between checking and installing.
+
+## Interface
+
+- The duplicate Screenshots shortcut was removed from Worlds & Files; the sidebar's
+  Screenshots page already covers it.
+- Selecting an image in the file browser no longer says "Archive error".
+
+## Memory
+
+- Screenshot thumbnails (up to 96 textures) and Discover thumbnails are released when you
+  leave those pages, along with the Mojang changelog index and the Worlds file listing.
+- The theme is rebuilt only when it actually changes, rather than every frame.
+- The crash report held in memory is truncated to a readable tail.
+
+## Not changed
+
+- **A third JVM preset was not added.** The candidate flag, `TieredStopAtLevel=1`, was
+  measured on a real JVM: it cut throughput roughly 10x for no measurable startup gain, so
+  it was not worth shipping. The two presets remain `None` and `Aikar`.
+
 # MONORYX 1.3.0
 
 This release introduces a redesigned onboarding experience, full keyboard navigation with a global command palette, enhanced content safety and updater verification, flexible world backup compression, and comprehensive data management during uninstallation.

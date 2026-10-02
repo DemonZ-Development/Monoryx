@@ -1,245 +1,167 @@
 # MONORYX
 
-**Minecraft, without the clutter.**
+<div align="center">
 
-MONORYX is a lightweight, native Minecraft Java Edition launcher written in Rust. No Electron. No browser. No Chromium. Just a fast, monochrome desktop utility focused on speed, instance isolation, offline profiles, and first-class Modrinth integration.
+![MONORYX Banner](assets/onboarding-bg.jpg)
 
-By **DemonZDevelopment**. Licensed under **Apache-2.0**.
+### A native Minecraft Java launcher written in Rust.
+
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/Release-v1.4.0-success.svg)](https://github.com/DemonZ-Development/Monoryx/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-informational.svg)](https://github.com/DemonZ-Development/Monoryx/releases)
+
+[**Download MONORYX**](https://github.com/DemonZ-Development/Monoryx/releases) • [**Installation Guide**](INSTALLATION.md) • [**Changelog**](CHANGELOG.md) • [**Issue Tracker**](https://github.com/DemonZ-Development/Monoryx/issues)
+
+</div>
+
+---
+
+## Overview
+
+MONORYX is a desktop launcher for Minecraft: Java Edition. It runs as a native Rust binary using `egui` and `eframe`. The executable is 20 MB and idles at roughly 30 MB of memory.
+
+- **Separate instance folders**: Each profile keeps its own mods, saves, configs, and screenshots in an isolated directory. It leaves your `.minecraft` folder untouched.
+- **Modrinth and CurseForge support**: Search projects, resolve required dependencies, and install `.mrpack` modpacks or individual mods from the UI.
+- **Offline and Microsoft accounts**: Authenticate through Microsoft OAuth device code flow (`microsoft.com/link`) for Mojang servers, or pick an offline profile for singleplayer and LAN play.
+- **Java management**: Detects installed JREs on your system and downloads Adoptium Temurin runtimes when an instance needs a specific Java version.
+- **Launch tuning**: Includes AppCDS class caching, Aikar GC flags, memory controls, and discrete GPU selection on Windows.
+
+---
 
 ## Features
 
-- Native Rust GUI (egui/eframe), responsive during downloads and installs
-- Offline profiles with deterministic `OfflinePlayer:<username>` UUIDs
-- Isolated instances with portable `instance.toml` configs
-- Real Minecraft installation from Mojang launcher metadata (client, libraries, natives, assets, logging config)
-- Loaders: Vanilla, Fabric, Quilt, NeoForge, Forge via official metadata/Maven
-- Central download manager: concurrency, resume, retries, atomic writes, SHA-1/SHA-512 verification
-- Java discovery (`JAVA_HOME`, `PATH`, system locations, managed runtimes) plus curated Adoptium Temurin installs
-- Modrinth search, filters, one-click installs, recursive required-dependency resolution, conflict detection
-- Library with enable/disable, updates, Update All, safe removal
-- Modrinth `.mrpack` installation into new isolated instances with path-traversal protection
-- Resource packs and shader packs
-- Repair, export/import, per-instance logs, monochrome theme
-- Nexeu game-panel integration: server list, resource usage, logs, console commands, backups, and power controls
-- Worlds with save thumbnails, metadata, backups, and restore as a separate copy
-- Discord Rich Presence with activity privacy controls and links to MONORYX and DemonZ Development
+### Mod Browsing and Updates
+- Search Modrinth and CurseForge with version and loader filters.
+- Install mods, resource packs, and shaders into your selected instance.
+- Dependency resolution detects required libraries and warns on conflicting versions.
+- The update scanner reads local jar hashes and Murmur2 fingerprints to check for new releases across both platforms.
 
-## Installing Monoryx
+### Instance Management
+- Supports Vanilla, Fabric, Quilt, NeoForge, and Forge.
+- Set per-instance memory bounds, JVM flags, and Java paths.
+- Export instances to portable `.zip` archives or import existing archives.
+- Assign custom icons and toggle Minecraft snapshots.
 
-Installing Monoryx is quick and straightforward. Follow the steps below to download and install the launcher on your computer.
+### Diagnostics and World Tools
+- Crash analyzer parses JVM logs and highlights failing mod IDs.
+- Upload logs to [mclo.gs](https://mclo.gs) with a single click.
+- Create compressed backups of local worlds with a restore-as-copy option.
+- View world metadata, seeds, and screenshots from the launcher.
 
-### Downloading Monoryx
+### Integrations
+- Discord Rich Presence shows your instance, playtime, and world or server name with per-item privacy toggles.
+- Nexeu game panel integration connects to remote server consoles, monitors CPU and memory load, and triggers power actions.
+- Companion updater (`monoryx-updater.exe`) handles in-place updates.
 
-To install Monoryx, first download the latest version from our [releases page](https://github.com/DemonZ-Development/Monoryx/releases). If you want to compile the launcher yourself, you can follow our [guide for building Monoryx from source](#building-monoryx-from-source).
+---
 
-On the releases page, choose the version that best suits your needs. **We strongly recommend using the Installation Wizard**, as it provides the easiest way to install and configure Monoryx.
+## Getting Started
 
-![Image1](./assets/instalation-guide/Screenshot%202026-09-29%20110323.png)
+### Windows
 
-Once you have downloaded the Installation Wizard for your operating system, open your **Downloads** folder.
+1. Download `MONORYX-Setup-1.4.0.exe` or the portable zip from [Releases](https://github.com/DemonZ-Development/Monoryx/releases).
+2. Run the installer or extract the zip archive.
+3. Open MONORYX, set your username or log in with Microsoft, and select your memory limit.
+4. Click **Create Instance**, choose your Minecraft version and loader, then click **Play**.
 
-On Windows, you can quickly access it by opening **File Explorer** and selecting **Downloads** from the navigation panel on the left.
+For detailed setup steps and screenshots, read [INSTALLATION.md](INSTALLATION.md).
 
-![Image2](./assets/instalation-guide/Screenshot%202026-09-29%20110659.png)
+---
 
-Locate the Monoryx Installation Wizard and double-click it to start the installation.
-
-Depending on your Windows security settings, Windows may display a **"Windows protected your PC"** message. This can occur because the installer is not signed with a Microsoft-verified publisher certificate.
-
-If this message appears, click **More info**.
-
-![Image3](./assets/instalation-guide/Screenshot%202026-09-29%20110706.png)
-
-You will then see additional information about the application. Click **Run anyway** to launch the Monoryx installer.
-
-![Image4](./assets/instalation-guide/Screenshot%202026-09-29%20110712.png)
-
-### Installing Monoryx
-
-Once the installer opens, the first thing you need to choose is who Monoryx should be installed for.
-
-You will have two options:
-
-- **Only for me** — Installs Monoryx for your Windows user account. **This is the recommended option for most users.**
-    
-- **For all users** — Installs Monoryx for every user account on the computer.
-    
-
-Select the option that works best for you and continue.
-
-![Image5](./assets/instalation-guide/Screenshot%202026-09-29%20110722.png)
-
-You will then need to review and accept the **Monoryx Terms and Conditions**.
-
-Read through the terms and, if you agree to them, select the option to accept them before continuing.
-
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110748.png)
-
-After accepting the Terms and Conditions, you will be asked where Monoryx should be installed.
-
-The default installation location is recommended for most users. If you want Monoryx installed somewhere else, you can change the location here.
-
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110755.png)
-
-Next, you will be asked to choose the **Start Menu folder** for Monoryx.
-
-For most users, the default location is recommended, so you can simply continue without changing anything.
-
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110801.png)
-
-The installer will then show you a few **additional installation tasks**.
-
-Select whichever options you want enabled. If you're unsure, the default selections are generally fine.
-
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110809.png)
-
-The installer is now ready to install Monoryx.
-
-Review your selected options and click **Install** to begin the installation.
-
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110818.png)
-
-The installation may take a moment while the required files are copied to your computer.
-
-![Image6](./assets/instalation-guide/Screenshot%202026-09-29%20110825.png)
-
-Once the installation has finished, Monoryx is ready to use.
-
-
-
-### First Launch
-
-When you open Monoryx for the first time, you will be greeted by the **onboarding screen**.
-
-The onboarding process allows you to configure some of Monoryx's basic settings before using the launcher.
-
-You can configure your **offline account username** and choose some of Monoryx's default launcher settings.
-
-Follow the prompts shown on screen and configure the launcher to your preferences.
-
-![Onboarding Step 1 - Welcome](./assets/instalation-guide/Screenshot%202026-09-29%20111129.png)
-
-![Onboarding Step 2 - Choose offline username](./assets/instalation-guide/Screenshot%202026-09-29%20111149.png)
-
-![Onboarding Step 3 - Launcher defaults](./assets/instalation-guide/Screenshot%202026-09-29%20111157.png)
-
-![Monoryx Home Screen](./assets/instalation-guide/Screenshot%202026-09-29%20111203.png)
-
-Once you have completed the onboarding process, you're ready to start using **Monoryx**.
-
-Enjoy your new Minecraft launcher!
-
-## Building Monoryx from Source
-
-This is for indeviduals who dont want to download and install a precompiled version of the launcher and would rather compile it themselves.
+## Building from Source
 
 ### Requirements
 
-- Windows 10/11 x86_64, Linux x86_64, or macOS (primary: Windows)
-- Rust stable 1.85+ (1.96+ recommended)
-- On Windows with the GNU toolchain: a MinGW-w64 GCC (e.g. `winget install BrechtSanders.WinLibs.POSIX.UCRT`)
-- Java installed, or let MONORYX fetch a managed Temurin JRE on first launch
+- Rust 1.85 or newer
+- Windows, Linux, or macOS
+- C compiler toolchain (MSVC on Windows, GCC/Clang on Linux/macOS)
+- Linux dependencies: `libssl-dev`, `pkg-config`, `libasound2-dev`, `libfontconfig1-dev`
 
-### Build
+### Compilation
 
-```powershell
-cargo fmt --check
-cargo check
-cargo clippy --all-targets --all-features
+```bash
+git clone https://github.com/DemonZ-Development/Monoryx.git
+cd Monoryx
+
+cargo check --all-targets
 cargo test
-cargo run --release
+
+cargo build --release --bin monoryx
 ```
 
-Windows release build produces `target/release/monoryx.exe` with no console window. Linux/macOS produce `target/release/monoryx`.
+The output binary is placed in:
+- Windows: `target/release/monoryx.exe`
+- Linux/macOS: `target/release/monoryx`
 
-## First Run
+To build the companion updater:
 
-1. Start MONORYX.
-2. Enter an offline username (3-16 chars, letters/numbers/underscore).
-3. Create an instance, pick a Minecraft version and loader.
-4. Press PLAY. Missing files download automatically.
-5. Open Discover, search "Sodium", press Install. Dependencies resolve automatically.
+```bash
+cargo build --release --bin monoryx-updater
+```
 
-## Offline Mode
+---
 
-MONORYX supports **offline profiles only** in this release. Your username maps to a deterministic offline UUID using Java's `UUID.nameUUIDFromBytes("OfflinePlayer:<name>")` algorithm. Offline profiles work for singleplayer and servers in offline mode. They do not grant access to Realms, online-mode servers, or Microsoft services. The account layer is abstracted (`Account::Offline`) so authenticated providers can be added later.
+## Storage Layout
 
-## Modrinth Integration
+MONORYX stores all files in an isolated data directory:
 
-Public browsing and installation use the official Modrinth API (`https://api.modrinth.com/v2`) with the User-Agent `monoryx/<version> (https://github.com/DemonZ-Development/Monoryx)`. No login required. Rate limits and `Retry-After` are respected. Hashes are verified, required dependencies install recursively, cycles and conflicts are blocked, and installed files are tracked in `content.json` for reliable updates and uninstalls.
+```
+%APPDATA%/DemonZDevelopment/MONORYX/
+├── config.toml           # Launcher settings and account tokens
+├── cache/                # Cached manifests, images, and API responses
+├── minecraft/            # Assets, libraries, and client jars
+├── java/                 # Downloaded Temurin runtimes
+├── instances/            # Game profiles
+│   └── <instance-id>/
+│       ├── instance.toml # Instance settings
+│       ├── content.json  # Installed mod index
+│       └── game/         # mods, configs, saves, screenshots
+└── logs/                 # Launcher log files
+```
 
-Discover displays the selected target instance before installing. Already installed projects can be reinstalled or removed. The Library also shows manually copied mods, resource packs, and shaders.
+---
 
-## Nexeu Servers
+## Source Tree
 
-**Nexeu sign in is Coming soon.** Direct account linking from the launcher needs a desktop authorization flow supported by Nexeu. The **Game panel API (Beta)** remains available for users with an existing full panel API key. The key stays in memory and is cleared when you disconnect or close the launcher. Once connected, MONORYX uses Nexeu's client API to show your account, servers, announcements, resource usage, logs, and backups, and to send power controls, console commands, and backup creation requests.
-
-Balance and server creation open Nexeu's client portal. Nexeu does not currently document those operations in its public game-panel client API. The page also links to Nexeu's Discord support.
-
-## Crash reports
-
-The crash dialog explains recognizable errors, suggests next steps, and opens the relevant mods or instance settings. It includes supporting log messages and expandable technical details. Unknown errors remain labelled as uncertain. **Upload to mclo.gs** shares the full report or session log only when you click it; anyone with the resulting link can read it.
-
-## Discord activity
-
-Discord activity is on by default when the desktop app is running. **Settings → Discord** lets you turn it off or hide instance names, world names, server names, elapsed time, and launcher activity. MONORYX uses its public application ID; you don't need a bot or token. The two profile links go to [MONORYX](https://github.com/DemonZ-Development/Monoryx) and [DemonZ Development](https://demonz.org/).
-
-On Windows, modern Java worlds are identified through the active save's session lock and read-only metadata. Multiplayer activity uses game log events and names from `servers.dat`. Unsupported versions or missing details use general activity text; private servers use their address only when server-name sharing is enabled. These profile buttons open websites; they do not join a game automatically. MONORYX reconnects when Discord restarts and clears activity when sharing is turned off.
-
-Activity updates continue while the launcher is hidden. On Windows, Minecraft's generic third-party server title is replaced with the name saved in that instance's multiplayer server list. The launcher checks the supervised game every three seconds and sends Discord updates only when the activity changes; no companion mod or helper process is required.
-
-## Eco mode
-
-Eco mode lowers Minecraft's automatic memory limit when an instance is using the default allocation. This can save RAM, but a busy world or modpack may run less smoothly. It is off by default for new settings. For an existing instance, use **Home → Instance tools → Turn off Eco mode** if FPS drops. The change applies on the next launch. Custom memory limits are left alone. Eco mode no longer adds extra JVM tuning flags.
-
-## Local and Offline Use
-
-Installed instances, the Library, local archive import, and offline profiles work without a network connection. Cached Minecraft and loader version lists remain available. New downloads, repairs that need missing files, Modrinth, and Nexeu require internet. A MONORYX instance export can be imported from **Instances → Import → MONORYX archive (.zip)**; missing Minecraft files install when you play it online.
-
-## Supported Platforms
-
-- Windows 10/11 x86_64 (primary)
-- Linux x86_64
-- macOS (best effort; not the primary target but no intentional blockers)
-
-Shared launcher code avoids OS assumptions. OS-specific behavior uses conditional compilation.
-
-## Directory Layout
-
-```text
+```
 src/
-  main.rs
-  app/          state, events, background tasks
-  ui/           theme, shell, components, pages
-  minecraft/    manifest, version, rules, arguments, libraries, assets, natives, installer, launcher
-  loaders/      vanilla, fabric, quilt, neoforge, forge
-  modrinth/     api, models, search, install, dependencies, updates, modpack
-  downloads/    manager, job, hash
-  instance/     config, manager, export
-  java/         discovery, runtime, managed
-  account/      offline profiles
-  storage/      paths, cache, atomic
-  content/      installed-content tracking
-  config/       launcher config
-  utils/        fs, hash, net, system, validation
+├── main.rs               # Launcher entry point and UI loop
+├── updater_main.rs       # Standalone updater binary
+├── account/              # Offline and Microsoft OAuth authentication
+├── app/                  # Application state, background tasks, AppCDS
+├── config/               # Settings persistence
+├── content/              # Installed mod tracking
+├── curseforge.rs         # CurseForge API and Murmur2 hashing
+├── downloads/            # Chunked downloader with SHA verification
+├── instance/             # Instance configuration, export, world backups
+├── java/                 # Java detection and Temurin downloads
+├── loaders/              # Fabric, Quilt, NeoForge, Forge installers
+├── minecraft/            # Manifest parser, launch arguments, crash analyzer
+├── modrinth/             # Modrinth API, search, dependency resolution
+├── nexeu.rs              # Nexeu game server panel client
+├── storage/              # Cache management and atomic file writes
+├── ui/                   # egui interface components, themes, pages
+└── utils/                # System metrics, file utilities, validation
 ```
 
-Data root (never touches `.minecraft`):
+---
 
-```text
-MONORYX/
-  config.toml
-  cache/manifests, cache/metadata, cache/images
-  minecraft/assets, minecraft/libraries, minecraft/versions
-  java/runtimes
-  instances/<id>/instance.toml + game/
-  logs/
-```
+## FAQ
+
+**Do I need to own Minecraft to use MONORYX?**  
+No. MONORYX supports offline profiles for singleplayer and LAN servers. If you own Minecraft Java Edition, you can sign in with your Microsoft account to join online Mojang servers.
+
+**Can I move worlds and mods from another launcher?**  
+Yes. Copy your `mods/`, `saves/`, and config files into the `instances/<instance-id>/game/` directory. MONORYX detects them on startup.
+
+**How does memory allocation work?**  
+Automatic memory detects your installed RAM and sets a safe cap. You can turn on Eco Mode to reduce allocation or enter custom values in settings.
+
+---
 
 ## License
 
-Apache-2.0. See `LICENSE`.
+MONORYX is released under the [Apache License 2.0](LICENSE).
 
-## Disclaimer
-
-MONORYX is an independent project by DemonZDevelopment and is not affiliated with Mojang Studios or Microsoft. Minecraft files are downloaded from official Mojang sources at runtime and are never bundled.
+Minecraft is a registered trademark of Mojang Synergies AB. MONORYX is an independent project by DemonZ Development and is not affiliated with Mojang Studios or Microsoft.

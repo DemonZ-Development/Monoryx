@@ -1,3 +1,4 @@
+pub mod appcds;
 pub mod events;
 pub mod screenshots;
 pub mod state;

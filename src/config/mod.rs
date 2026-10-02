@@ -111,12 +111,24 @@ pub struct JavaDefaults {
 pub struct CurseForgeSettings {
     #[serde(default)]
     pub api_key: String,
+    #[serde(default)]
+    pub custom_endpoint: String,
 }
 
 impl CurseForgeSettings {
     #[must_use]
-    pub fn is_configured(&self) -> bool {
+    pub fn has_custom_key(&self) -> bool {
         !self.api_key.trim().is_empty()
+    }
+
+    #[must_use]
+    pub fn is_configured(&self) -> bool {
+        true
+    }
+
+    pub fn clear_custom(&mut self) {
+        self.api_key.clear();
+        self.custom_endpoint.clear();
     }
 }
 
@@ -162,6 +174,93 @@ impl BackupCompression {
         match self {
             Self::Fast => None,
             Self::Maximum | Self::Zstd => Some(9),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyLevel {
+    #[default]
+    Quick,
+    Full,
+}
+
+impl VerifyLevel {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Quick => "Fast check (size only)",
+            Self::Full => "Full check (hash every file)",
+        }
+    }
+
+    #[must_use]
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::Quick => {
+                "Recommended. Repair game files still does a complete hash check whenever you ask for it."
+            }
+            Self::Full => "Safest, but adds seconds to every launch on a heavily modded instance.",
+        }
+    }
+
+    pub const fn as_verify(self) -> crate::minecraft::installer::Verify {
+        match self {
+            Self::Quick => crate::minecraft::installer::Verify::Quick,
+            Self::Full => crate::minecraft::installer::Verify::Full,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum JvmPreset {
+    None,
+    #[default]
+    Aikar,
+}
+
+impl JvmPreset {
+    #[must_use]
+    pub const fn all() -> [Self; 2] {
+        [Self::None, Self::Aikar]
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "None (use my own)",
+            Self::Aikar => "Aikar flags (recommended)",
+        }
+    }
+
+    #[must_use]
+    pub const fn flags(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Aikar => concat!(
+                "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 ",
+                "-XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC ",
+                "-XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M ",
+                "-XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 ",
+                "-XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 ",
+                "-XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 ",
+                "-XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1 ",
+                "-Dusing.aikars.flags=https://mcflags.emc.gs -Daikarsnewflags=true"
+            ),
+        }
+    }
+
+    #[must_use]
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::None => "Instances use whatever you type in their own JVM arguments field.",
+            Self::Aikar => {
+                "Tunes garbage collection for long sessions, so the game stutters less. \
+                 It does not make the game boot faster. Ignored on instances where you set \
+                 your own arguments."
+            }
         }
     }
 }
@@ -213,7 +312,19 @@ pub struct LauncherConfig {
     #[serde(default)]
     pub curseforge: CurseForgeSettings,
     #[serde(default)]
+    pub microsoft_profile: Option<crate::account::microsoft::MicrosoftProfile>,
+    #[serde(default)]
+    pub microsoft_client_id: String,
+    #[serde(default)]
+    pub use_microsoft_auth: bool,
+    #[serde(default)]
     pub backup_compression: BackupCompression,
+    #[serde(default)]
+    pub verify_level: VerifyLevel,
+    #[serde(default)]
+    pub jvm_preset: JvmPreset,
+    #[serde(default)]
+    pub appcds: bool,
 }
 
 fn default_last_page() -> String {
@@ -258,13 +369,32 @@ impl Default for LauncherConfig {
             skins_restorer_compat: true,
             curseforge: CurseForgeSettings {
                 api_key: String::new(),
+                custom_endpoint: String::new(),
             },
+            microsoft_profile: None,
+            microsoft_client_id: String::new(),
+            use_microsoft_auth: false,
             backup_compression: BackupCompression::default(),
+            verify_level: VerifyLevel::default(),
+            jvm_preset: JvmPreset::default(),
+            appcds: false,
         }
     }
 }
 
 impl LauncherConfig {
+    #[must_use]
+    pub fn active_account(&self) -> Option<crate::account::Account> {
+        if self.use_microsoft_auth {
+            if let Some(ms) = &self.microsoft_profile {
+                return Some(crate::account::Account::Microsoft(ms.clone()));
+            }
+        }
+        self.profile
+            .as_ref()
+            .map(|p| crate::account::Account::Offline(p.clone()))
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
@@ -286,7 +416,7 @@ impl LauncherConfig {
 
     #[must_use]
     pub fn is_first_run(&self) -> bool {
-        self.profile.is_none() || !self.completed_onboarding
+        (self.profile.is_none() && self.microsoft_profile.is_none()) || !self.completed_onboarding
     }
 }
 

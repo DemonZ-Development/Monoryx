@@ -663,12 +663,12 @@ pub fn preview_text(manager: &InstanceManager, id: &str, relative: &Path) -> Res
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| allowed.contains(&extension.to_ascii_lowercase().as_str()))
     {
-        return Err(MonoryxError::Archive(
+        return Err(MonoryxError::Preview(
             "Preview is available for text files only".to_string(),
         ));
     }
     if path.metadata()?.len() > PREVIEW_LIMIT {
-        return Err(MonoryxError::Archive(
+        return Err(MonoryxError::Preview(
             "File is too large to preview (512 KB limit)".to_string(),
         ));
     }

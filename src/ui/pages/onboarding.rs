@@ -1,7 +1,7 @@
 use crate::app::state::AppState;
 use crate::ui::components::{button_row, provider_card, step_rail, wizard_frame};
 use crate::ui::theme::{type_scale, DANGER, MUTED, TEXT, TEXT2};
-use egui::RichText;
+use egui::{CornerRadius, RichText, Stroke};
 
 const STEPS: usize = 3;
 
@@ -68,6 +68,15 @@ pub fn release_background(ctx: &egui::Context) {
     });
 }
 
+pub fn reset_background(ctx: &egui::Context) {
+    let released_id = egui::Id::new("onboarding-background-released");
+    let id = background_id();
+    ctx.data_mut(|d| {
+        d.remove::<egui::TextureHandle>(id);
+        d.remove::<bool>(released_id);
+    });
+}
+
 fn paint_background(ui: &mut egui::Ui, rect: egui::Rect) {
     let ctx = ui.ctx().clone();
     let Some(texture) = background_texture(&ctx) else {
@@ -115,7 +124,21 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     if step == 0 && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
         state.onboarding_step = 1;
     }
+    if step == 1
+        && state.onboarding_use_microsoft
+        && state.config.microsoft_profile.is_some()
+        && ctx.input(|i| i.key_pressed(egui::Key::Enter))
+    {
+        state.config.use_microsoft_auth = true;
+        state.onboarding_step = 2;
+    }
+    if step == 2 && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+        let _ = complete_onboarding(state, ctx);
+    }
     if step > 0 && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if step == 1 {
+            state.cancel_microsoft_login();
+        }
         state.onboarding_step = (step - 1) as u32;
     }
 }
@@ -179,11 +202,197 @@ fn intro(state: &mut AppState, ui: &mut egui::Ui) {
 }
 
 fn username(state: &mut AppState, ui: &mut egui::Ui) {
-    heading(
-        ui,
-        "Choose an offline username",
-        "Works for singleplayer and offline-mode servers. You can add a Microsoft account later.",
-    );
+    if state.onboarding_use_microsoft {
+        heading(
+            ui,
+            "Sign in with Microsoft",
+            "Use your official Microsoft account to join multiplayer servers and sync skins.",
+        );
+    } else {
+        heading(
+            ui,
+            "Choose an offline username",
+            "Works for singleplayer and offline-mode servers. You can add a Microsoft account later.",
+        );
+    }
+
+    ui.horizontal(|ui| {
+        let offline = !state.onboarding_use_microsoft;
+        if ui.selectable_label(offline, "Play Offline").clicked() && state.onboarding_use_microsoft
+        {
+            state.onboarding_use_microsoft = false;
+            state.cancel_microsoft_login();
+            state.onboarding_error.clear();
+        }
+        if ui
+            .selectable_label(state.onboarding_use_microsoft, "Sign in with Microsoft")
+            .clicked()
+            && !state.onboarding_use_microsoft
+        {
+            state.onboarding_use_microsoft = true;
+            state.onboarding_error.clear();
+            if !state.ms_login_loading
+                && state.ms_device_code.is_none()
+                && state.config.microsoft_profile.is_none()
+            {
+                state.start_microsoft_login();
+            }
+        }
+    });
+
+    ui.add_space(14.0);
+
+    if state.onboarding_use_microsoft {
+        microsoft_flow(state, ui);
+    } else {
+        offline_flow(state, ui);
+    }
+}
+
+fn microsoft_flow(state: &mut AppState, ui: &mut egui::Ui) {
+    if let Some(profile) = &state.config.microsoft_profile {
+        provider_card(ui, &profile.username, "Microsoft Account", "Connected");
+        ui.add_space(8.0);
+        if ui.button("Sign into different account").clicked() {
+            state.config.microsoft_profile = None;
+            state.config.use_microsoft_auth = false;
+            state.start_microsoft_login();
+            return;
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let (back, next) =
+                button_row(ui, "Back", "Continue", crate::ui::components::Tone::Primary);
+            if back.clicked() {
+                state.cancel_microsoft_login();
+                state.onboarding_step = 0;
+            }
+            if next.clicked() {
+                state.config.use_microsoft_auth = true;
+                state.onboarding_step = 2;
+            }
+        });
+        return;
+    }
+
+    if let Some(code) = state.ms_device_code.clone() {
+        egui::Frame::new()
+            .fill(crate::ui::theme::palette(ui.ctx()).elevated2)
+            .stroke(Stroke::new(
+                1.0_f32,
+                crate::ui::theme::palette(ui.ctx()).accent,
+            ))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(14))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Microsoft Device Login Flow")
+                        .size(14.0)
+                        .strong()
+                        .color(TEXT),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("1. Open in browser:").size(12.5).color(TEXT2));
+                    let uri = if code.verification_uri.trim().is_empty() {
+                        "https://www.microsoft.com/link"
+                    } else {
+                        code.verification_uri.as_str()
+                    };
+                    if ui.button("microsoft.com/link").on_hover_text(uri).clicked() {
+                        let _ = open::that(uri);
+                    }
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("2. Enter Code:").size(12.5).color(TEXT2));
+                    ui.label(
+                        RichText::new(&code.user_code)
+                            .size(16.0)
+                            .strong()
+                            .monospace()
+                            .color(crate::ui::theme::INFO),
+                    );
+                    if ui.button("Copy Code").clicked() {
+                        ui.ctx().copy_text(code.user_code.clone());
+                        state.notify("Code copied to clipboard!");
+                    }
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("Waiting for sign-in approval in browser...")
+                            .size(12.0)
+                            .color(MUTED),
+                    );
+                    if ui.button("Cancel").clicked() {
+                        state.cancel_microsoft_login();
+                    }
+                });
+            });
+    } else if state.ms_login_loading {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(
+                RichText::new("Requesting Microsoft login code...")
+                    .size(12.5)
+                    .color(TEXT2),
+            );
+            if ui.button("Cancel").clicked() {
+                state.cancel_microsoft_login();
+            }
+        });
+    } else {
+        ui.horizontal(|ui| {
+            if crate::ui::components::primary_button(ui, "Sign in with Microsoft").clicked() {
+                state.start_microsoft_login();
+            }
+        });
+    }
+
+    if let Some(err) = &state.ms_login_error {
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(format!("Error: {err}"))
+                .size(12.0)
+                .color(DANGER),
+        );
+        ui.add_space(4.0);
+        if ui.button("Try Again").clicked() {
+            state.start_microsoft_login();
+        }
+    }
+
+    if !state.onboarding_error.is_empty() {
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(&state.onboarding_error)
+                .size(12.0)
+                .color(DANGER),
+        );
+    }
+
+    ui.add_space(18.0);
+    ui.horizontal(|ui| {
+        let (back, next) = button_row(ui, "Back", "Continue", crate::ui::components::Tone::Primary);
+        if back.clicked() {
+            state.cancel_microsoft_login();
+            state.onboarding_step = 0;
+        }
+        if next.clicked() {
+            if state.config.microsoft_profile.is_some() {
+                state.config.use_microsoft_auth = true;
+                state.onboarding_step = 2;
+            } else {
+                state.onboarding_error =
+                    "Please complete Microsoft sign-in to continue.".to_string();
+            }
+        }
+    });
+}
+
+fn offline_flow(state: &mut AppState, ui: &mut egui::Ui) {
     crate::ui::components::field_label(ui, "Username");
     let response = crate::ui::components::limited_text_edit(
         ui,
@@ -203,6 +412,7 @@ fn username(state: &mut AppState, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let (back, next) = button_row(ui, "Back", "Continue", crate::ui::components::Tone::Primary);
         if back.clicked() {
+            state.cancel_microsoft_login();
             state.onboarding_step = 0;
         }
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -210,6 +420,7 @@ fn username(state: &mut AppState, ui: &mut egui::Ui) {
             match crate::account::offline::OfflineProfile::new(state.onboarding_user.trim()) {
                 Ok(profile) => {
                     state.config.profile = Some(profile);
+                    state.config.use_microsoft_auth = false;
                     state.onboarding_error.clear();
                     state.onboarding_step = 2;
                 }
@@ -217,6 +428,38 @@ fn username(state: &mut AppState, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+pub fn complete_onboarding(state: &mut AppState, ctx: &egui::Context) -> bool {
+    if !state.onboarding_mem_auto {
+        match state.onboarding_mem_max.trim().parse::<u64>() {
+            Ok(value) if value >= 512 => state.config.memory.max_mb = value,
+            _ => {
+                state.onboarding_error = "Max memory must be a number of at least 512.".to_string();
+                return false;
+            }
+        }
+    } else {
+        state.config.memory.max_mb = crate::utils::system::default_max_memory_mb();
+    }
+    if state.config.profile.is_none() {
+        if let Some(ms) = &state.config.microsoft_profile {
+            if let Ok(off) = crate::account::offline::OfflineProfile::new(&ms.username) {
+                state.config.profile = Some(off);
+            }
+        }
+    }
+    state.onboarding_error.clear();
+    state.config.completed_onboarding = true;
+    state.save_config();
+    state.page = crate::app::events::Page::Home;
+
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+        state.config.window_width.clamp(850.0, 2560.0),
+        state.config.window_height.clamp(560.0, 1440.0),
+    )));
+    state.notify("Welcome to MONORYX");
+    true
 }
 
 fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
@@ -271,26 +514,7 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
             state.onboarding_step = 1;
         }
         if next.clicked() {
-            if !state.onboarding_mem_auto {
-                match state.onboarding_mem_max.trim().parse::<u64>() {
-                    Ok(value) if value >= 512 => state.config.memory.max_mb = value,
-                    _ => {
-                        state.onboarding_error =
-                            "Max memory must be a number of at least 512.".to_string();
-                        return;
-                    }
-                }
-            }
-            state.config.completed_onboarding = true;
-            state.save_config();
-            state.page = crate::app::events::Page::Home;
-
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                    state.config.window_width.clamp(850.0, 2560.0),
-                    state.config.window_height.clamp(560.0, 1440.0),
-                )));
-            state.notify("Welcome to MONORYX");
+            let _ = complete_onboarding(state, ui.ctx());
         }
     });
 }
@@ -413,5 +637,111 @@ mod tests {
         );
         assert!(h.state.config.completed_onboarding);
         assert_eq!(h.state.page, crate::app::events::Page::Home);
+    }
+
+    #[test]
+    fn switching_to_microsoft_and_completing_login() {
+        let mut h = Harness::new(1, "");
+        assert!(!h.state.onboarding_use_microsoft);
+        h.click("Sign in with Microsoft");
+        assert!(h.state.onboarding_use_microsoft);
+
+        h.state.config.microsoft_profile = Some(crate::account::microsoft::MicrosoftProfile {
+            username: "SteveOnline".into(),
+            uuid: uuid::Uuid::nil(),
+            access_token: "token".into(),
+            refresh_token: "refresh".into(),
+            expires_at: 0,
+        });
+        h.state.config.use_microsoft_auth = true;
+        assert_eq!(h.click("Continue"), 2);
+    }
+
+    #[test]
+    fn switching_back_to_offline_from_microsoft() {
+        let mut h = Harness::new(1, "Steve");
+        h.state.config.use_microsoft_auth = true;
+        h.click("Sign in with Microsoft");
+        assert!(h.state.onboarding_use_microsoft);
+        h.click("Play Offline");
+        assert!(!h.state.onboarding_use_microsoft);
+        assert_eq!(h.click("Continue"), 2);
+        assert!(!h.state.config.use_microsoft_auth);
+        assert_eq!(
+            h.state.config.profile.as_ref().map(|p| p.username.as_str()),
+            Some("Steve")
+        );
+    }
+
+    #[test]
+    fn microsoft_step_continue_without_login_shows_error() {
+        let mut h = Harness::new(1, "");
+        h.click("Sign in with Microsoft");
+        assert!(h.state.onboarding_use_microsoft);
+        assert_eq!(h.click("Continue"), 1);
+        assert_eq!(
+            h.state.onboarding_error,
+            "Please complete Microsoft sign-in to continue."
+        );
+    }
+
+    #[test]
+    fn microsoft_device_code_cancel_clears_state() {
+        let mut h = Harness::new(1, "");
+        h.click("Sign in with Microsoft");
+        h.state.ms_login_loading = true;
+        h.state.ms_device_code = Some(crate::account::microsoft::DeviceCodeResponse {
+            device_code: "dev123".into(),
+            user_code: "ABCD-EFGH".into(),
+            verification_uri: "https://microsoft.com/link".into(),
+            expires_in: 900,
+            interval: 5,
+            message: None,
+        });
+        h.click("Cancel");
+        assert!(!h.state.ms_login_loading);
+        assert!(h.state.ms_device_code.is_none());
+    }
+
+    #[test]
+    fn defaults_step_custom_memory_validation() {
+        let mut h = Harness::new(2, "Steve");
+        h.state.onboarding_mem_auto = false;
+        h.state.onboarding_mem_max = "256".to_string();
+        h.click("Open MONORYX");
+        assert!(!h.state.config.completed_onboarding);
+        assert!(h.state.onboarding_error.contains("at least 512"));
+
+        h.state.onboarding_mem_max = "4096".to_string();
+        h.click("Open MONORYX");
+        assert!(h.state.config.completed_onboarding);
+        assert_eq!(h.state.config.memory.max_mb, 4096);
+    }
+
+    #[test]
+    fn defaults_step_auto_memory_resets_custom_mb() {
+        let mut h = Harness::new(2, "Steve");
+        h.state.config.memory.max_mb = 9999;
+        h.state.onboarding_mem_auto = true;
+        h.click("Open MONORYX");
+        assert!(h.state.config.completed_onboarding);
+        assert_eq!(
+            h.state.config.memory.max_mb,
+            crate::utils::system::default_max_memory_mb()
+        );
+    }
+
+    #[test]
+    fn reset_background_clears_texture_cache() {
+        let ctx = egui::Context::default();
+        let released_id = egui::Id::new("onboarding-background-released");
+        let id = background_id();
+        ctx.data_mut(|d| {
+            d.insert_temp(released_id, true);
+        });
+        assert!(ctx.data(|d| d.get_temp::<bool>(released_id).unwrap_or(false)));
+        reset_background(&ctx);
+        assert!(!ctx.data(|d| d.get_temp::<bool>(released_id).unwrap_or(false)));
+        assert!(ctx.data(|d| d.get_temp::<egui::TextureHandle>(id).is_none()));
     }
 }

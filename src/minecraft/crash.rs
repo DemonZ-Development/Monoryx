@@ -477,7 +477,7 @@ pub fn detect_crash(
             instance_name: instance_name.to_string(),
             exit_code,
             summary,
-            details: content,
+            details: tail_lines(&content, 2_000),
             source_label: format!("Crash report: {filename}"),
             report_path: Some(path),
             crash_reports_dir,

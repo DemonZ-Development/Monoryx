@@ -290,45 +290,37 @@ impl DownloadManager {
             .await
             .map_err(MonoryxError::Io)?
             .len();
-        for expected in [job.expected_size, total].into_iter().flatten() {
-            if actual_size != expected {
-                return Err(MonoryxError::Download(format!(
-                    "size mismatch for {}: expected {expected}, got {actual_size}",
-                    job.label
-                )));
+
+        for expected in [job.expected_sha1.clone(), job.expected_sha512.clone()]
+            .into_iter()
+            .flatten()
+        {
+            let is_sha512 = expected.len() == 128;
+            let part_for_hash = part.clone();
+            let actual = tokio::task::spawn_blocking(move || {
+                if is_sha512 {
+                    crate::utils::hash::sha512_file(&part_for_hash)
+                } else {
+                    crate::utils::hash::sha1_file(&part_for_hash)
+                }
+            })
+            .await
+            .map_err(|e| MonoryxError::Download(e.to_string()))??;
+            if actual.to_lowercase() != expected.to_lowercase() {
+                return Err(MonoryxError::HashMismatch {
+                    file: job.label.clone(),
+                    expected,
+                    actual,
+                });
             }
         }
 
-        if let Some(sha1) = &job.expected_sha1 {
-            let actual = tokio::task::spawn_blocking({
-                let part = part.clone();
-                move || crate::utils::hash::sha1_file(&part)
-            })
-            .await
-            .map_err(|e| MonoryxError::Download(e.to_string()))??;
-            if actual.to_lowercase() != sha1.to_lowercase() {
-                return Err(MonoryxError::HashMismatch {
-                    file: job.label.clone(),
-                    expected: sha1.clone(),
-                    actual,
-                });
-            }
-        }
-        if let Some(sha512) = &job.expected_sha512 {
-            let actual = tokio::task::spawn_blocking({
-                let part = part.clone();
-                move || crate::utils::hash::sha512_file(&part)
-            })
-            .await
-            .map_err(|e| MonoryxError::Download(e.to_string()))??;
-            if actual.to_lowercase() != sha512.to_lowercase() {
-                return Err(MonoryxError::HashMismatch {
-                    file: job.label.clone(),
-                    expected: sha512.clone(),
-                    actual,
-                });
-            }
-        }
+        let sizes = [job.expected_size, total]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        let has_verified_hash = job.expected_sha1.is_some() || job.expected_sha512.is_some();
+        size_verdict(&job.label, &sizes, actual_size, has_verified_hash)?;
 
         tokio::fs::rename(&part, &job.dest)
             .await
@@ -387,6 +379,45 @@ fn is_permanent_http(e: &MonoryxError) -> bool {
     false
 }
 
+const SIZE_TOLERANCE_BYTES: u64 = 4096;
+
+fn size_verdict(
+    label: &str,
+    expected: &[u64],
+    actual: u64,
+    has_verified_hash: bool,
+) -> Result<(), MonoryxError> {
+    let Some(first) = expected.first().copied() else {
+        return Ok(());
+    };
+    let worst = expected
+        .iter()
+        .map(|e| e.abs_diff(actual))
+        .max()
+        .unwrap_or(0);
+    if worst == 0 {
+        return Ok(());
+    }
+    if has_verified_hash && worst <= SIZE_TOLERANCE_BYTES {
+        tracing::warn!(
+            "{label}: size differs from metadata ({actual} vs {first}) but the hash matched"
+        );
+        return Ok(());
+    }
+    if worst > SIZE_TOLERANCE_BYTES {
+        return Err(MonoryxError::Download(format!(
+            "size mismatch for {label}: expected {first}, got {actual}"
+        )));
+    }
+    if !has_verified_hash {
+        return Err(MonoryxError::Download(format!(
+            "size mismatch for {label}: expected {first}, got {actual}, and the server gave \
+             no hash to confirm the file"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,5 +458,50 @@ mod tests {
         assert_eq!(states.last(), Some(&JobState::Completed));
         assert!(got.iter().all(|e| e.id == job.id));
         assert_eq!(got.last().unwrap().progress.downloaded, 6);
+    }
+}
+
+#[cfg(test)]
+mod size_verdict_tests {
+    use super::*;
+
+    #[test]
+    fn a_large_drift_with_a_matching_hash_is_still_rejected() {
+        assert!(
+            size_verdict("iris", &[2_850_938], 2_982_010, true).is_err(),
+            "a 131 KB drift is a different file, so this must be rejected"
+        );
+    }
+
+    #[test]
+    fn small_drift_with_a_matching_hash_is_accepted() {
+        assert!(size_verdict("a.jar", &[1000], 1002, true).is_ok());
+    }
+
+    #[test]
+    fn drift_with_no_hash_is_rejected() {
+        assert!(size_verdict("a.jar", &[1000], 1002, false).is_err());
+        assert!(size_verdict("a.jar", &[1000], 500_000, false).is_err());
+    }
+
+    #[test]
+    fn exact_match_always_passes() {
+        assert!(size_verdict("a.jar", &[1000], 1000, false).is_ok());
+        assert!(size_verdict("a.jar", &[1000], 1000, true).is_ok());
+    }
+
+    #[test]
+    fn no_expected_size_passes() {
+        assert!(size_verdict("a.jar", &[], 12345, false).is_ok());
+    }
+
+    #[test]
+    fn one_of_two_sizes_matching_is_enough_when_hash_verified() {
+        assert!(size_verdict("a.jar", &[1000, 1001], 1000, true).is_ok());
+    }
+
+    #[test]
+    fn wildly_off_size_is_rejected_even_with_a_hash() {
+        assert!(size_verdict("a.jar", &[1000], 900_000, true).is_err());
     }
 }

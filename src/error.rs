@@ -48,6 +48,9 @@ pub enum MonoryxError {
     #[error("Archive error: {0}")]
     Archive(String),
 
+    #[error("{0}")]
+    Preview(String),
+
     #[error("Unsafe archive path rejected: {0}")]
     UnsafePath(String),
 
@@ -62,6 +65,9 @@ pub enum MonoryxError {
 
     #[error("Launch failed: {0}")]
     Launch(String),
+
+    #[error("Authentication error: {0}")]
+    Auth(String),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

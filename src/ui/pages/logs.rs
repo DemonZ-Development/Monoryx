@@ -60,18 +60,19 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             continue;
         }
         ui.collapsing(name, |ui| {
+            let tail = read_log_tail(&path);
             ui.horizontal(|ui| {
                 if ui.button("Open file").clicked() {
                     let _ = open::that(&path);
                 }
                 if ui.button("Copy log").clicked() {
-                    if let Ok(text) = std::fs::read_to_string(&path) {
-                        ctx.copy_text(text);
+                    if let Some(text) = tail.as_deref() {
+                        ctx.copy_text(text.to_string());
                         state.notify(format!("{name} log copied to clipboard"));
                     }
                 }
             });
-            if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Some(text) = tail.as_deref() {
                 for line in text
                     .lines()
                     .rev()
@@ -82,10 +83,32 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 {
                     ui.add(
                         egui::Label::new(RichText::new(line).size(11.0).monospace())
-                            .selectable(true),
+                            .selectable(true)
+                            .wrap(),
                     );
                 }
             }
         });
     }
+}
+
+const LOG_TAIL_BYTES: u64 = 64 * 1024;
+
+fn read_log_tail(path: &std::path::Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len == 0 {
+        return Some(String::new());
+    }
+    let start = len.saturating_sub(LOG_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    if start > 0 {
+        if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+            buf.drain(..=nl);
+        }
+    }
+    String::from_utf8(buf).ok()
 }

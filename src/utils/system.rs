@@ -34,13 +34,18 @@ pub fn default_boost_max_memory_mb() -> u64 {
 
 #[must_use]
 pub fn game_memory_limit_mb(configured: u64, eco: bool, standard: u64, eco_limit: u64) -> u64 {
-    if eco && configured == standard {
-        eco_limit
+    let _ = standard;
+    if eco {
+        configured.min(eco_limit)
     } else {
         configured
     }
 }
 
+#[must_use]
+pub fn eco_memory_limited(configured: u64, eco: bool, eco_limit: u64) -> bool {
+    eco && configured > eco_limit
+}
 #[must_use]
 pub const fn default_min_memory_mb() -> u64 {
     512
@@ -516,10 +521,18 @@ mod tests {
     }
 
     #[test]
-    fn eco_mode_only_reduces_the_automatic_memory_limit() {
+    fn eco_mode_caps_a_custom_value_too() {
         assert_eq!(game_memory_limit_mb(3072, true, 3072, 2560), 2560);
         assert_eq!(game_memory_limit_mb(3072, false, 3072, 2560), 3072);
-        assert_eq!(game_memory_limit_mb(4096, true, 3072, 2560), 4096);
+        assert_eq!(game_memory_limit_mb(4096, true, 3072, 2560), 2560);
+        assert_eq!(game_memory_limit_mb(2048, true, 3072, 2560), 2048);
+    }
+
+    #[test]
+    fn eco_mode_reports_when_it_is_the_limiting_factor() {
+        assert!(eco_memory_limited(4096, true, 2560));
+        assert!(!eco_memory_limited(2048, true, 2560));
+        assert!(!eco_memory_limited(4096, false, 2560));
     }
 
     #[test]

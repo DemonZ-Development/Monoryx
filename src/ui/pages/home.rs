@@ -66,8 +66,24 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
     let installing = state.busy_install.contains_key(&cfg.id);
     let eco = cfg.boost_mode.unwrap_or(state.config.boost_mode);
     hero_card_frame(ui, |ui| {
-        ui.label(RichText::new("SELECTED INSTANCE").size(10.5).color(MUTED));
-        ui.add(egui::Label::new(RichText::new(&cfg.name).size(26.0).strong().color(TEXT)).wrap());
+        ui.horizontal(|ui| {
+            crate::ui::components::render_instance_thumbnail(
+                ui,
+                44.0,
+                &cfg.name,
+                cfg.loader.display_name(),
+                false,
+            );
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.label(RichText::new("SELECTED INSTANCE").size(10.5).color(MUTED));
+                ui.add(
+                    egui::Label::new(RichText::new(&cfg.name).size(24.0).strong().color(TEXT))
+                        .wrap(),
+                );
+            });
+        });
+        ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             badge(ui, &format!("Minecraft {}", cfg.minecraft_version));
             badge(ui, cfg.loader.display_name());
@@ -109,6 +125,18 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                 &format_last_played(cfg.last_played_at.as_deref()),
             );
         });
+        if crate::utils::system::eco_memory_limited(cfg.memory_max_mb, eco, default_ram.1) {
+            ui.label(
+                RichText::new(format!(
+                    "Eco mode is capping this launch to {:.1} GB, below the {} set on the \
+                     instance.",
+                    ram as f64 / 1024.0,
+                    cfg.memory_max_mb as f64 / 1024.0
+                ))
+                .size(11.0)
+                .color(crate::ui::theme::MUTED),
+            );
+        }
         ui.add_space(14.0);
         ui.add_enabled_ui(!running && !installing, |ui| {
             if play_hero_button(

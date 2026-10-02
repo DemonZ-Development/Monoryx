@@ -41,7 +41,9 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
         return;
     }
 
-    crate::ui::theme::apply_selected_theme(ctx, state.config.theme);
+    if crate::ui::theme::current_theme(ctx) != state.config.theme {
+        crate::ui::theme::apply_selected_theme(ctx, state.config.theme);
+    }
     let theme = crate::ui::theme::palette(ctx);
 
     crate::ui::palette::handle_shortcuts(state, ctx);
@@ -80,27 +82,46 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                             if ui.button("Dismiss").clicked() {
                                 state.show_update_banner = false;
                             }
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("View Update").color(SELECTED_FG).strong(),
+                            if let Some(path) = state.launcher_update_downloaded.clone() {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new("Restart to Update")
+                                                .color(SELECTED_FG)
+                                                .strong(),
+                                        )
+                                        .fill(ACCENT)
+                                        .corner_radius(CornerRadius::same(6)),
                                     )
-                                    .fill(ACCENT)
-                                    .corner_radius(CornerRadius::same(6)),
-                                )
-                                .clicked()
-                            {
-                                state.set_page(Page::Settings);
-                            }
-                            if let Some(_dl) = &update.download_url {
-                                if ui.button("Download").clicked() {
-                                    #[cfg(target_os = "windows")]
-                                    {
-                                        state.download_launcher_update();
-                                        state.set_page(Page::Settings);
+                                    .clicked()
+                                {
+                                    let _ = crate::app::updater::apply_update_and_restart(&path);
+                                }
+                            } else {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new("View Update")
+                                                .color(SELECTED_FG)
+                                                .strong(),
+                                        )
+                                        .fill(ACCENT)
+                                        .corner_radius(CornerRadius::same(6)),
+                                    )
+                                    .clicked()
+                                {
+                                    state.set_page(Page::Settings);
+                                }
+                                if let Some(_dl) = &update.download_url {
+                                    if ui.button("Download").clicked() {
+                                        #[cfg(target_os = "windows")]
+                                        {
+                                            state.download_launcher_update();
+                                            state.set_page(Page::Settings);
+                                        }
+                                        #[cfg(not(target_os = "windows"))]
+                                        let _ = open::that(_dl);
                                     }
-                                    #[cfg(not(target_os = "windows"))]
-                                    let _ = open::that(_dl);
                                 }
                             }
                         });
@@ -219,6 +240,24 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
 }
 
 fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
+    let dismissible = state.edit_instance.is_some()
+        || !state.error_dialog.is_empty()
+        || state.pending_content_delete.is_some()
+        || state.crash_report.is_some()
+        || state.screenshot_viewer.is_some()
+        || state.project_image_url.is_some();
+    if dismissible && crate::ui::components::dialog_backdrop(ctx) {
+        state.edit_instance = None;
+        state.error_dialog.clear();
+        state.pending_content_delete = None;
+        state.crash_report = None;
+        state.screenshot_viewer = None;
+        state.project_image_url = None;
+        state.project_image = None;
+        state.project_image_loading = false;
+        state.project_image_error.clear();
+    }
+
     if let Some(current) = state.screenshot_viewer.clone() {
         let index = state
             .screenshots
@@ -449,7 +488,11 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.add(egui::Label::new(RichText::new(&msg).color(TEXT)).selectable(true));
+                ui.add(
+                    egui::Label::new(RichText::new(&msg).color(TEXT))
+                        .selectable(true)
+                        .wrap(),
+                );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Copy error").clicked() {
@@ -487,6 +530,13 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         state.show_new_instance = false;
         state.detail_project = None;
         state.crash_report = None;
+        state.edit_instance = None;
+        state.pending_content_delete = None;
+        state.screenshot_viewer = None;
+        state.project_image_url = None;
+        state.project_image = None;
+        state.project_image_loading = false;
+        state.project_image_error.clear();
     }
 }
 
@@ -803,12 +853,12 @@ fn status_card(state: &mut AppState, ui: &mut egui::Ui, theme: crate::ui::theme:
 }
 
 fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
-    let profile = state.config.profile.clone();
+    let account = state.config.active_account();
     let has_update = state.launcher_update.as_ref().is_some_and(|u| u.has_update);
     let version = env!("CARGO_PKG_VERSION").to_string();
 
     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-        if let Some(p) = profile {
+        if let Some(acc) = account {
             let card_id = ui.make_persistent_id("bottom_profile_card");
             let hovered = ui
                 .ctx()
@@ -833,30 +883,15 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         let (avatar, _) =
                             ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                        ui.painter()
-                            .circle_filled(avatar.center(), 11.0, theme.elevated);
-                        ui.painter().circle_stroke(
-                            avatar.center(),
-                            11.0,
-                            Stroke::new(1.0_f32, theme.border),
-                        );
-                        let initial: String = p
-                            .username
-                            .chars()
-                            .next()
-                            .unwrap_or('?')
-                            .to_uppercase()
-                            .collect();
-                        ui.painter().text(
-                            avatar.center(),
-                            egui::Align2::CENTER_CENTER,
-                            initial,
-                            egui::FontId::proportional(type_scale::CAPTION),
-                            TEXT,
+                        crate::ui::components::draw_cute_avatar(
+                            ui.painter(),
+                            avatar,
+                            acc.username(),
+                            !acc.is_offline(),
                         );
                         ui.add_space(6.0);
 
-                        let badge_width = 42.0_f32;
+                        let badge_width = 46.0_f32;
                         let name_width = (ui.available_width() - badge_width).max(24.0);
                         let (name_rect, _) = ui.allocate_exact_size(
                             egui::vec2(name_width, 22.0),
@@ -865,7 +900,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         ui.painter().with_clip_rect(name_rect).text(
                             name_rect.left_center(),
                             egui::Align2::LEFT_CENTER,
-                            crate::ui::components::elide(&p.username, 16),
+                            crate::ui::components::elide(acc.username(), 16),
                             egui::FontId::new(type_scale::LABEL, egui::FontFamily::Proportional),
                             TEXT,
                         );
@@ -876,9 +911,17 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         ui.painter().text(
                             badge.right_center(),
                             egui::Align2::RIGHT_CENTER,
-                            "Offline",
+                            if acc.is_offline() {
+                                "Offline"
+                            } else {
+                                "Microsoft"
+                            },
                             egui::FontId::proportional(type_scale::MICRO),
-                            MUTED,
+                            if acc.is_offline() {
+                                MUTED
+                            } else {
+                                Color32::from_rgb(100, 200, 255)
+                            },
                         );
                     });
                 });
@@ -891,8 +934,13 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
             }
             if resp
                 .on_hover_text(format!(
-                    "Offline account: {}\nSkinsRestorer active (click to manage in Accounts)",
-                    p.username
+                    "Active account: {} ({})\nClick to manage in Accounts",
+                    acc.username(),
+                    if acc.is_offline() {
+                        "Offline"
+                    } else {
+                        "Microsoft"
+                    }
                 ))
                 .clicked()
             {

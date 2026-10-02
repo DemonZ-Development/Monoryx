@@ -28,6 +28,14 @@ pub struct TrackedDownload {
 }
 
 #[derive(Debug, Clone)]
+pub struct RowActivity {
+    pub label: String,
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub finished: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
 pub struct InstallOperation {
     pub label: String,
     pub phase: String,
@@ -84,6 +92,23 @@ pub enum WorldActionKind {
     ImportGameFolder(std::path::PathBuf, Box<InstanceConfig>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiscoverSource {
+    #[default]
+    Modrinth,
+    CurseForge,
+}
+
+impl DiscoverSource {
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Modrinth => "Modrinth",
+            Self::CurseForge => "CurseForge",
+        }
+    }
+}
+
 pub struct AppState {
     pub discord: crate::discord::Presence,
     pub game_activities: HashMap<String, (crate::minecraft::activity::GameActivity, i64)>,
@@ -122,6 +147,7 @@ pub struct AppState {
     pub search_error: String,
     pub search_debounce: Option<Instant>,
     pub discover_tab: DiscoverTab,
+    pub discover_source: DiscoverSource,
     pub detail_slug: Option<String>,
     pub detail_project: Option<Project>,
     pub detail_versions: Vec<ProjectVersion>,
@@ -146,6 +172,7 @@ pub struct AppState {
     pub operations: std::collections::BTreeMap<String, InstallOperation>,
     pub downloads: HashMap<String, TrackedDownload>,
     pub downloads_history: Vec<TrackedDownload>,
+    pub row_activity: HashMap<String, RowActivity>,
     pub java_list: Vec<JavaRuntime>,
     pub java_loading: bool,
     pub gpu_list: Vec<crate::utils::system::GpuInfo>,
@@ -161,6 +188,7 @@ pub struct AppState {
     pub onboarding_error: String,
     pub onboarding_mem_auto: bool,
     pub onboarding_mem_max: String,
+    pub onboarding_use_microsoft: bool,
     pub notice: String,
     pub notice_at: Option<Instant>,
     pub error_dialog: String,
@@ -189,6 +217,7 @@ pub struct AppState {
     pub screenshot_full_loading: bool,
     pub screenshot_full_error: String,
     pub worlds: WorldsUiState,
+    pub classpath_preview: Option<Vec<std::path::PathBuf>>,
     pub global_status: String,
     pub global_frac: Option<f32>,
     pub settings_jvm: String,
@@ -205,6 +234,10 @@ pub struct AppState {
     pub launcher_update_downloaded: Option<std::path::PathBuf>,
     pub launcher_update_download_error: Option<String>,
     pub show_update_banner: bool,
+    pub ms_device_code: Option<crate::account::microsoft::DeviceCodeResponse>,
+    pub ms_login_loading: bool,
+    pub ms_login_error: Option<String>,
+    pub ms_login_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub crash_report: Option<crate::minecraft::crash::CrashInfo>,
     pub crash_share_generation: u64,
     pub crash_share_loading: bool,
@@ -267,6 +300,13 @@ impl AppState {
             selected_instance = instance_list.first().map(|c| c.id.clone());
         }
         let show_snapshots = config.show_snapshots;
+        let default_onboarding_user = config
+            .profile
+            .as_ref()
+            .map(|p| p.username.clone())
+            .unwrap_or_default();
+        let default_onboarding_use_microsoft =
+            config.use_microsoft_auth && config.microsoft_profile.is_some();
         let mod_counts = HashMap::new();
         let mut s = Self {
             discord: crate::discord::Presence::start(&runtime),
@@ -306,6 +346,7 @@ impl AppState {
             search_error: String::new(),
             search_debounce: None,
             discover_tab: DiscoverTab::Mods,
+            discover_source: DiscoverSource::Modrinth,
             detail_slug: None,
             detail_project: None,
             detail_versions: Vec::new(),
@@ -335,16 +376,18 @@ impl AppState {
             gpu_list: Vec::new(),
             gpu_loading: false,
             busy_install: HashMap::new(),
+            row_activity: HashMap::new(),
             playing: HashMap::new(),
             last_exit: String::new(),
             launcher_hidden: false,
             launcher_minimized: false,
             log_lines: Vec::new(),
             onboarding_step: 0,
-            onboarding_user: String::new(),
+            onboarding_user: default_onboarding_user,
             onboarding_error: String::new(),
             onboarding_mem_auto: true,
             onboarding_mem_max: crate::utils::system::default_max_memory_mb().to_string(),
+            onboarding_use_microsoft: default_onboarding_use_microsoft,
             notice: String::new(),
             notice_at: None,
             error_dialog: String::new(),
@@ -373,6 +416,7 @@ impl AppState {
             screenshot_full_loading: false,
             screenshot_full_error: String::new(),
             worlds: WorldsUiState::default(),
+            classpath_preview: None,
             global_status: String::new(),
             global_frac: None,
             settings_jvm: String::new(),
@@ -389,6 +433,10 @@ impl AppState {
             launcher_update_downloaded: None,
             launcher_update_download_error: None,
             show_update_banner: true,
+            ms_device_code: None,
+            ms_login_loading: false,
+            ms_login_error: None,
+            ms_login_cancel: None,
             crash_report: None,
             crash_share_generation: 0,
             crash_share_loading: false,
@@ -534,6 +582,21 @@ impl AppState {
     pub fn set_page(&mut self, page: Page) {
         self.page = page;
         self.save_config();
+        if page != Page::Screenshots {
+            self.screenshot_thumbnails.clear();
+            self.pending_screenshot_thumbnails.clear();
+        }
+        if page != Page::Discover {
+            self.thumbnails.clear();
+            self.pending_thumbs.clear();
+        }
+        if page != Page::Instances {
+            self.patch_notes = HashMap::new();
+            self.patch_notes_loaded = false;
+        }
+        if page != Page::Worlds {
+            self.worlds = WorldsUiState::default();
+        }
         match page {
             Page::Library => self.refresh_library(),
             Page::Screenshots => self.refresh_screenshots(),
@@ -813,6 +876,46 @@ impl AppState {
         self.notice_at = Some(Instant::now());
     }
 
+    fn ctx_follow(ctx: egui::Context) {
+        std::thread::spawn(move || {
+            for _ in 0..600 {
+                if ctx.input(|i| i.pointer.any_released()) {
+                    break;
+                }
+                ctx.request_repaint_after(std::time::Duration::from_millis(90));
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+        });
+    }
+
+    pub fn begin_row_activity(&mut self, file_name: &str, label: &str) {
+        self.row_activity.insert(
+            file_name.to_string(),
+            RowActivity {
+                label: label.to_string(),
+                downloaded: 0,
+                total: None,
+                finished: None,
+            },
+        );
+        Self::ctx_follow(self.egui_ctx.clone());
+        self.egui_ctx.request_repaint();
+    }
+
+    pub fn end_row_activity(&mut self, file_name: &str, ok: bool) {
+        if let Some(entry) = self.row_activity.get_mut(file_name) {
+            entry.finished = Some(ok);
+        }
+        self.egui_ctx.request_repaint();
+    }
+
+    #[must_use]
+    pub fn row_is_busy(&self, file_name: &str) -> bool {
+        self.row_activity
+            .get(file_name)
+            .is_some_and(|entry| entry.finished.is_none())
+    }
+
     pub fn fail(&mut self, msg: impl Into<String>) {
         self.error_dialog = msg.into();
         tracing::error!("{}", self.error_dialog);
@@ -908,12 +1011,11 @@ impl AppState {
                     }
                 }
             }
-            entries.sort_by(|a, b| {
-                a.project_title
-                    .clone()
+            entries.sort_by_cached_key(|e| {
+                e.project_title
+                    .as_deref()
                     .unwrap_or_default()
                     .to_lowercase()
-                    .cmp(&b.project_title.clone().unwrap_or_default().to_lowercase())
             });
             self.mod_counts.insert(
                 id,
@@ -1221,6 +1323,39 @@ impl AppState {
                     Err(e) => self.search_error = e,
                 }
             }
+            AppEvent::ClasspathResolved(id, cp) => {
+                if self.selected_instance.as_deref() == Some(id.as_str()) {
+                    self.classpath_preview = Some(cp);
+                }
+            }
+            AppEvent::AppCdsRecorded(id) => {
+                if let Some(mut cfg) = self.instance_list.iter().find(|c| c.id == id).cloned() {
+                    if cfg.appcds_pending {
+                        cfg.appcds_pending = false;
+                        let _ = self.instances.save(&cfg);
+                        self.refresh_instances();
+                        if crate::app::appcds::archive_exists(&self.instances, &id) {
+                            if let Some(cp) = self.classpath_preview.clone() {
+                                crate::app::appcds::write_stamp(&self.instances, &id, &cp);
+                                self.notify(
+                                    "Startup archive recorded. It applies from next launch.",
+                                );
+                            } else {
+                                self.notify(
+                                    "Startup archive recorded. Launch the game once so the \
+                                     archive can be verified, then use it from the launch after.",
+                                );
+                            }
+                            self.notify("Startup archive recorded. It applies from next launch.");
+                        } else {
+                            self.notify(
+                                "Could not record a startup archive for this instance. It still \
+                                 launches normally, just without the speed-up.",
+                            );
+                        }
+                    }
+                }
+            }
             AppEvent::ProjectDetail(slug, r) => {
                 if self.detail_slug.as_deref() == Some(slug.as_str()) {
                     self.detail_loading = false;
@@ -1409,9 +1544,25 @@ impl AppState {
                 match r {
                     Ok(files) => {
                         self.notify(format!("Installed {} file(s)", files.len()));
+                        for file in &files {
+                            self.end_row_activity(file, true);
+                        }
                         self.refresh_library();
+                        self.updates.retain(|u| !files.contains(&u.file_name));
+                        if self.updates.is_empty() {
+                            self.updates_summary.clear();
+                            self.updates_checked = true;
+                        } else {
+                            self.updates_summary =
+                                format!("{} update(s) still available.", self.updates.len());
+                        }
                     }
-                    Err(e) => self.fail(e),
+                    Err(e) => {
+                        for key in self.row_activity.keys().cloned().collect::<Vec<_>>() {
+                            self.end_row_activity(&key, false);
+                        }
+                        self.fail(e);
+                    }
                 }
             }
             AppEvent::PackDone(r) => {
@@ -1436,13 +1587,26 @@ impl AppState {
                 match result {
                     Ok(scan) => {
                         self.updates = scan.updates;
+                        let checked_sources =
+                            if scan.curseforge_checked > 0 && scan.modrinth_checked > 0 {
+                                format!(
+                                    "Checked {} items ({} Modrinth, {} CurseForge).",
+                                    scan.checked, scan.modrinth_checked, scan.curseforge_checked
+                                )
+                            } else if scan.curseforge_checked > 0 {
+                                format!("Checked {} CurseForge item(s).", scan.checked)
+                            } else if scan.modrinth_checked > 0 {
+                                format!("Checked {} Modrinth item(s).", scan.checked)
+                            } else {
+                                format!("Checked {} item(s).", scan.checked)
+                            };
                         self.updates_summary = format!(
-                            "Checked {} Modrinth items. {} update(s) available.{}",
-                            scan.checked,
+                            "{} {} update(s) available.{}",
+                            checked_sources,
                             self.updates.len(),
                             if scan.untracked > 0 {
                                 format!(
-                                    " {} manually added item(s) cannot be checked.",
+                                    " {} manual item(s) could not be identified.",
                                     scan.untracked
                                 )
                             } else {
@@ -1458,6 +1622,7 @@ impl AppState {
                                 scan.errors.join("; ")
                             )
                         };
+                        self.refresh_library();
                     }
                     Err(error) => {
                         self.updates.clear();
@@ -1573,6 +1738,10 @@ impl AppState {
                     self.handle_game_crash(&id, code, log_file.as_deref(), launched_at);
                 }
                 self.refresh_instances();
+                if self.log_lines.len() > 300 {
+                    let keep_from = self.log_lines.len() - 300;
+                    self.log_lines.drain(..keep_from);
+                }
                 if !self.playing.values().any(|p| *p) {
                     self.launcher_hidden = false;
                     self.launcher_minimized = false;
@@ -1633,15 +1802,64 @@ impl AppState {
                 self.launcher_update_download_loading = false;
                 match result {
                     Ok(path) => {
-                        self.launcher_update_downloaded = Some(path.clone());
-                        self.notify("Update downloaded. Starting installer...");
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = std::process::Command::new(&path).spawn();
-                        }
+                        self.launcher_update_downloaded = Some(path);
+                        self.notify("Update downloaded! Click 'Restart to update' to apply.");
                     }
                     Err(error) => self.launcher_update_download_error = Some(error),
                 }
+            }
+            AppEvent::MicrosoftDeviceCode(result) => {
+                if self.ms_login_cancel.is_none() {
+                    return;
+                }
+                match result {
+                    Ok(code) => {
+                        self.ms_device_code = Some(code);
+                        self.ms_login_loading = true;
+                        self.ms_login_error = None;
+                    }
+                    Err(err) => {
+                        self.ms_login_cancel = None;
+                        self.ms_login_loading = false;
+                        self.ms_login_error = Some(err);
+                    }
+                }
+            }
+            AppEvent::MicrosoftLoginDone(result) => {
+                if self.ms_login_cancel.is_none() {
+                    return;
+                }
+                self.ms_login_cancel = None;
+                self.ms_login_loading = false;
+                self.ms_device_code = None;
+                match result {
+                    Ok(profile) => {
+                        self.notify(format!(
+                            "Welcome, {}! Microsoft account linked.",
+                            profile.username
+                        ));
+                        self.config.microsoft_profile = Some(profile);
+                        if self.page == Page::Onboarding {
+                            if self.onboarding_use_microsoft {
+                                self.config.use_microsoft_auth = true;
+                                if self.onboarding_step == 1 {
+                                    self.onboarding_step = 2;
+                                }
+                            }
+                        } else {
+                            self.config.use_microsoft_auth = true;
+                        }
+                        self.save_config();
+                    }
+                    Err(err) => {
+                        if self.page != Page::Onboarding || self.onboarding_use_microsoft {
+                            self.ms_login_error = Some(err);
+                        }
+                    }
+                }
+            }
+            AppEvent::MicrosoftSessionRefreshed(profile) => {
+                self.config.microsoft_profile = Some(profile);
             }
             AppEvent::PlayLog(line) => {
                 self.log_lines.push(line);
@@ -1786,6 +2004,7 @@ impl AppState {
         self.detail_loading = false;
         self.detail_versions_loading = false;
         self.detail_version_pick.clear();
+        self.markdown_blocks.clear();
         self.search_loading = true;
         self.search_error.clear();
         let mr = self.mr.clone();
@@ -1802,6 +2021,61 @@ impl AppState {
         let sort = self.search.sort.api_value().to_string();
         let offset = self.search.offset;
         let slots = self.metadata_slots.clone();
+        if self.discover_source == DiscoverSource::CurseForge {
+            let cf = crate::curseforge::CurseForgeClient::with_server(
+                self.http.clone(),
+                &self.config.curseforge.api_key,
+                &self.config.curseforge.custom_endpoint,
+            );
+            let class_id =
+                crate::curseforge::class_id_for(&pt).unwrap_or(crate::curseforge::class::MODS);
+            let sort_field = match self.search.sort {
+                crate::modrinth::search::SortOrder::Relevance => {
+                    crate::curseforge::sort::POPULARITY
+                }
+                crate::modrinth::search::SortOrder::Downloads => {
+                    crate::curseforge::sort::TOTAL_DOWNLOADS
+                }
+                crate::modrinth::search::SortOrder::Newest => crate::curseforge::sort::LAST_UPDATED,
+                crate::modrinth::search::SortOrder::Updated => {
+                    crate::curseforge::sort::LAST_UPDATED
+                }
+            };
+            self.runtime.spawn(async move {
+                let Ok(_permit) = slots.acquire_owned().await else {
+                    return;
+                };
+                let r = cf
+                    .search(
+                        &q,
+                        class_id,
+                        if gv.is_empty() { None } else { Some(&gv) },
+                        if loader.is_empty() {
+                            None
+                        } else {
+                            Some(&loader)
+                        },
+                        sort_field,
+                        offset,
+                        24,
+                    )
+                    .await
+                    .map(|page| crate::modrinth::models::SearchResponse {
+                        hits: page
+                            .data
+                            .iter()
+                            .map(crate::curseforge::to_search_result)
+                            .collect(),
+                        offset: page.pagination.index,
+                        limit: page.pagination.page_size,
+                        total_hits: page.pagination.total_count,
+                    })
+                    .map_err(|e| e.user_message());
+                let _ = tx.send(AppEvent::SearchDone(generation, r));
+            });
+            return;
+        }
+
         self.runtime.spawn(async move {
             let Ok(_permit) = slots.acquire_owned().await else {
                 return;
@@ -1887,6 +2161,40 @@ impl AppState {
         self.launcher_update_downloaded = None;
         self.launcher_update_download_error = None;
         crate::app::tasks::download_launcher_update(self, url, info.latest_version.clone());
+    }
+
+    pub fn start_microsoft_login(&mut self) {
+        self.cancel_microsoft_login();
+        self.ms_login_loading = true;
+        self.ms_login_error = None;
+        self.ms_device_code = None;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.ms_login_cancel = Some(cancel.clone());
+        crate::app::tasks::start_microsoft_login(self, cancel);
+    }
+
+    pub fn cancel_microsoft_login(&mut self) {
+        if let Some(c) = self.ms_login_cancel.take() {
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.ms_login_loading = false;
+        self.ms_device_code = None;
+        self.ms_login_error = None;
+    }
+
+    pub fn replay_onboarding(&mut self) {
+        self.cancel_microsoft_login();
+        self.config.completed_onboarding = false;
+        self.onboarding_step = 0;
+        self.onboarding_error.clear();
+        if self.onboarding_user.is_empty() {
+            if let Some(p) = &self.config.profile {
+                self.onboarding_user = p.username.clone();
+            }
+        }
+        self.onboarding_use_microsoft =
+            self.config.use_microsoft_auth && self.config.microsoft_profile.is_some();
+        self.page = Page::Onboarding;
     }
 
     pub fn is_boost_active(&self) -> bool {

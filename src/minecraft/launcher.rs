@@ -34,6 +34,7 @@ pub struct LaunchContext {
     pub uuid: uuid::Uuid,
 
     pub access_token: String,
+    pub user_type: String,
     pub memory_min_mb: u64,
     pub memory_max_mb: u64,
     pub resolution: Option<(u32, u32)>,
@@ -42,6 +43,26 @@ pub struct LaunchContext {
     pub extra_game_args: String,
     pub log_file: PathBuf,
     pub skins_restorer_compat: bool,
+    pub appcds: AppCds,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AppCds {
+    #[default]
+    Off,
+    Record(PathBuf),
+    Use(PathBuf),
+}
+
+#[must_use]
+pub fn blocking_classpath_dir(cp_entries: &[PathBuf]) -> Option<&Path> {
+    cp_entries.iter().find_map(|entry| {
+        if entry.is_dir() && std::fs::read_dir(entry).is_ok_and(|mut d| d.next().is_some()) {
+            Some(entry.as_path())
+        } else {
+            None
+        }
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +70,7 @@ pub struct LaunchPlan {
     pub java_exe: PathBuf,
     pub args: Vec<String>,
     pub cwd: PathBuf,
+    pub appcds_note: Option<String>,
 }
 
 #[must_use]
@@ -106,8 +128,12 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         auth_uuid: ctx.uuid.hyphenated().to_string(),
         auth_uuid_undashed: ctx.uuid.as_simple().to_string(),
         auth_access_token: ctx.access_token.clone(),
-        user_type: if ctx.skins_restorer_compat {
+        user_type: if ctx.skins_restorer_compat
+            && (ctx.user_type == "legacy" || ctx.user_type.is_empty())
+        {
             "mojang".to_string()
+        } else if !ctx.user_type.is_empty() {
+            ctx.user_type.clone()
         } else {
             "legacy".to_string()
         },
@@ -176,6 +202,40 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         }
     }
 
+    let mut appcds_note = None;
+    match (&ctx.appcds, blocking_classpath_dir(&cp_entries)) {
+        (_, Some(dir)) => {
+            let note = format!(
+                "Startup archive skipped: the classpath contains a folder that is not empty \
+                 ({}). The JVM cannot archive classes that way.",
+                dir.display()
+            );
+            tracing::warn!("{note}");
+            if !matches!(ctx.appcds, AppCds::Off) {
+                appcds_note = Some(note);
+            }
+        }
+        (AppCds::Record(path), None) => {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            jvm.push(format!("-XX:ArchiveClassesAtExit={}", path.display()));
+        }
+        (AppCds::Use(path), None) => {
+            if path.is_file() {
+                jvm.push(format!("-XX:SharedArchiveFile={}", path.display()));
+                jvm.push("-Xshare:auto".to_string());
+                jvm.push(format!(
+                    "-Xlog:cds=warning:file={}:time,uptime",
+                    path.with_extension("cds.log").display()
+                ));
+            } else {
+                tracing::debug!("startup archive enabled but none recorded yet");
+            }
+        }
+        (AppCds::Off, None) => {}
+    }
+
     let mut game: Vec<String> = Vec::new();
     if let Some(args) = &ctx.version.arguments {
         game.extend(expand_args(&args.game, &features, &map));
@@ -208,6 +268,7 @@ pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
         java_exe: ctx.java_exe.clone(),
         args,
         cwd: ctx.game_dir.clone(),
+        appcds_note,
     })
 }
 
@@ -576,6 +637,7 @@ mod tests {
         LaunchContext {
             version: minimal_version(),
             version_id: "1.21".into(),
+            appcds: AppCds::Off,
             game_dir: PathBuf::from("/tmp/game"),
             assets_dir: PathBuf::from("/tmp/assets"),
             libraries_dir: PathBuf::from("/tmp/libraries"),
@@ -585,6 +647,7 @@ mod tests {
             username: "Steve".into(),
             uuid: uuid::Uuid::nil(),
             access_token: "token".into(),
+            user_type: "legacy".into(),
             memory_min_mb: 512,
             memory_max_mb: 2048,
             resolution: None,
@@ -611,6 +674,15 @@ mod tests {
         assert!(!plan_legacy
             .args
             .contains(&"-Dskinsrestorer.compat=true".to_string()));
+    }
+
+    #[test]
+    fn microsoft_account_preserves_msa_user_type() {
+        let mut c = ctx();
+        c.user_type = "msa".into();
+        c.skins_restorer_compat = true;
+        let plan = build_launch_plan(&c).unwrap();
+        assert!(plan.args.contains(&"msa".to_string()));
     }
 
     #[test]
@@ -697,6 +769,62 @@ mod tests {
         assert_eq!(
             parse_reg_query_value(text, r"C:\Program Files\Other\bin\javaw.exe"),
             None
+        );
+    }
+}
+
+#[cfg(test)]
+mod appcds_tests {
+    use super::{blocking_classpath_dir, AppCds};
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_jar_classpath_does_not_block_archiving() {
+        let temp = tempfile::tempdir().unwrap();
+        let jar = temp.path().join("some-library.jar");
+        std::fs::write(&jar, b"PK").unwrap();
+        assert_eq!(blocking_classpath_dir(&[jar]), None);
+    }
+
+    #[test]
+    fn a_non_empty_directory_blocks_archiving() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("classes");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Something.class"), b"x").unwrap();
+        assert_eq!(
+            blocking_classpath_dir(std::slice::from_ref(&dir)),
+            Some(dir.as_path())
+        );
+    }
+
+    #[test]
+    fn an_empty_directory_is_fine() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(blocking_classpath_dir(&[dir]), None);
+    }
+
+    #[test]
+    fn a_missing_entry_does_not_block_archiving() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(blocking_classpath_dir(&[temp.path().join("gone")]), None);
+    }
+
+    #[test]
+    fn off_is_the_default() {
+        assert_eq!(AppCds::default(), AppCds::Off);
+    }
+
+    #[test]
+    fn record_and_use_carry_their_path() {
+        let p = PathBuf::from("/tmp/game.jsa");
+        assert_eq!(AppCds::Record(p.clone()), AppCds::Record(p.clone()));
+        assert_eq!(AppCds::Use(p.clone()), AppCds::Use(p));
+        assert_ne!(
+            AppCds::Use(PathBuf::from("/a")),
+            AppCds::Record(PathBuf::from("/a"))
         );
     }
 }

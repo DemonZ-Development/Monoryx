@@ -12,7 +12,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     page_header(
         ui,
         "Discover",
-        "Explore mods, modpacks, resource packs and shaders from Modrinth.",
+        "Explore mods, modpacks, resource packs and shaders.",
     );
 
     if state.discover_tab != DiscoverTab::Modpacks {
@@ -139,17 +139,33 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.label(RichText::new("Source:").size(12.0).color(TEXT2));
-        ui.label(RichText::new("Modrinth").size(12.0).color(TEXT));
-        badge(ui, "CurseForge coming soon");
-        if ui
-            .link("Learn more")
-            .on_hover_text("CurseForge browsing is on the way")
-            .clicked()
+        for src in [
+            crate::app::state::DiscoverSource::Modrinth,
+            crate::app::state::DiscoverSource::CurseForge,
+        ] {
+            let active = state.discover_source == src;
+            if crate::ui::components::tab_button(ui, src.label(), active).clicked() && !active {
+                state.discover_source = src;
+                state.search.offset = 0;
+                state.run_search();
+            }
+        }
+        if state.discover_source == crate::app::state::DiscoverSource::CurseForge
+            && !state.config.curseforge.is_configured()
         {
-            let _ = open::that("https://www.curseforge.com/minecraft");
+            crate::ui::components::badge_warning(ui, "API key required");
+            if ui.link("Configure in Settings").clicked() {
+                state.set_page(Page::Settings);
+            }
         }
     });
     ui.add_space(8.0);
+    let search_placeholder =
+        if state.discover_source == crate::app::state::DiscoverSource::CurseForge {
+            "Search CurseForge for mods, modpacks, resource packs…"
+        } else {
+            "Search Modrinth for mods, modpacks, resource packs…"
+        };
     egui::Frame::new()
         .fill(crate::ui::theme::palette(ui.ctx()).elevated)
         .stroke(Stroke::new(
@@ -165,7 +181,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     "discover-search",
                     &mut state.search.query,
                     crate::ui::components::limits::SEARCH,
-                    "Search Modrinth for mods, modpacks, resource packs…",
+                    search_placeholder,
                 );
                 if _resp.changed() {
                     state.search_debounce = Some(std::time::Instant::now());
@@ -330,11 +346,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     if state.search_loading {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(
-                RichText::new("Searching Modrinth...")
-                    .size(12.5)
-                    .color(TEXT2),
-            );
+            let label = match state.discover_source {
+                crate::app::state::DiscoverSource::Modrinth => "Searching Modrinth...",
+                crate::app::state::DiscoverSource::CurseForge => "Searching CurseForge...",
+            };
+            ui.label(RichText::new(label).size(12.5).color(TEXT2));
         });
         thin_progress(ui, None);
         ui.add_space(6.0);
@@ -351,6 +367,13 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     ui.label(RichText::new(&state.search_error).color(DANGER));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Retry").clicked() {
+                            state.run_search();
+                        }
+                        if state.discover_source == crate::app::state::DiscoverSource::CurseForge
+                            && ui.button("Switch to Modrinth").clicked()
+                        {
+                            state.discover_source = crate::app::state::DiscoverSource::Modrinth;
+                            state.search_error.clear();
                             state.run_search();
                         }
                     });
@@ -633,8 +656,18 @@ fn show_hit_summary(
                 .library_entries
                 .iter()
                 .find(|entry| {
-                    entry.project_slug.as_deref() == Some(&hit.slug)
-                        && entry.kind.as_str() == hit.project_type
+                    if entry.kind.as_str() != hit.project_type {
+                        return false;
+                    }
+                    if entry.project_slug.as_deref() == Some(&hit.slug) {
+                        return true;
+                    }
+                    if let Some(title) = &entry.project_title {
+                        if title.eq_ignore_ascii_case(&hit.title) {
+                            return true;
+                        }
+                    }
+                    false
                 })
                 .cloned();
 
@@ -852,8 +885,18 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
         }
         ui.add_space(8.0);
         let installed = state.library_entries.iter().any(|entry| {
-            entry.project_slug.as_deref() == Some(p.slug.as_str())
-                && entry.kind.as_str() == p.project_type
+            if entry.kind.as_str() != p.project_type {
+                return false;
+            }
+            if entry.project_slug.as_deref() == Some(p.slug.as_str()) {
+                return true;
+            }
+            if let Some(title) = &entry.project_title {
+                if title.eq_ignore_ascii_case(&p.title) {
+                    return true;
+                }
+            }
+            false
         });
         let install_label = match (installed, state.detail_version_pick.is_empty()) {
             (true, true) => "Reinstall newest compatible",
@@ -939,7 +982,13 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
                 state.global_status = format!("Installing {}...", p.title);
             }
             if detail_button(ui, "Open in browser", false, true, control_width).clicked() {
-                let _ = open::that(format!("https://modrinth.com/project/{}", p.slug));
+                if crate::curseforge::is_curseforge_slug(&p.slug) {
+                    if let Some(id) = crate::curseforge::id_from_slug(&p.slug) {
+                        let _ = open::that(format!("https://www.curseforge.com/projects/{id}"));
+                    }
+                } else {
+                    let _ = open::that(format!("https://modrinth.com/project/{}", p.slug));
+                }
             }
         });
         if !p.gallery.is_empty() {

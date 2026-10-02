@@ -19,6 +19,8 @@ pub struct InstallRequest {
     pub minecraft_version: String,
     pub loader: String,
     pub version_id: Option<String>,
+    pub curseforge_api_key: Option<String>,
+    pub curseforge_endpoint: Option<String>,
 }
 
 pub struct InstallOutcome {
@@ -60,7 +62,27 @@ pub async fn install_project(
     report("Resolving version...".to_string(), 0, 1);
     let cfg = manager.get(instance_id)?;
     let loader_id_outer = modrinth_loader_id(&req.loader);
-    let versions = mr.project_versions(&req.project_id, None, None).await?;
+    let versions = if crate::curseforge::is_curseforge_slug(&req.project_id) {
+        let cf_id = crate::curseforge::id_from_slug(&req.project_id)
+            .ok_or_else(|| MonoryxError::Modrinth("Invalid CurseForge ID".to_string()))?;
+        let api_key = req.curseforge_api_key.as_deref().unwrap_or("");
+        let endpoint = req
+            .curseforge_endpoint
+            .as_deref()
+            .unwrap_or(crate::curseforge::DEFAULT_SERVICE_URL);
+        let cf = crate::curseforge::CurseForgeClient::with_server(
+            dm.client().clone(),
+            api_key,
+            endpoint,
+        );
+        let files = cf.files(cf_id, None, None).await?;
+        files
+            .iter()
+            .map(crate::curseforge::to_project_version)
+            .collect::<Vec<_>>()
+    } else {
+        mr.project_versions(&req.project_id, None, None).await?
+    };
     if versions.is_empty() {
         return Err(MonoryxError::Modrinth(
             "no versions found for this project".to_string(),
@@ -175,7 +197,10 @@ pub async fn install_project(
         let file = primary_file(ver).ok_or_else(|| {
             MonoryxError::Modrinth("version has no downloadable files".to_string())
         })?;
-        if file.sha512().is_none() && file.sha1().is_none() {
+        if file.sha512().is_none()
+            && file.sha1().is_none()
+            && !crate::curseforge::is_curseforge_slug(&req.project_id)
+        {
             return Err(MonoryxError::Modrinth(format!(
                 "{} has no file checksum, so the download cannot be verified",
                 file.filename
@@ -207,6 +232,8 @@ pub async fn install_project(
         }
         let title = if ver.project_id == chosen.project_id {
             Some(req.project_title.clone())
+        } else if crate::curseforge::is_curseforge_slug(&ver.project_id) {
+            Some(ver.name.clone())
         } else {
             mr.project(&ver.project_id).await.ok().map(|p| p.title)
         };

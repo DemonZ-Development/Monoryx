@@ -111,6 +111,8 @@ pub struct InstanceConfig {
     pub play_time_secs: u64,
     #[serde(default)]
     pub boost_mode: Option<bool>,
+    #[serde(default)]
+    pub appcds_pending: bool,
 }
 
 fn default_min() -> u64 {
@@ -150,6 +152,7 @@ impl InstanceConfig {
             total_plays: 0,
             play_time_secs: 0,
             boost_mode: None,
+            appcds_pending: false,
         }
     }
 

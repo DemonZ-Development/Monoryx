@@ -141,6 +141,8 @@ pub enum AppEvent {
     PatchNoteFull(String, std::result::Result<String, String>),
     LoaderVersions(LoaderKind, String, std::result::Result<Vec<String>, String>),
     SearchDone(u64, std::result::Result<SearchResponse, String>),
+    AppCdsRecorded(String),
+    ClasspathResolved(String, Vec<std::path::PathBuf>),
     ProjectDetail(String, std::result::Result<Project, String>),
     ProjectVersions(String, std::result::Result<Vec<ProjectVersion>, String>),
     Thumbnail(String, std::result::Result<DecodedImage, String>),
@@ -216,6 +218,9 @@ pub enum AppEvent {
     NexeuBackupCreated(u64, String, std::result::Result<(), String>),
     NexeuCommand(u64, std::result::Result<(), String>),
     NexeuPower(u64, std::result::Result<String, String>),
+    MicrosoftDeviceCode(std::result::Result<crate::account::microsoft::DeviceCodeResponse, String>),
+    MicrosoftLoginDone(std::result::Result<crate::account::microsoft::MicrosoftProfile, String>),
+    MicrosoftSessionRefreshed(crate::account::microsoft::MicrosoftProfile),
 }
 
 #[derive(Debug, Clone)]

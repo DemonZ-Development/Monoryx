@@ -72,6 +72,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             state.updates_checked = false;
             state.updates_summary.clear();
             state.updates_error.clear();
+            state.updates_instance = state.selected_instance.clone();
             crate::app::tasks::check_updates(state);
         }
         if !state.updates.is_empty()
@@ -111,23 +112,52 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         return;
     }
     let enabled_count = entries.iter().filter(|entry| entry.enabled).count();
+    let curseforge_count = entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .project_id
+                .as_deref()
+                .map(crate::curseforge::is_curseforge_slug)
+                .unwrap_or(false)
+        })
+        .count();
     let modrinth_count = entries
         .iter()
-        .filter(|entry| entry.project_id.is_some())
+        .filter(|entry| {
+            entry
+                .project_id
+                .as_deref()
+                .map(|id| !crate::curseforge::is_curseforge_slug(id))
+                .unwrap_or(false)
+        })
         .count();
+    let manual_count = entries
+        .len()
+        .saturating_sub(curseforge_count + modrinth_count);
     let kind_label = match state.library_filter {
         ContentKind::Mod => "mods",
         ContentKind::Resourcepack => "resource packs",
         ContentKind::Shader => "shaders",
     };
+    let source_summary = if curseforge_count > 0 {
+        format!(
+            "{} from Modrinth  ·  {} from CurseForge  ·  {} manual",
+            modrinth_count, curseforge_count, manual_count
+        )
+    } else {
+        format!(
+            "{} from Modrinth  ·  {} manual",
+            modrinth_count, manual_count
+        )
+    };
     ui.label(
         RichText::new(format!(
-            "{} {}  ·  {} enabled  ·  {} from Modrinth  ·  {} manual",
+            "{} {}  ·  {} enabled  ·  {}",
             entries.len(),
             kind_label,
             enabled_count,
-            modrinth_count,
-            entries.len() - modrinth_count
+            source_summary
         ))
         .size(11.5)
         .color(TEXT2),
@@ -140,39 +170,65 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 .iter()
                 .any(|update| update.file_name == e.file_name && update.kind == e.kind);
             let width = ui.available_width();
-            if width >= 950.0 {
+            if width >= 960.0 {
                 ui.horizontal(|ui| {
+                    let id_width = (width * 0.28).clamp(200.0, 320.0);
+                    let details_width = (width * 0.18).clamp(160.0, 200.0);
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width * 0.35, 0.0),
+                        egui::vec2(id_width, 0.0),
                         egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| entry_identity(ui, &e),
+                        |ui| {
+                            ui.set_min_width(id_width);
+                            entry_identity(ui, &e);
+                        },
                     );
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width * 0.20, 0.0),
+                        egui::vec2(details_width, 0.0),
                         egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| entry_details(ui, &e, has_update),
+                        |ui| {
+                            ui.set_min_width(details_width);
+                            entry_details(ui, &e, has_update);
+                        },
                     );
+                    let actions_width = ui.available_width();
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width * 0.45 - 24.0, 0.0),
+                        egui::vec2(actions_width, 0.0),
                         egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| entry_actions(ui, state, &cfg.id, &e, true),
+                        |ui| {
+                            entry_actions(ui, state, &cfg.id, &e, true);
+                        },
                     );
                 });
             } else {
                 ui.horizontal(|ui| {
+                    let id_width = (width * 0.55).max(180.0);
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width * 0.60, 0.0),
+                        egui::vec2(id_width, 0.0),
                         egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| entry_identity(ui, &e),
+                        |ui| {
+                            ui.set_min_width(id_width);
+                            entry_identity(ui, &e);
+                        },
                     );
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width * 0.40 - 10.0, 0.0),
+                        egui::vec2(ui.available_width(), 0.0),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| entry_details(ui, &e, has_update),
                     );
                 });
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| entry_actions(ui, state, &cfg.id, &e, false));
+                ui.add_space(6.0);
+                if width >= 520.0 {
+                    let actions_width = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(actions_width, 0.0),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            entry_actions(ui, state, &cfg.id, &e, true);
+                        },
+                    );
+                } else {
+                    ui.horizontal_wrapped(|ui| entry_actions(ui, state, &cfg.id, &e, false));
+                }
             }
         });
         ui.add_space(4.0);
@@ -181,9 +237,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
 fn entry_identity(ui: &mut egui::Ui, entry: &InstalledEntry) {
     let title = entry.project_title.as_deref().unwrap_or(&entry.file_name);
-    ui.label(RichText::new(title).size(15.0).strong().color(TEXT));
+    ui.add(egui::Label::new(RichText::new(title).size(15.0).strong().color(TEXT)).truncate());
     if title != entry.file_name {
-        ui.label(RichText::new(&entry.file_name).size(11.5).color(TEXT2));
+        ui.add(
+            egui::Label::new(RichText::new(&entry.file_name).size(11.5).color(TEXT2)).truncate(),
+        );
     }
     if entry.size > 0 {
         ui.label(
@@ -195,17 +253,24 @@ fn entry_identity(ui: &mut egui::Ui, entry: &InstalledEntry) {
 }
 
 fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
-    let source = if entry.project_id.is_some() {
-        "MODRINTH"
+    let source = if let Some(pid) = entry.project_id.as_deref() {
+        if crate::curseforge::is_curseforge_slug(pid) {
+            "CURSEFORGE"
+        } else {
+            "MODRINTH"
+        }
     } else {
         "MANUAL FILE"
     };
     ui.label(RichText::new(source).size(10.5).strong().color(MUTED));
     if let Some(version) = entry.version_number.as_deref() {
-        ui.label(
-            RichText::new(format!("Version {version}"))
-                .size(11.5)
-                .color(TEXT2),
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!("Version {version}"))
+                    .size(11.5)
+                    .color(TEXT2),
+            )
+            .truncate(),
         );
     }
     if !entry.game_version.is_empty() {
@@ -214,10 +279,13 @@ fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
         } else {
             format!(" · {}", entry.loader)
         };
-        ui.label(
-            RichText::new(format!("MC {}{loader}", entry.game_version))
-                .size(11.5)
-                .color(TEXT2),
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!("MC {}{loader}", entry.game_version))
+                    .size(11.5)
+                    .color(TEXT2),
+            )
+            .truncate(),
         );
     }
     let (status, color) = if has_update {
@@ -230,6 +298,15 @@ fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
     ui.label(RichText::new(status).size(11.5).color(color));
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EntryAction {
+    Update,
+    Reinstall,
+    Toggle,
+    OpenFolder,
+    Remove,
+}
+
 fn entry_actions(
     ui: &mut egui::Ui,
     state: &mut AppState,
@@ -237,14 +314,6 @@ fn entry_actions(
     entry: &InstalledEntry,
     right_aligned: bool,
 ) {
-    #[derive(Clone, Copy)]
-    enum Action {
-        Update,
-        Reinstall,
-        Toggle,
-        OpenFolder,
-        Remove,
-    }
     let update = state
         .updates
         .iter()
@@ -252,97 +321,216 @@ fn entry_actions(
         .cloned();
     let mut actions = Vec::with_capacity(5);
     if update.is_some() {
-        actions.push(Action::Update);
+        actions.push(EntryAction::Update);
     }
     if entry.project_id.is_some() {
-        actions.push(Action::Reinstall);
+        actions.push(EntryAction::Reinstall);
     }
-    actions.extend([Action::Toggle, Action::OpenFolder, Action::Remove]);
-    if right_aligned {
-        actions.reverse();
+    actions.extend([
+        EntryAction::Toggle,
+        EntryAction::OpenFolder,
+        EntryAction::Remove,
+    ]);
+
+    if !right_aligned {
+        for action in actions {
+            entry_action(ui, state, instance_id, entry, action, &update);
+        }
+        return;
     }
-    for action in actions {
-        match action {
-            Action::Update => {
-                if let Some(update) = &update {
-                    if content_primary_button(ui, &format!("Update to {}", update.new_version))
-                        .clicked()
-                    {
-                        crate::app::tasks::update_one(state, update.clone());
-                    }
-                }
-            }
-            Action::Reinstall => {
-                if let Some(project_id) = entry.project_id.clone() {
-                    let response = if update.is_some() {
-                        content_secondary_button(ui, "Reinstall")
-                    } else {
-                        content_primary_button(ui, "Reinstall")
-                    };
-                    if response.clicked() {
-                        crate::app::tasks::install_content(
-                            state,
-                            project_id.clone(),
-                            entry.project_slug.clone().unwrap_or(project_id),
-                            entry
-                                .project_title
-                                .clone()
-                                .unwrap_or_else(|| entry.file_name.clone()),
-                            entry.kind,
-                            None,
-                        );
-                    }
-                }
-            }
-            Action::Toggle => {
-                if content_secondary_button(ui, if entry.enabled { "Disable" } else { "Enable" })
-                    .clicked()
+
+    ui.spacing_mut().item_spacing.x = 6.0;
+    for action in actions.into_iter().rev() {
+        entry_action(ui, state, instance_id, entry, action, &update);
+    }
+}
+
+fn entry_action(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    instance_id: &str,
+    entry: &InstalledEntry,
+    action: EntryAction,
+    update: &Option<crate::modrinth::updates::UpdateInfo>,
+) {
+    match action {
+        EntryAction::Update => {
+            if let Some(update) = &update {
+                let busy = state.row_is_busy(&entry.file_name);
+                if crate::ui::components::action_button_with_feedback(
+                    ui,
+                    &format!("Update to {}", update.new_version),
+                    busy,
+                )
+                .clicked()
                 {
-                    let target = !entry.enabled;
-                    match state.instances.set_content_enabled(
-                        instance_id,
-                        &entry.file_name,
-                        entry.kind,
-                        target,
-                    ) {
-                        Ok(_) => {
-                            let store = crate::content::ContentStore::for_instance(
-                                &state.instances.instance_dir(instance_id),
-                            );
-                            if let Err(err) =
-                                store.set_enabled(entry.kind, &entry.file_name, target)
-                            {
-                                state.fail(err.user_message());
-                            }
-                            state.refresh_library();
-                        }
-                        Err(err) => state.fail(err.user_message()),
+                    state.begin_row_activity(&entry.file_name, "Updating");
+                    crate::app::tasks::update_one(state, update.clone());
+                }
+            }
+        }
+        EntryAction::Reinstall => {
+            if let Some(project_id) = entry.project_id.clone() {
+                let busy = state.row_is_busy(&entry.file_name);
+                let mut clicked = false;
+                ui.add_enabled_ui(!busy, |ui| {
+                    if content_secondary_button(ui, "Reinstall").clicked() {
+                        clicked = true;
                     }
-                }
-            }
-            Action::OpenFolder => {
-                if content_secondary_button(ui, "Open folder").clicked() {
-                    let dir = match entry.kind {
-                        ContentKind::Mod => state.instances.mods_dir(instance_id),
-                        ContentKind::Resourcepack => state.instances.resourcepacks_dir(instance_id),
-                        ContentKind::Shader => state.instances.shaderpacks_dir(instance_id),
-                    };
-                    let _ = open::that(dir);
-                }
-            }
-            Action::Remove => {
-                if crate::ui::components::danger_button(ui, "Remove").clicked() {
-                    state.pending_content_delete = Some((
-                        instance_id.to_string(),
-                        entry.kind,
-                        entry.file_name.clone(),
+                });
+                if clicked {
+                    state.begin_row_activity(&entry.file_name, "Installing");
+                    crate::app::tasks::install_content(
+                        state,
+                        project_id.clone(),
+                        entry.project_slug.clone().unwrap_or(project_id),
                         entry
                             .project_title
                             .clone()
                             .unwrap_or_else(|| entry.file_name.clone()),
-                    ));
+                        entry.kind,
+                        None,
+                    );
                 }
             }
+        }
+        EntryAction::Toggle => {
+            if content_secondary_button(ui, if entry.enabled { "Disable" } else { "Enable" })
+                .clicked()
+            {
+                let target = !entry.enabled;
+                match state.instances.set_content_enabled(
+                    instance_id,
+                    &entry.file_name,
+                    entry.kind,
+                    target,
+                ) {
+                    Ok(_) => {
+                        let store = crate::content::ContentStore::for_instance(
+                            &state.instances.instance_dir(instance_id),
+                        );
+                        if let Err(err) = store.set_enabled(entry.kind, &entry.file_name, target) {
+                            state.fail(err.user_message());
+                        }
+                        state.refresh_library();
+                    }
+                    Err(err) => state.fail(err.user_message()),
+                }
+            }
+        }
+        EntryAction::OpenFolder => {
+            if content_secondary_button(ui, "Open folder").clicked() {
+                let dir = match entry.kind {
+                    ContentKind::Mod => state.instances.mods_dir(instance_id),
+                    ContentKind::Resourcepack => state.instances.resourcepacks_dir(instance_id),
+                    ContentKind::Shader => state.instances.shaderpacks_dir(instance_id),
+                };
+                let _ = open::that(dir);
+            }
+        }
+        EntryAction::Remove => {
+            if crate::ui::components::danger_button(ui, "Remove").clicked() {
+                state.pending_content_delete = Some((
+                    instance_id.to_string(),
+                    entry.kind,
+                    entry.file_name.clone(),
+                    entry
+                        .project_title
+                        .clone()
+                        .unwrap_or_else(|| entry.file_name.clone()),
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::{ContentKind, InstalledEntry};
+    use crate::storage::paths::MonoryxPaths;
+
+    #[test]
+    fn library_renders_without_panicking_wide_and_narrow() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = MonoryxPaths::new(temp.path().into());
+        let manager = crate::instance::InstanceManager::new(paths.clone());
+        let inst = manager
+            .create(
+                "Test Instance".into(),
+                "1.21.1".into(),
+                crate::instance::LoaderKind::Fabric,
+                "0.16.14".into(),
+            )
+            .unwrap();
+
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, paths);
+        state.selected_instance = Some(inst.id.clone());
+        state.instance_list = vec![inst.clone()];
+        state.library_entries = vec![
+            InstalledEntry {
+                file_name: "test-mod-1.0.jar".to_string(),
+                kind: ContentKind::Mod,
+                enabled: true,
+                project_id: Some("test-mod".to_string()),
+                project_slug: Some("test-mod".to_string()),
+                project_title: Some("Test Mod".to_string()),
+                version_id: Some("v1".to_string()),
+                version_number: Some("1.0.0".to_string()),
+                file_hash_sha512: None,
+                file_hash_sha1: None,
+                installed_at: "2026-01-01".to_string(),
+                game_version: "1.21.1".to_string(),
+                loader: "fabric".to_string(),
+                size: 1024 * 1024,
+            },
+            InstalledEntry {
+                file_name: "manual-addon.jar".to_string(),
+                kind: ContentKind::Mod,
+                enabled: false,
+                project_id: None,
+                project_slug: None,
+                project_title: None,
+                version_id: None,
+                version_number: None,
+                file_hash_sha512: None,
+                file_hash_sha1: None,
+                installed_at: "2026-01-01".to_string(),
+                game_version: "".to_string(),
+                loader: "".to_string(),
+                size: 2048,
+            },
+        ];
+
+        state.updates = vec![crate::modrinth::updates::UpdateInfo {
+            file_name: "test-mod-1.0.jar".to_string(),
+            kind: ContentKind::Mod,
+            project_id: "test-mod".to_string(),
+            title: "Test Mod".to_string(),
+            current_version: "1.0.0".to_string(),
+            new_version: "1.1.0+fabric".to_string(),
+            new_version_id: "v2".to_string(),
+        }];
+
+        for width in [1536.0, 960.0, 860.0, 800.0, 480.0] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            show(&mut state, ctx, ui);
+                        });
+                    });
+                },
+            );
         }
     }
 }

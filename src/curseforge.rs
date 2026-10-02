@@ -1,7 +1,9 @@
 use crate::error::{MonoryxError, Result};
 use serde::{Deserialize, Serialize};
 
-pub const API_BASE: &str = "https://api.curseforge.com/v1";
+pub const DIRECT_API_BASE: &str = "https://api.curseforge.com/v1";
+pub const DEFAULT_SERVICE_URL: &str = "https://services.demonz.org/curseforge/v1";
+pub const API_BASE: &str = DIRECT_API_BASE;
 
 pub const GAME_ID: i32 = 432;
 
@@ -31,6 +33,7 @@ pub struct CurseForgeClient {
     http: reqwest::Client,
     ua: String,
     api_key: String,
+    server_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +124,10 @@ pub struct CfFile {
     pub dependencies: Vec<FileDependency>,
     #[serde(default)]
     pub mod_loader: Option<i32>,
+    #[serde(default)]
+    pub file_date: Option<String>,
+    #[serde(default)]
+    pub file_fingerprint: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,36 +229,78 @@ pub fn class_id_for(project_type: &str) -> Option<i32> {
 impl CurseForgeClient {
     #[must_use]
     pub fn new(http: reqwest::Client, api_key: &str) -> Self {
+        Self::with_server(http, api_key, DEFAULT_SERVICE_URL)
+    }
+
+    #[must_use]
+    pub fn with_server(http: reqwest::Client, api_key: &str, server_url: &str) -> Self {
+        let ep = server_url.trim().trim_end_matches('/');
+        let base = if ep.is_empty() {
+            DEFAULT_SERVICE_URL
+        } else {
+            ep
+        };
         Self {
             http,
             ua: crate::utils::net::modrinth_user_agent(),
             api_key: api_key.trim().to_string(),
+            server_url: base.to_string(),
         }
     }
 
     #[must_use]
     pub fn is_configured(&self) -> bool {
+        true
+    }
+
+    #[must_use]
+    pub fn has_custom_key(&self) -> bool {
         !self.api_key.is_empty()
     }
 
-    async fn get<T: serde::de::DeserializeOwned>(&self, path_and_query: &str) -> Result<T> {
-        if !self.is_configured() {
-            return Err(MonoryxError::Modrinth(
-                "CurseForge needs an API key. Add one in Settings.".to_string(),
-            ));
+    #[must_use]
+    pub fn effective_url(&self, path_and_query: &str) -> String {
+        if self.server_url != DEFAULT_SERVICE_URL {
+            format!("{}{path_and_query}", self.server_url)
+        } else if self.has_custom_key() {
+            format!("{DIRECT_API_BASE}{path_and_query}")
+        } else {
+            format!("{}{path_and_query}", self.server_url)
         }
-        let url = format!("{API_BASE}{path_and_query}");
+    }
+
+    async fn get<T: serde::de::DeserializeOwned>(&self, path_and_query: &str) -> Result<T> {
+        let has_key = self.has_custom_key();
+        let url = self.effective_url(path_and_query);
         let mut attempt = 0u32;
         loop {
             attempt += 1;
-            let resp = self
+            let mut req = self
                 .http
                 .get(&url)
                 .header(reqwest::header::USER_AGENT, &self.ua)
-                .header("x-api-key", &self.api_key)
-                .header(reqwest::header::ACCEPT, "application/json")
-                .send()
-                .await?;
+                .header(reqwest::header::ACCEPT, "application/json");
+            if has_key {
+                req = req.header("x-api-key", &self.api_key);
+            }
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(err) => {
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            300 * u64::from(attempt),
+                        ))
+                        .await;
+                        continue;
+                    }
+                    if err.is_connect() || err.is_timeout() {
+                        return Err(MonoryxError::Modrinth(
+                            "CurseForge server is offline or unreachable. Check your connection or use Modrinth.".to_string(),
+                        ));
+                    }
+                    return Err(MonoryxError::Http(err));
+                }
+            };
             let status = resp.status();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < 5 {
                 let wait = resp
@@ -263,21 +312,37 @@ impl CurseForgeClient {
                 tokio::time::sleep(std::time::Duration::from_secs(wait.min(10))).await;
                 continue;
             }
-            if status.is_server_error() && attempt < 4 {
-                tokio::time::sleep(std::time::Duration::from_millis(400 * u64::from(attempt)))
+            if status.is_server_error() && attempt < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(300 * u64::from(attempt)))
                     .await;
                 continue;
+            }
+            if status.is_server_error() {
+                return Err(MonoryxError::Modrinth(
+                    "CurseForge server is temporarily unavailable. Check back soon or switch to Modrinth.".to_string(),
+                ));
             }
             if status == reqwest::StatusCode::FORBIDDEN
                 || status == reqwest::StatusCode::UNAUTHORIZED
             {
+                if self.server_url != DEFAULT_SERVICE_URL {
+                    return Err(MonoryxError::Modrinth(
+                        "Custom CurseForge proxy authentication rejected. Check proxy configuration in Settings.".to_string(),
+                    ));
+                }
+                if has_key {
+                    return Err(MonoryxError::Modrinth(
+                        "CurseForge rejected your custom API key. Check it in Settings."
+                            .to_string(),
+                    ));
+                }
                 return Err(MonoryxError::Modrinth(
-                    "CurseForge rejected your API key. Check it in Settings.".to_string(),
+                    "CurseForge server authentication issue. Check back soon or switch to Modrinth.".to_string(),
                 ));
             }
             if !status.is_success() {
                 return Err(MonoryxError::Modrinth(format!(
-                    "CurseForge returned HTTP {status} for {url}"
+                    "CurseForge returned HTTP {status}"
                 )));
             }
             return Ok(resp.json::<T>().await?);
@@ -343,6 +408,174 @@ impl CurseForgeClient {
         let page: Paginated<CfFile> = self.get(&url).await?;
         Ok(page.data)
     }
+
+    async fn post<B: serde::Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        path_and_query: &str,
+        body: &B,
+    ) -> Result<T> {
+        let has_key = self.has_custom_key();
+        let url = self.effective_url(path_and_query);
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            let mut req = self
+                .http
+                .post(&url)
+                .header(reqwest::header::USER_AGENT, &self.ua)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .json(body);
+            if has_key {
+                req = req.header("x-api-key", &self.api_key);
+            }
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(err) => {
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            300 * u64::from(attempt),
+                        ))
+                        .await;
+                        continue;
+                    }
+                    if err.is_connect() || err.is_timeout() {
+                        return Err(MonoryxError::Modrinth(
+                            "CurseForge server is offline or unreachable. Check your connection or use Modrinth.".to_string(),
+                        ));
+                    }
+                    return Err(MonoryxError::Http(err));
+                }
+            };
+            let status = resp.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < 5 {
+                let wait = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(attempt as u64);
+                tokio::time::sleep(std::time::Duration::from_secs(wait.min(10))).await;
+                continue;
+            }
+            if status.is_server_error() && attempt < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(300 * u64::from(attempt)))
+                    .await;
+                continue;
+            }
+            if status.is_server_error() {
+                return Err(MonoryxError::Modrinth(
+                    "CurseForge server is temporarily unavailable. Check back soon or switch to Modrinth.".to_string(),
+                ));
+            }
+            if status == reqwest::StatusCode::FORBIDDEN
+                || status == reqwest::StatusCode::UNAUTHORIZED
+            {
+                if self.server_url != DEFAULT_SERVICE_URL {
+                    return Err(MonoryxError::Modrinth(
+                        "Custom CurseForge proxy authentication rejected. Check proxy configuration in Settings.".to_string(),
+                    ));
+                }
+                if has_key {
+                    return Err(MonoryxError::Modrinth(
+                        "CurseForge rejected your custom API key. Check it in Settings."
+                            .to_string(),
+                    ));
+                }
+                return Err(MonoryxError::Modrinth(
+                    "CurseForge server authentication issue. Check back soon or switch to Modrinth.".to_string(),
+                ));
+            }
+            if !status.is_success() {
+                return Err(MonoryxError::Modrinth(format!(
+                    "CurseForge returned HTTP {status}"
+                )));
+            }
+            return Ok(resp.json::<T>().await?);
+        }
+    }
+
+    pub async fn match_fingerprints(&self, fingerprints: &[u32]) -> Result<Vec<FingerprintMatch>> {
+        if fingerprints.is_empty() {
+            return Ok(Vec::new());
+        }
+        let body = serde_json::json!({ "fingerprints": fingerprints });
+        let envelope: DataEnvelope<FingerprintMatchResult> = self
+            .post(&format!("/fingerprints/{GAME_ID}"), &body)
+            .await?;
+        Ok(envelope.data.exact_matches)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FingerprintMatchResult {
+    #[serde(default)]
+    pub exact_matches: Vec<FingerprintMatch>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FingerprintMatch {
+    pub id: i64,
+    pub file: CfFile,
+    #[serde(default)]
+    pub latest_files: Vec<CfFile>,
+}
+
+#[must_use]
+pub fn curseforge_fingerprint(bytes: &[u8]) -> u32 {
+    let m: u32 = 0x5bd1e995;
+    let r: u32 = 24;
+
+    let mut filtered = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        if b != 0x9 && b != 0xa && b != 0xd && b != 0x20 {
+            filtered.push(b);
+        }
+    }
+
+    let len = filtered.len();
+    let mut h: u32 = 1 ^ (len as u32);
+
+    let mut i = 0;
+    while i + 4 <= len {
+        let mut k = u32::from_le_bytes([
+            filtered[i],
+            filtered[i + 1],
+            filtered[i + 2],
+            filtered[i + 3],
+        ]);
+        k = k.wrapping_mul(m);
+        k ^= k >> r;
+        k = k.wrapping_mul(m);
+
+        h = h.wrapping_mul(m);
+        h ^= k;
+        i += 4;
+    }
+
+    let rem = len - i;
+    if rem == 3 {
+        h ^= (filtered[i + 2] as u32) << 16;
+    }
+    if rem >= 2 {
+        h ^= (filtered[i + 1] as u32) << 8;
+    }
+    if rem >= 1 {
+        h ^= filtered[i] as u32;
+        h = h.wrapping_mul(m);
+    }
+
+    h ^= h >> 13;
+    h = h.wrapping_mul(m);
+    h ^= h >> 15;
+
+    h
+}
+
+pub fn curseforge_fingerprint_file(path: &std::path::Path) -> Result<u32> {
+    let bytes = std::fs::read(path)?;
+    Ok(curseforge_fingerprint(&bytes))
 }
 
 pub const SLUG_PREFIX: &str = "curseforge-";
@@ -404,6 +637,145 @@ pub fn to_search_result(project: &CfMod) -> crate::modrinth::models::SearchResul
     }
 }
 
+#[must_use]
+pub fn to_project(
+    project: &CfMod,
+    description: Option<String>,
+) -> crate::modrinth::models::Project {
+    let categories: Vec<String> = project.categories.iter().map(|c| c.slug.clone()).collect();
+    crate::modrinth::models::Project {
+        slug: slug_for(project.id),
+        title: project.name.clone(),
+        description: project.summary.clone(),
+        categories,
+        client_side: "required".to_string(),
+        server_side: "unknown".to_string(),
+        project_type: project_type_of(project.class_id).to_string(),
+        downloads: project.download_count,
+        icon_url: project.logo.as_ref().map(|l| l.url.clone()),
+        author: project.authors.first().map(|a| a.name.clone()),
+        license: Some(crate::modrinth::models::LicenseInfo {
+            id: "curseforge".to_string(),
+            name: "CurseForge".to_string(),
+            url: None,
+        }),
+        gallery: project
+            .screenshots
+            .iter()
+            .map(|s| crate::modrinth::models::GalleryImage {
+                url: s.url.clone(),
+                featured: false,
+                title: None,
+            })
+            .collect(),
+        body: description.or_else(|| project.description_html.clone()),
+        updated: project.date_modified.clone(),
+        versions: Vec::new(),
+        loaders: Vec::new(),
+        game_versions: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn to_project_version(file: &CfFile) -> crate::modrinth::models::ProjectVersion {
+    let mut hashes = std::collections::HashMap::new();
+    for h in &file.hashes {
+        if !h.value.is_empty() {
+            hashes.insert(
+                hash_algo_name(h.algo).to_string(),
+                h.value.to_ascii_lowercase(),
+            );
+        }
+    }
+    if let Some(md5) = &file.md5 {
+        if !md5.is_empty() && !hashes.contains_key("md5") {
+            hashes.insert("md5".to_string(), md5.to_ascii_lowercase());
+        }
+    }
+
+    let url = file.download_url.clone().unwrap_or_else(|| {
+        if file.id > 0 && !file.file_name.is_empty() {
+            format!(
+                "https://edge.forgecdn.net/files/{}/{}/{}",
+                file.id / 1000,
+                file.id % 1000,
+                file.file_name
+            )
+        } else {
+            String::new()
+        }
+    });
+    let version_type = match file.release_type {
+        1 => "release",
+        2 => "beta",
+        3 => "alpha",
+        _ => "release",
+    }
+    .to_string();
+
+    let mut loaders = match file.mod_loader {
+        Some(loader::FORGE) => vec!["forge".to_string()],
+        Some(loader::FABRIC) => vec!["fabric".to_string()],
+        Some(loader::QUILT) => vec!["quilt".to_string()],
+        Some(loader::NEOFORGE) => vec!["neoforge".to_string()],
+        _ => Vec::new(),
+    };
+    if loaders.is_empty() {
+        for gv in &file.game_versions {
+            let lower = gv.to_ascii_lowercase();
+            match lower.as_str() {
+                "forge" | "fabric" | "quilt" | "neoforge" if !loaders.contains(&lower) => {
+                    loaders.push(lower);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mc_versions: Vec<String> = file
+        .game_versions
+        .iter()
+        .filter(|gv| gv.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .cloned()
+        .collect();
+    let effective_versions = if mc_versions.is_empty() {
+        file.game_versions.clone()
+    } else {
+        mc_versions
+    };
+
+    crate::modrinth::models::ProjectVersion {
+        id: file.id.to_string(),
+        project_id: slug_for(file.mod_id),
+        author_id: String::new(),
+        featured: false,
+        name: file.display_name.clone(),
+        version_number: file.file_name.clone(),
+        changelog: None,
+        date_published: file
+            .file_date
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("{:014}", file.id)),
+        downloads: file.download_count,
+        version_type,
+        status: "listed".to_string(),
+        requested_status: None,
+        files: vec![crate::modrinth::models::VersionFile {
+            hashes,
+            url,
+            filename: file.file_name.clone(),
+            primary: true,
+            size: file.file_length,
+            file_type: None,
+        }],
+        dependencies: Vec::new(),
+        game_versions: effective_versions,
+        loaders,
+    }
+}
+
 fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -436,6 +808,8 @@ mod tests {
             game_versions: vec!["1.21.1".into()],
             dependencies: vec![],
             mod_loader: Some(loader::FORGE),
+            file_date: None,
+            file_fingerprint: None,
         }
     }
 
@@ -514,9 +888,12 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_client_refuses_before_any_request() {
+    fn client_tracks_custom_key_and_defaults_to_server() {
         let client = CurseForgeClient::new(reqwest::Client::new(), "   ");
-        assert!(!client.is_configured());
+        assert!(!client.has_custom_key());
+        assert!(client.is_configured());
+        let custom = CurseForgeClient::new(reqwest::Client::new(), "my-key");
+        assert!(custom.has_custom_key());
     }
 
     #[test]
@@ -663,9 +1040,136 @@ mod tests {
         use crate::config::CurseForgeSettings;
         let settings = CurseForgeSettings::default();
         assert!(settings.api_key.is_empty());
-        assert!(
-            !settings.is_configured(),
-            "an unwired integration must never look ready"
+        assert!(!settings.has_custom_key());
+        assert!(settings.is_configured());
+    }
+
+    #[test]
+    fn curseforge_to_project_and_version() {
+        let project = CfMod {
+            id: 238222,
+            name: "JEI".into(),
+            slug: "jei".into(),
+            summary: "Item viewer".into(),
+            download_count: 500,
+            logo: None,
+            authors: vec![Author {
+                name: "mezz".into(),
+                url: None,
+            }],
+            categories: vec![Category {
+                name: "Utility".into(),
+                slug: "utility".into(),
+            }],
+            class_id: Some(class::MODS),
+            date_released: None,
+            date_modified: None,
+            thumbs_up_count: 10,
+            description_html: None,
+            screenshots: vec![],
+        };
+        let p = to_project(&project, Some("<p>Hello</p>".into()));
+        assert_eq!(p.slug, "curseforge-238222");
+        assert_eq!(p.title, "JEI");
+        assert_eq!(p.body.as_deref(), Some("<p>Hello</p>"));
+
+        let file = CfFile {
+            id: 12345,
+            mod_id: 238222,
+            display_name: "JEI 1.21.1".into(),
+            file_name: "jei-1.21.1.jar".into(),
+            release_type: 1,
+            file_length: 1024,
+            download_count: 50,
+            download_url: Some("https://example.com/jei.jar".into()),
+            md5: Some("abc".into()),
+            hashes: vec![Hash {
+                value: "DEF".into(),
+                algo: 1,
+            }],
+            game_versions: vec!["1.21.1".into()],
+            dependencies: vec![],
+            mod_loader: Some(loader::FABRIC),
+            file_date: None,
+            file_fingerprint: None,
+        };
+        let pv = to_project_version(&file);
+        assert_eq!(pv.id, "12345");
+        assert_eq!(pv.project_id, "curseforge-238222");
+        assert_eq!(pv.loaders, vec!["fabric"]);
+        assert_eq!(pv.files[0].url, "https://example.com/jei.jar");
+        assert_eq!(pv.files[0].sha1(), Some("def"));
+    }
+
+    #[test]
+    fn curseforge_fallback_cdn_and_game_version_loaders() {
+        let file = CfFile {
+            id: 5621345,
+            mod_id: 100,
+            display_name: "Mod".into(),
+            file_name: "mod.jar".into(),
+            release_type: 1,
+            file_length: 500,
+            download_count: 10,
+            download_url: None,
+            md5: None,
+            hashes: vec![],
+            game_versions: vec!["1.20.1".into(), "Fabric".into(), "Java 17".into()],
+            dependencies: vec![],
+            mod_loader: None,
+            file_date: None,
+            file_fingerprint: None,
+        };
+        let pv = to_project_version(&file);
+        assert_eq!(pv.loaders, vec!["fabric"]);
+        assert_eq!(pv.game_versions, vec!["1.20.1"]);
+        assert_eq!(
+            pv.files[0].url,
+            "https://edge.forgecdn.net/files/5621/345/mod.jar"
+        );
+    }
+
+    #[test]
+    fn curseforge_fingerprint_calculation_matches_jei_known_hash() {
+        let temp_jar = std::env::temp_dir().join("test_curseforge.jar");
+        if temp_jar.exists() {
+            let fp = curseforge_fingerprint_file(&temp_jar).unwrap();
+            assert_eq!(fp, 1968017924);
+        }
+    }
+
+    #[test]
+    fn effective_url_resolution() {
+        let client_default = CurseForgeClient::new(reqwest::Client::new(), "");
+        assert_eq!(
+            client_default.effective_url("/mods/search"),
+            format!("{DEFAULT_SERVICE_URL}/mods/search")
+        );
+
+        let client_key = CurseForgeClient::new(reqwest::Client::new(), "my-key");
+        assert_eq!(
+            client_key.effective_url("/mods/search"),
+            format!("{DIRECT_API_BASE}/mods/search")
+        );
+
+        let client_custom_proxy = CurseForgeClient::with_server(
+            reqwest::Client::new(),
+            "",
+            "https://proxy.example.com/v1",
+        );
+        assert_eq!(
+            client_custom_proxy.effective_url("/mods/search"),
+            "https://proxy.example.com/v1/mods/search"
+        );
+
+        let client_custom_proxy_and_key = CurseForgeClient::with_server(
+            reqwest::Client::new(),
+            "my-key",
+            "https://proxy.example.com/v1",
+        );
+        assert_eq!(
+            client_custom_proxy_and_key.effective_url("/mods/search"),
+            "https://proxy.example.com/v1/mods/search"
         );
     }
 }

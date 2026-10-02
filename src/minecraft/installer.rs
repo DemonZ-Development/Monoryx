@@ -267,9 +267,16 @@ pub struct InstallReport {
 }
 
 #[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verify {
+    Quick,
+    Full,
+}
+
 pub fn validate_install(
     paths: &crate::storage::paths::MonoryxPaths,
     version: &VersionJson,
+    verify: Verify,
 ) -> Vec<String> {
     let mut problems = Vec::new();
     if crate::utils::fs::safe_file_name(&version.id).is_err()
@@ -290,7 +297,7 @@ pub fn validate_install(
                 if let Some(c) = dls.get("client") {
                     if m.len() != c.size {
                         problems.push(format!("client jar size mismatch ({} bytes)", m.len()));
-                    } else {
+                    } else if verify == Verify::Full {
                         let actual =
                             crate::utils::hash::sha1_file(&jar).unwrap_or_else(|_| "?".into());
                         if actual.to_lowercase() != c.sha1.to_lowercase() {
@@ -309,7 +316,7 @@ pub fn validate_install(
         if let Some(d) = &lib.downloads {
             if let Some(a) = &d.artifact {
                 if let Ok(path) = crate::utils::fs::safe_join(&paths.libraries_dir(), &a.path) {
-                    check_lib_file(&path, a.size, &a.sha1, &mut problems, &lib.name);
+                    check_lib_file(&path, a.size, &a.sha1, &mut problems, &lib.name, verify);
                 } else {
                     problems.push(format!("library {} has an unsafe path", lib.name));
                 }
@@ -330,6 +337,7 @@ pub fn validate_install(
                                 &artifact.sha1,
                                 &mut problems,
                                 &lib.name,
+                                verify,
                             );
                         } else {
                             problems
@@ -370,6 +378,12 @@ pub fn validate_install(
             .assets_dir()
             .join("indexes")
             .join(format!("{}.json", idx.id));
+        if verify == Verify::Quick {
+            if !p.is_file() {
+                problems.push(format!("asset index {} missing", idx.id));
+            }
+            return problems;
+        }
         match std::fs::read(&p) {
             Ok(bytes) => {
                 if let Ok(index) =
@@ -413,12 +427,21 @@ pub fn validate_install(
     problems
 }
 
-fn check_lib_file(path: &Path, size: u64, sha1: &str, problems: &mut Vec<String>, name: &str) {
+fn check_lib_file(
+    path: &Path,
+    size: u64,
+    sha1: &str,
+    problems: &mut Vec<String>,
+    name: &str,
+    verify: Verify,
+) {
     match std::fs::metadata(path) {
         Ok(m) if m.len() == size => {
-            let actual = crate::utils::hash::sha1_file(path).unwrap_or_default();
-            if actual.to_lowercase() != sha1.to_lowercase() {
-                problems.push(format!("library {name} hash mismatch"));
+            if verify == Verify::Full {
+                let actual = crate::utils::hash::sha1_file(path).unwrap_or_default();
+                if actual.to_lowercase() != sha1.to_lowercase() {
+                    problems.push(format!("library {name} hash mismatch"));
+                }
             }
         }
         Ok(m) => problems.push(format!(
@@ -426,5 +449,205 @@ fn check_lib_file(path: &Path, size: u64, sha1: &str, problems: &mut Vec<String>
             m.len()
         )),
         Err(_) => problems.push(format!("library {name} missing")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::minecraft::version::AssetIndexRef;
+    use crate::storage::paths::MonoryxPaths;
+
+    const JAR: &[u8] = b"pretend this is a version jar";
+    const LIB: &[u8] = b"pretend this is a library jar";
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        paths: MonoryxPaths,
+        version: VersionJson,
+    }
+
+    fn version_from(
+        client_sha1: &str,
+        client_size: u64,
+        lib_sha1: &str,
+        lib_size: u64,
+    ) -> VersionJson {
+        serde_json::from_value(serde_json::json!({
+            "id": "1.21.1",
+            "downloads": {
+                "client": { "sha1": client_sha1, "size": client_size, "url": "c" }
+            },
+            "libraries": [{
+                "name": "com.example:lib:1.0",
+                "downloads": {
+                    "artifact": { "path": "com/example/lib/1.0/lib-1.0.jar", "sha1": lib_sha1, "size": lib_size, "url": "l" }
+                }
+            }]
+        }))
+        .expect("fixture version json")
+    }
+
+    fn fixture() -> Fixture {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = MonoryxPaths::new(temp.path().into());
+
+        let version_dir = paths.versions_dir().join("1.21.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let jar = version_dir.join("1.21.1.jar");
+        std::fs::write(&jar, JAR).unwrap();
+
+        let lib_rel = "com/example/lib/1.0/lib-1.0.jar";
+        let lib = paths.libraries_dir().join(lib_rel);
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(&lib, LIB).unwrap();
+
+        let version = version_from(
+            &crate::utils::hash::sha1_file(&jar).unwrap(),
+            JAR.len() as u64,
+            &crate::utils::hash::sha1_file(&lib).unwrap(),
+            LIB.len() as u64,
+        );
+        Fixture {
+            _temp: temp,
+            paths,
+            version,
+        }
+    }
+
+    fn corrupt_of_same_len(original: &[u8]) -> Vec<u8> {
+        original
+            .iter()
+            .map(|b| if *b == b'a' { b'b' } else { b'a' })
+            .collect()
+    }
+
+    #[test]
+    fn a_healthy_install_passes_both_tiers() {
+        let f = fixture();
+        assert!(validate_install(&f.paths, &f.version, Verify::Quick).is_empty());
+        assert!(validate_install(&f.paths, &f.version, Verify::Full).is_empty());
+    }
+
+    #[test]
+    fn quick_tier_checks_size_but_not_content() {
+        let f = fixture();
+        let jar = f.paths.versions_dir().join("1.21.1").join("1.21.1.jar");
+        let lib = f
+            .paths
+            .libraries_dir()
+            .join("com/example/lib/1.0/lib-1.0.jar");
+
+        std::fs::write(&jar, corrupt_of_same_len(JAR)).unwrap();
+        std::fs::write(&lib, corrupt_of_same_len(LIB)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&jar).unwrap().len(),
+            JAR.len() as u64,
+            "the corruption must preserve size, or the test proves nothing"
+        );
+
+        assert!(
+            validate_install(&f.paths, &f.version, Verify::Quick).is_empty(),
+            "size-correct files must pass the quick tier"
+        );
+
+        let full = validate_install(&f.paths, &f.version, Verify::Full);
+        assert!(
+            full.iter().any(|p| p.contains("client jar hash mismatch")),
+            "full tier must catch the wrong client jar: {full:?}"
+        );
+        assert!(
+            full.iter()
+                .any(|p| p == "library com.example:lib:1.0 hash mismatch"),
+            "full tier must catch the wrong library: {full:?}"
+        );
+    }
+
+    #[test]
+    fn both_tiers_catch_a_truncated_download() {
+        let f = fixture();
+        let jar = f.paths.versions_dir().join("1.21.1").join("1.21.1.jar");
+        std::fs::write(&jar, b"short").unwrap();
+
+        for verify in [Verify::Quick, Verify::Full] {
+            let problems = validate_install(&f.paths, &f.version, verify);
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| p.contains("client jar size mismatch")),
+                "{verify:?} must catch a truncated client jar: {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn both_tiers_catch_a_missing_library() {
+        let f = fixture();
+        std::fs::remove_file(
+            f.paths
+                .libraries_dir()
+                .join("com/example/lib/1.0/lib-1.0.jar"),
+        )
+        .unwrap();
+
+        for verify in [Verify::Quick, Verify::Full] {
+            let problems = validate_install(&f.paths, &f.version, verify);
+            assert!(
+                problems.iter().any(|p| p.contains("missing")),
+                "{verify:?} must catch a missing library: {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_tier_only_checks_that_the_asset_index_exists() {
+        let f = fixture();
+        let mut v = f.version.clone();
+        v.asset_index = Some(AssetIndexRef {
+            id: "5".into(),
+            sha1: crate::utils::hash::sha1_bytes(b"anything"),
+            size: 1,
+            total_size: None,
+            url: String::new(),
+        });
+
+        let problems = validate_install(&f.paths, &v, Verify::Quick);
+        assert!(
+            problems.iter().any(|p| p.contains("asset index 5 missing")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn quick_tier_never_parses_the_asset_index() {
+        let f = fixture();
+        let mut v = f.version.clone();
+        v.asset_index = Some(AssetIndexRef {
+            id: "5".into(),
+            sha1: "0".repeat(40),
+            size: 1,
+            total_size: None,
+            url: String::new(),
+        });
+        let index = f.paths.assets_dir().join("indexes").join("5.json");
+        std::fs::create_dir_all(index.parent().unwrap()).unwrap();
+        std::fs::write(&index, b"{ this is not json").unwrap();
+
+        assert!(
+            validate_install(&f.paths, &v, Verify::Quick).is_empty(),
+            "quick must not read the index, so corruption there is invisible to it"
+        );
+        let full = validate_install(&f.paths, &v, Verify::Full);
+        assert!(
+            full.iter().any(|p| p.contains("corrupt")),
+            "full must parse the index and report it: {full:?}"
+        );
+    }
+
+    #[test]
+    fn verify_level_maps_onto_the_installer_tier() {
+        use crate::config::VerifyLevel;
+        assert_eq!(VerifyLevel::Quick.as_verify(), Verify::Quick);
+        assert_eq!(VerifyLevel::Full.as_verify(), Verify::Full);
     }
 }

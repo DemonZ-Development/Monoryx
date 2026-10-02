@@ -227,6 +227,7 @@ pub fn play_instance(state: &mut AppState, instance_id: String) {
             }
         }
         discord.game_finished(&instance_id);
+        let _ = tx.send(AppEvent::AppCdsRecorded(instance_id.clone()));
         crate::utils::system::show_window_for_current_process(true);
         egui_ctx.request_repaint();
     });
@@ -264,10 +265,38 @@ async fn play_inner(
         &cfg.minecraft_version,
         cfg.loader.display_name(),
     );
-    let profile = config
-        .profile
-        .clone()
-        .ok_or_else(|| "Create an offline profile first.".to_string())?;
+    let mut account = config
+        .active_account()
+        .ok_or_else(|| "Configure an offline or Microsoft profile first.".to_string())?;
+
+    if let crate::account::Account::Microsoft(ref ms) = account {
+        let now = chrono::Utc::now().timestamp();
+        if ms.expires_at <= now + 300 && !ms.refresh_token.is_empty() {
+            phase("Refreshing Microsoft session...");
+            match crate::account::microsoft::refresh_minecraft_token(
+                dm.client(),
+                &config.microsoft_client_id,
+                &ms.refresh_token,
+            )
+            .await
+            {
+                Ok(new_profile) => {
+                    let mut updated_config = config.clone();
+                    updated_config.microsoft_profile = Some(new_profile.clone());
+                    let _ = updated_config.save(&paths.config_file());
+                    let _ = tx.send(AppEvent::MicrosoftSessionRefreshed(new_profile.clone()));
+                    account = crate::account::Account::Microsoft(new_profile);
+                }
+                Err(err) => {
+                    return Err(format!(
+                        "Microsoft session expired. Please sign in again. ({})",
+                        err.user_message()
+                    ));
+                }
+            }
+        }
+    }
+
     instances
         .ensure_game_dirs(instance_id)
         .map_err(|e| e.user_message())?;
@@ -294,7 +323,11 @@ async fn play_inner(
         .map_err(|e| format!("Version metadata missing, repair the instance. ({e})"))?;
     let version: crate::minecraft::version::VersionJson = serde_json::from_str(&version_text)
         .map_err(|e| format!("Corrupt version metadata: {e}"))?;
-    let problems = crate::minecraft::installer::validate_install(paths, &version);
+    let problems = crate::minecraft::installer::validate_install(
+        paths,
+        &version,
+        config.verify_level.as_verify(),
+    );
     if !problems.is_empty() {
         crate::minecraft::installer::install_version(dm, paths, &version, None)
             .await
@@ -375,9 +408,10 @@ async fn play_inner(
         )),
         natives_dir: paths.versions_dir().join(&version_id).join("natives"),
         java_exe,
-        username: profile.username.clone(),
-        uuid: profile.uuid,
-        access_token: "0".to_string(),
+        username: account.username().to_string(),
+        uuid: account.uuid(),
+        access_token: account.access_token().to_string(),
+        user_type: account.user_type().to_string(),
         memory_min_mb: cfg.memory_min_mb,
         memory_max_mb: crate::utils::system::game_memory_limit_mb(
             cfg.memory_max_mb,
@@ -390,10 +424,22 @@ async fn play_inner(
             _ => None,
         },
         fullscreen: cfg.fullscreen,
-        extra_jvm_args: if cfg.jvm_args.is_empty() {
-            config.default_jvm_args.clone()
-        } else {
+        extra_jvm_args: if !cfg.jvm_args.is_empty() {
             cfg.jvm_args.clone()
+        } else if config.jvm_preset != crate::config::JvmPreset::None {
+            config.jvm_preset.flags().to_string()
+        } else {
+            config.default_jvm_args.clone()
+        },
+        appcds: {
+            let archive = super::appcds::archive_path(instances, instance_id);
+            if cfg.appcds_pending {
+                crate::minecraft::launcher::AppCds::Record(archive)
+            } else if config.appcds {
+                crate::minecraft::launcher::AppCds::Use(archive)
+            } else {
+                crate::minecraft::launcher::AppCds::Off
+            }
         },
         extra_game_args: if cfg.game_args.is_empty() {
             config.default_game_args.clone()
@@ -403,7 +449,48 @@ async fn play_inner(
         log_file: log_file.clone(),
         skins_restorer_compat: config.skins_restorer_compat,
     };
+    let cp_entries = crate::minecraft::libraries::build_classpath(
+        &version.libraries,
+        &paths.libraries_dir(),
+        &paths.versions_dir().join(&version_id).join(format!(
+            "{}.jar",
+            version.jar.as_deref().unwrap_or(&version_id)
+        )),
+        "https://libraries.minecraft.net",
+    );
+    let _ = tx.send(AppEvent::ClasspathResolved(
+        instance_id.to_string(),
+        cp_entries.clone(),
+    ));
+
     let plan = crate::minecraft::launcher::build_launch_plan(&ctx).map_err(|e| e.user_message())?;
+    if let Some(path) = match ctx.appcds {
+        crate::minecraft::launcher::AppCds::Record(_) => None,
+        _ => Some(crate::app::appcds::archive_path(instances, instance_id)),
+    } {
+        if path.is_file() {
+            let rejected = std::fs::read_to_string(path.with_extension("cds.log"))
+                .map(|t| {
+                    t.contains("does not match")
+                        || t.contains("wrong version")
+                        || t.contains("Unable to use shared archive")
+                        || t.contains("class paths mismatch")
+                })
+                .unwrap_or(false);
+            if rejected {
+                let _ = tx.send(AppEvent::Notice(
+                    "Startup archive no longer matches this instance and was skipped. Use \
+                     Re-record in Settings to rebuild it."
+                        .to_string(),
+                ));
+            }
+        }
+        let _ = std::fs::remove_file(path.with_extension("cds.log"));
+    }
+    if let Some(note) = plan.appcds_note.clone() {
+        let _ = tx.send(AppEvent::PlayLog(note.clone()));
+        let _ = tx.send(AppEvent::Notice(note));
+    }
     let _ = tx.send(AppEvent::PlayLog(format!(
         "Launching {} with {}",
         version_id,
@@ -529,6 +616,16 @@ pub fn install_content(
         LoaderKind::Vanilla => "vanilla",
     }
     .to_string();
+    let cf_key = if state.config.curseforge.is_configured() {
+        Some(state.config.curseforge.api_key.clone())
+    } else {
+        None
+    };
+    let cf_endpoint = if state.config.curseforge.is_configured() {
+        Some(state.config.curseforge.custom_endpoint.clone())
+    } else {
+        None
+    };
     state.runtime.spawn(async move {
         let req = InstallRequest {
             project_id,
@@ -538,6 +635,8 @@ pub fn install_content(
             minecraft_version: cfg.minecraft_version.clone(),
             loader: loader_str,
             version_id,
+            curseforge_api_key: cf_key,
+            curseforge_endpoint: cf_endpoint,
         };
         let r = install_project(&dm, &mr, &instances, &cfg.id, req, None)
             .await
@@ -553,6 +652,11 @@ pub fn check_updates(state: &AppState) {
     let mr = state.mr.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
+    let cf = crate::curseforge::CurseForgeClient::with_server(
+        state.http.clone(),
+        &state.config.curseforge.api_key,
+        &state.config.curseforge.custom_endpoint,
+    );
     let loader_str = match cfg.loader {
         LoaderKind::Fabric => "fabric",
         LoaderKind::Quilt => "quilt",
@@ -564,6 +668,7 @@ pub fn check_updates(state: &AppState) {
     state.runtime.spawn(async move {
         let r = crate::modrinth::updates::check_updates(
             &mr,
+            Some(&cf),
             &instances,
             &cfg.id,
             &cfg.minecraft_version,
@@ -581,6 +686,11 @@ pub fn update_one(state: &AppState, info: crate::modrinth::updates::UpdateInfo) 
     let mr = state.mr.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
+    let cf = crate::curseforge::CurseForgeClient::with_server(
+        state.http.clone(),
+        &state.config.curseforge.api_key,
+        &state.config.curseforge.custom_endpoint,
+    );
     let loader_str = match cfg.loader {
         LoaderKind::Fabric => "fabric",
         LoaderKind::Quilt => "quilt",
@@ -593,6 +703,7 @@ pub fn update_one(state: &AppState, info: crate::modrinth::updates::UpdateInfo) 
         let r = crate::modrinth::updates::update_project(
             &dm,
             &mr,
+            Some(&cf),
             &instances,
             &cfg.id,
             &info,
@@ -678,7 +789,11 @@ pub fn repair_instance(state: &AppState, instance_id: String) {
                 .map_err(|e| e.user_message())?;
             cfg.resolved_version_id = resolved.id.clone();
             instances.save(&cfg).map_err(|e| e.user_message())?;
-            let problems = crate::minecraft::installer::validate_install(&paths, &resolved);
+            let problems = crate::minecraft::installer::validate_install(
+                &paths,
+                &resolved,
+                crate::minecraft::installer::Verify::Full,
+            );
             crate::minecraft::installer::install_version(&dm, &paths, &resolved, None)
                 .await
                 .map_err(|e| e.user_message())?;
@@ -763,6 +878,56 @@ pub fn install_modpack(state: &AppState, slug: String, title: String) {
 }
 
 pub fn open_project_page(state: &AppState, slug: String) {
+    if crate::curseforge::is_curseforge_slug(&slug) {
+        let Some(mod_id) = crate::curseforge::id_from_slug(&slug) else {
+            let _ = state.tx.send(AppEvent::ProjectDetail(
+                slug.clone(),
+                Err("Invalid CurseForge project ID".to_string()),
+            ));
+            return;
+        };
+        let cf = crate::curseforge::CurseForgeClient::with_server(
+            state.http.clone(),
+            &state.config.curseforge.api_key,
+            &state.config.curseforge.custom_endpoint,
+        );
+        let tx = state.tx.clone();
+        let slots = state.metadata_slots.clone();
+        let slug2 = slug.clone();
+        state.runtime.spawn(async move {
+            let Ok(permit) = slots.clone().acquire_owned().await else {
+                return;
+            };
+            let p = match cf.project(mod_id).await {
+                Ok(cf_mod) => {
+                    let desc = cf.description(mod_id).await.ok();
+                    Ok(crate::curseforge::to_project(&cf_mod, desc))
+                }
+                Err(e) => Err(e.user_message()),
+            };
+            drop(permit);
+            let _ = tx.send(AppEvent::ProjectDetail(slug.clone(), p));
+            let tx3 = tx;
+            tokio::spawn(async move {
+                let Ok(_permit) = slots.acquire_owned().await else {
+                    return;
+                };
+                let v = cf
+                    .files(mod_id, None, None)
+                    .await
+                    .map(|files| {
+                        files
+                            .iter()
+                            .map(crate::curseforge::to_project_version)
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|e| e.user_message());
+                let _ = tx3.send(AppEvent::ProjectVersions(slug2, v));
+            });
+        });
+        return;
+    }
+
     let mr = state.mr.clone();
     let tx = state.tx.clone();
     let slots = state.metadata_slots.clone();
@@ -979,4 +1144,85 @@ async fn fetch_expected_sha256(http: &reqwest::Client, url: &str, version: &str)
         }
     }
     None
+}
+
+pub fn start_microsoft_login(
+    state: &AppState,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let http = state.http.clone();
+    let client_id = state.config.microsoft_client_id.clone();
+    let tx = state.tx.clone();
+    let ctx = state.egui_ctx.clone();
+
+    state.runtime.spawn(async move {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+
+        let code_res = crate::account::microsoft::request_device_code(&http, &client_id)
+            .await
+            .map_err(|e| e.user_message());
+
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+
+        match code_res {
+            Ok(code) => {
+                let device_code = code.device_code.clone();
+                let interval = code.interval.max(3);
+                let expires_in = code.expires_in.min(900);
+                let _ = tx.send(AppEvent::MicrosoftDeviceCode(Ok(code)));
+                ctx.request_repaint();
+
+                let start = std::time::Instant::now();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+
+                    if start.elapsed().as_secs() > expires_in {
+                        let _ = tx.send(AppEvent::MicrosoftLoginDone(Err(
+                            "Login session timed out. Please try again.".into(),
+                        )));
+                        ctx.request_repaint();
+                        break;
+                    }
+
+                    match crate::account::microsoft::authenticate_with_device_code(
+                        &http,
+                        &client_id,
+                        &device_code,
+                    )
+                    .await
+                    {
+                        Ok(Some(profile)) => {
+                            if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                                let _ = tx.send(AppEvent::MicrosoftLoginDone(Ok(profile)));
+                                ctx.request_repaint();
+                            }
+                            break;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                                let _ =
+                                    tx.send(AppEvent::MicrosoftLoginDone(Err(e.user_message())));
+                                ctx.request_repaint();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = tx.send(AppEvent::MicrosoftDeviceCode(Err(err)));
+                    ctx.request_repaint();
+                }
+            }
+        }
+    });
 }

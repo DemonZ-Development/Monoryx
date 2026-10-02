@@ -164,11 +164,6 @@ fn show_worlds(state: &mut AppState, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         let id = state.selected_instance.clone().unwrap_or_default();
         let mods = state.mod_counts.get(&id).copied().unwrap_or(0);
-        let shots = state
-            .screenshots
-            .iter()
-            .filter(|shot| shot.instance_id == id)
-            .count();
         let folders = [
             (
                 "saves",
@@ -176,7 +171,6 @@ fn show_worlds(state: &mut AppState, ui: &mut egui::Ui) {
                 format!("{} worlds", state.worlds.snapshot.worlds.len()),
             ),
             ("mods", "Mods", format!("{mods} enabled")),
-            ("screenshots", "Screenshots", format!("{shots} images")),
             ("config", "Config", "Game and mod settings".to_string()),
         ];
         let columns = if ui.available_width() >= 700.0 { 4 } else { 2 };

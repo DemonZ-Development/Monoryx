@@ -108,12 +108,24 @@ pub async fn check_launcher_update(http: &reqwest::Client) -> Result<LauncherUpd
         .find(|asset| {
             let _name = asset.name.to_ascii_lowercase();
             #[cfg(target_os = "windows")]
-            let matching = _name.starts_with("monoryx-setup-") && _name.ends_with(".exe");
+            let matching = _name == "monoryx-update.exe" || _name == "monoryx.exe";
             #[cfg(target_os = "linux")]
             let matching = _name.ends_with("-linux-x64.tar.gz");
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             let matching = false;
             matching
+        })
+        .or_else(|| {
+            release.assets.iter().find(|asset| {
+                let _name = asset.name.to_ascii_lowercase();
+                #[cfg(target_os = "windows")]
+                let matching = _name.starts_with("monoryx-setup-") && _name.ends_with(".exe");
+                #[cfg(target_os = "linux")]
+                let matching = _name.ends_with("-linux-x64.tar.gz");
+                #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+                let matching = false;
+                matching
+            })
         })
         .map(|asset| asset.browser_download_url.clone());
 
@@ -128,6 +140,66 @@ pub async fn check_launcher_update(http: &reqwest::Client) -> Result<LauncherUpd
         published_at: release.published_at,
         has_update: true,
     })
+}
+
+pub fn apply_update_and_restart(update_path: &std::path::Path) -> std::io::Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let current_dir = current_exe
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let pid = std::process::id();
+
+    let file_name = update_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    let companion_name = if cfg!(target_os = "windows") {
+        "monoryx-updater.exe"
+    } else {
+        "monoryx-updater"
+    };
+    let companion = current_dir.join(companion_name);
+
+    if !companion.exists() && file_name.to_ascii_lowercase().starts_with("monoryx-setup-") {
+        let mut cmd = std::process::Command::new(update_path);
+        cmd.args([
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/MERGETASKS=\"\"",
+        ]);
+        cmd.spawn()?;
+        std::process::exit(0);
+    }
+
+    let updater_exe = if companion.exists() {
+        companion
+    } else {
+        let temp_updater = std::env::temp_dir().join(format!("monoryx-updater-{pid}.exe"));
+        let _ = std::fs::copy(&current_exe, &temp_updater);
+        temp_updater
+    };
+
+    let mut cmd = std::process::Command::new(&updater_exe);
+    cmd.arg("--update-source")
+        .arg(update_path)
+        .arg("--target-dest")
+        .arg(&current_exe)
+        .arg("--wait-pid")
+        .arg(pid.to_string())
+        .arg("--relaunch");
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()?;
+    std::process::exit(0);
 }
 
 #[cfg(test)]
