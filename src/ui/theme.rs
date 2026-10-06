@@ -414,7 +414,9 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
 
         let name = format!("system_fallback_{}", loaded_fonts.len());
 
-        fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
+        fonts
+            .font_data
+            .insert(name.clone(), egui::FontData::from_owned(data).into());
 
         loaded_fonts.push(name);
     }
@@ -450,7 +452,9 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
 
         let name = format!("system_fallback_{}", loaded_fonts.len());
 
-        fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
+        fonts
+            .font_data
+            .insert(name.clone(), egui::FontData::from_owned(data).into());
 
         loaded_fonts.push(name);
     }
