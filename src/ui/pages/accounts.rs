@@ -32,12 +32,20 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 let (avatar_rect, _) =
                     ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
-                crate::ui::components::draw_cute_avatar(
-                    ui.painter(),
-                    avatar_rect,
-                    account.username(),
-                    !account.is_offline(),
-                );
+                if !account.is_offline() {
+                    crate::ui::components::draw_avatar(
+                        ui.painter(),
+                        avatar_rect,
+                        &account.uuid().to_string()
+                    )
+                } else {    
+                    crate::ui::components::draw_cute_avatar(
+                        ui.painter(),
+                        avatar_rect,
+                        account.username(),
+                        !account.is_offline(),
+                    );
+                }
 
                 ui.add_space(10.0);
                 ui.vertical(|ui| {

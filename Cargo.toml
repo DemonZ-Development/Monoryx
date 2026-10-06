@@ -24,6 +24,7 @@ path = "src/updater_main.rs"
 default = []
 
 [dependencies]
+base64 = "0.22"
 eframe = { version = "0.32", features = ["default_fonts", "glow"] }
 egui = "0.32"
 tokio = { version = "1", features = ["full"] }
@@ -53,6 +54,7 @@ tempfile = "3"
 async-trait = "0.1"
 bytes = "1"
 image = "0.25"
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
 rfd = "0.15"
 tar = "0.4"
 flate2 = "1"
