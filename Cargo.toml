@@ -1,6 +1,6 @@
 [package]
 name = "monoryx"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 description = "MONORYX - Minecraft, without the clutter. A lightweight native Minecraft Java Edition launcher."
 authors = ["DemonZDevelopment"]

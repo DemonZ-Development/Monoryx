@@ -1,3 +1,22 @@
+# MONORYX 1.4.1
+
+CJK font support, asynchronous player skin avatar rendering, and stability improvements.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Internationalization & Fonts
+- **System fallback fonts for CJK characters:** Added automatic system font fallbacks (`Segoe UI`, `Malgun Gothic`, `Microsoft YaHei`, `MS Gothic` on Windows, with macOS and Linux fallbacks) to resolve missing glyphs on non-English / CJK systems (#3).
+- **One-time font initialization:** Fallback font resolution is cached and executed once per session on startup rather than during theme switches, keeping UI theme changes instant.
+
+## Player Profiles & Avatars
+- **Async Mojang skin avatar rendering:** Microsoft account profiles now render the player's actual skin head avatar in the sidebar and accounts manager.
+- **Non-blocking skin pipeline:** Player skins and head textures are fetched and decoded asynchronously in Tokio background tasks with an instant placeholder fallback, eliminating UI frame freezes during network calls.
+
+## Maintenance
+- Cleaned up backend dependencies and removed unused blocking network features.
+
+---
+
 # MONORYX 1.4.0
 
 Universal macOS builds, integrated CurseForge browser with smart update scanning, in-place companion updater, Microsoft device authentication in the onboarding, and visual refinements.
