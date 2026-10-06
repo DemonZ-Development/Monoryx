@@ -135,6 +135,7 @@ impl eframe::App for MonoryxApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        crate::ui::backdrop::destroy(&self.state.egui_ctx);
         self.state.save_config();
     }
 }

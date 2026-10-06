@@ -458,7 +458,7 @@ pub async fn authenticate_with_device_code(
 
 pub fn parse_undashed_uuid(s: &str) -> std::result::Result<uuid::Uuid, String> {
     let clean = s.trim();
-    if clean.len() == 32 {
+    if clean.len() == 32 && clean.is_ascii() {
         let formatted = format!(
             "{}-{}-{}-{}-{}",
             &clean[0..8],

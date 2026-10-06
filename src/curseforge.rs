@@ -215,7 +215,17 @@ pub fn loader_id(loader: &str) -> Option<i32> {
     }
 }
 
+pub fn is_secure_endpoint(base: &str) -> bool {
+    url::Url::parse(base).is_ok_and(|parsed| parsed.scheme() == "https")
+}
+
 #[must_use]
+pub fn is_official_endpoint(base: &str) -> bool {
+    url::Url::parse(base).is_ok_and(|parsed| {
+        parsed.scheme() == "https" && parsed.host_str() == Some("api.curseforge.com")
+    })
+}
+
 pub fn class_id_for(project_type: &str) -> Option<i32> {
     match project_type {
         "mod" => Some(class::MODS),
@@ -234,17 +244,22 @@ impl CurseForgeClient {
 
     #[must_use]
     pub fn with_server(http: reqwest::Client, api_key: &str, server_url: &str) -> Self {
-        let ep = server_url.trim().trim_end_matches('/');
-        let base = if ep.is_empty() {
-            DEFAULT_SERVICE_URL
+        let requested = server_url.trim().trim_end_matches('/');
+        let base = if requested.is_empty() {
+            DEFAULT_SERVICE_URL.to_string()
+        } else if is_secure_endpoint(requested) {
+            requested.to_string()
         } else {
-            ep
+            tracing::warn!(
+                "Ignoring insecure CurseForge endpoint {requested}; falling back to the default service"
+            );
+            DEFAULT_SERVICE_URL.to_string()
         };
         Self {
             http,
             ua: crate::utils::net::modrinth_user_agent(),
             api_key: api_key.trim().to_string(),
-            server_url: base.to_string(),
+            server_url: base,
         }
     }
 
@@ -258,12 +273,27 @@ impl CurseForgeClient {
         !self.api_key.is_empty()
     }
 
+    #[must_use]
+    pub fn withholds_api_key(&self) -> bool {
+        self.has_custom_key() && !self.attach_api_key()
+    }
+
     pub(crate) fn api_key(&self) -> &str {
         &self.api_key
     }
 
     pub(crate) fn server_url(&self) -> &str {
         &self.server_url
+    }
+
+    pub(crate) fn attach_api_key(&self) -> bool {
+        if !self.has_custom_key() {
+            return false;
+        }
+        if self.server_url != DEFAULT_SERVICE_URL {
+            return is_official_endpoint(&self.server_url);
+        }
+        true
     }
 
     #[must_use]
@@ -278,7 +308,7 @@ impl CurseForgeClient {
     }
 
     async fn get<T: serde::de::DeserializeOwned>(&self, path_and_query: &str) -> Result<T> {
-        let has_key = self.has_custom_key();
+        let attach_key = self.attach_api_key();
         let url = self.effective_url(path_and_query);
         let mut attempt = 0u32;
         loop {
@@ -288,7 +318,7 @@ impl CurseForgeClient {
                 .get(&url)
                 .header(reqwest::header::USER_AGENT, &self.ua)
                 .header(reqwest::header::ACCEPT, "application/json");
-            if has_key {
+            if attach_key {
                 req = req.header("x-api-key", &self.api_key);
             }
             let resp = match req.send().await {
@@ -338,7 +368,7 @@ impl CurseForgeClient {
                         "Custom CurseForge proxy authentication rejected. Check proxy configuration in Settings.".to_string(),
                     ));
                 }
-                if has_key {
+                if attach_key {
                     return Err(MonoryxError::Modrinth(
                         "CurseForge rejected your custom API key. Check it in Settings."
                             .to_string(),
@@ -353,7 +383,13 @@ impl CurseForgeClient {
                     "CurseForge returned HTTP {status}"
                 )));
             }
-            return Ok(resp.json::<T>().await?);
+            let bytes = resp.bytes().await?;
+            if bytes.len() > crate::utils::net::MAX_JSON_BODY_BYTES {
+                return Err(MonoryxError::Modrinth(
+                    "CurseForge response exceeded the size limit".to_string(),
+                ));
+            }
+            return Ok(serde_json::from_slice(&bytes)?);
         }
     }
 
@@ -422,7 +458,7 @@ impl CurseForgeClient {
         path_and_query: &str,
         body: &B,
     ) -> Result<T> {
-        let has_key = self.has_custom_key();
+        let attach_key = self.attach_api_key();
         let url = self.effective_url(path_and_query);
         let mut attempt = 0u32;
         loop {
@@ -433,7 +469,7 @@ impl CurseForgeClient {
                 .header(reqwest::header::USER_AGENT, &self.ua)
                 .header(reqwest::header::ACCEPT, "application/json")
                 .json(body);
-            if has_key {
+            if attach_key {
                 req = req.header("x-api-key", &self.api_key);
             }
             let resp = match req.send().await {
@@ -483,7 +519,7 @@ impl CurseForgeClient {
                         "Custom CurseForge proxy authentication rejected. Check proxy configuration in Settings.".to_string(),
                     ));
                 }
-                if has_key {
+                if attach_key {
                     return Err(MonoryxError::Modrinth(
                         "CurseForge rejected your custom API key. Check it in Settings."
                             .to_string(),
@@ -498,7 +534,13 @@ impl CurseForgeClient {
                     "CurseForge returned HTTP {status}"
                 )));
             }
-            return Ok(resp.json::<T>().await?);
+            let bytes = resp.bytes().await?;
+            if bytes.len() > crate::utils::net::MAX_JSON_BODY_BYTES {
+                return Err(MonoryxError::Modrinth(
+                    "CurseForge response exceeded the size limit".to_string(),
+                ));
+            }
+            return Ok(serde_json::from_slice(&bytes)?);
         }
     }
 
@@ -530,60 +572,94 @@ pub struct FingerprintMatch {
     pub latest_files: Vec<CfFile>,
 }
 
-#[must_use]
-pub fn curseforge_fingerprint(bytes: &[u8]) -> u32 {
-    let m: u32 = 0x5bd1e995;
-    let r: u32 = 24;
+fn fingerprint_byte(byte: u8) -> bool {
+    !matches!(byte, 0x9 | 0xa | 0xd | 0x20)
+}
 
-    let mut filtered = Vec::with_capacity(bytes.len());
-    for &b in bytes {
-        if b != 0x9 && b != 0xa && b != 0xd && b != 0x20 {
-            filtered.push(b);
+struct FingerprintHash {
+    hash: u32,
+    word: [u8; 4],
+    filled: usize,
+}
+
+impl FingerprintHash {
+    fn new(length: u32) -> Self {
+        Self {
+            hash: 1 ^ length,
+            word: [0; 4],
+            filled: 0,
         }
     }
 
-    let len = filtered.len();
-    let mut h: u32 = 1 ^ (len as u32);
-
-    let mut i = 0;
-    while i + 4 <= len {
-        let mut k = u32::from_le_bytes([
-            filtered[i],
-            filtered[i + 1],
-            filtered[i + 2],
-            filtered[i + 3],
-        ]);
-        k = k.wrapping_mul(m);
-        k ^= k >> r;
-        k = k.wrapping_mul(m);
-
-        h = h.wrapping_mul(m);
-        h ^= k;
-        i += 4;
+    fn push(&mut self, byte: u8) {
+        self.word[self.filled] = byte;
+        self.filled += 1;
+        if self.filled == 4 {
+            let mut word = u32::from_le_bytes(self.word).wrapping_mul(0x5bd1e995);
+            word ^= word >> 24;
+            word = word.wrapping_mul(0x5bd1e995);
+            self.hash = self.hash.wrapping_mul(0x5bd1e995) ^ word;
+            self.filled = 0;
+        }
     }
 
-    let rem = len - i;
-    if rem == 3 {
-        h ^= (filtered[i + 2] as u32) << 16;
+    fn finish(mut self) -> u32 {
+        for index in 0..self.filled {
+            self.hash ^= (self.word[index] as u32) << (index * 8);
+        }
+        if self.filled > 0 {
+            self.hash = self.hash.wrapping_mul(0x5bd1e995);
+        }
+        self.hash ^= self.hash >> 13;
+        self.hash = self.hash.wrapping_mul(0x5bd1e995);
+        self.hash ^= self.hash >> 15;
+        self.hash
     }
-    if rem >= 2 {
-        h ^= (filtered[i + 1] as u32) << 8;
-    }
-    if rem >= 1 {
-        h ^= filtered[i] as u32;
-        h = h.wrapping_mul(m);
-    }
+}
 
-    h ^= h >> 13;
-    h = h.wrapping_mul(m);
-    h ^= h >> 15;
-
-    h
+#[must_use]
+pub fn curseforge_fingerprint(bytes: &[u8]) -> u32 {
+    let length = bytes.iter().filter(|&&byte| fingerprint_byte(byte)).count() as u32;
+    let mut hash = FingerprintHash::new(length);
+    for &byte in bytes {
+        if fingerprint_byte(byte) {
+            hash.push(byte);
+        }
+    }
+    hash.finish()
 }
 
 pub fn curseforge_fingerprint_file(path: &std::path::Path) -> Result<u32> {
-    let bytes = std::fs::read(path)?;
-    Ok(curseforge_fingerprint(&bytes))
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = [0; 64 * 1024];
+    let mut length = 0_u32;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        length = length.wrapping_add(
+            buffer[..read]
+                .iter()
+                .filter(|&&byte| fingerprint_byte(byte))
+                .count() as u32,
+        );
+    }
+    file.seek(SeekFrom::Start(0))?;
+    let mut hash = FingerprintHash::new(length);
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        for &byte in &buffer[..read] {
+            if fingerprint_byte(byte) {
+                hash.push(byte);
+            }
+        }
+    }
+    Ok(hash.finish())
 }
 
 pub const SLUG_PREFIX: &str = "curseforge-";
@@ -819,6 +895,37 @@ fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_hashes_match_known_values_with_whitespace_and_tails() {
+        for (bytes, expected) in [
+            (b"".as_slice(), 1540447798),
+            (b"a".as_slice(), 626045324),
+            (b"ab".as_slice(), 1692487918),
+            (b"abc".as_slice(), 1621425345),
+            (b"abcd".as_slice(), 3376380438),
+            (b"abcde".as_slice(), 3469237630),
+            (b" \t\r\n".as_slice(), 1540447798),
+            (b"hello world".as_slice(), 2824650221),
+        ] {
+            assert_eq!(curseforge_fingerprint(bytes), expected);
+        }
+    }
+
+    #[test]
+    fn file_fingerprints_stream_across_buffer_and_word_boundaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pack.zip");
+        let mut bytes: Vec<_> = (0..65541).map(|index| (index % 256) as u8).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(curseforge_fingerprint_file(&path).unwrap(), 2614645509);
+        bytes[37] = b' ';
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            curseforge_fingerprint_file(&path).unwrap(),
+            curseforge_fingerprint(&bytes)
+        );
+    }
 
     #[test]
     fn dependencies_keep_provider_and_relation_type() {
@@ -1224,6 +1331,105 @@ mod tests {
         assert_eq!(
             client_custom_proxy_and_key.effective_url("/mods/search"),
             "https://proxy.example.com/v1/mods/search"
+        );
+    }
+
+    #[test]
+    fn personal_api_key_is_never_sent_to_third_party_hosts() {
+        let proxy = CurseForgeClient::with_server(
+            reqwest::Client::new(),
+            "my-secret-key",
+            "https://proxy.example.com/v1",
+        );
+        assert!(proxy.has_custom_key());
+        assert!(!proxy.attach_api_key());
+        assert!(proxy.withholds_api_key());
+        assert_eq!(
+            proxy.effective_url("/mods/1"),
+            "https://proxy.example.com/v1/mods/1"
+        );
+
+        let no_key_proxy = CurseForgeClient::with_server(
+            reqwest::Client::new(),
+            "",
+            "https://proxy.example.com/v1",
+        );
+        assert!(!no_key_proxy.attach_api_key());
+
+        let operator = CurseForgeClient::new(reqwest::Client::new(), "my-secret-key");
+        assert!(
+            operator.attach_api_key(),
+            "a personal key routes requests to the official host, so it must be sent"
+        );
+        assert_eq!(
+            operator.effective_url("/mods/1"),
+            format!("{DIRECT_API_BASE}/mods/1")
+        );
+        assert!(!operator.withholds_api_key());
+
+        let operator_no_key = CurseForgeClient::new(reqwest::Client::new(), "");
+        assert!(!operator_no_key.attach_api_key());
+        assert_eq!(
+            operator_no_key.effective_url("/mods/1"),
+            format!("{DEFAULT_SERVICE_URL}/mods/1")
+        );
+
+        let direct = CurseForgeClient::with_server(
+            reqwest::Client::new(),
+            "my-secret-key",
+            "https://api.curseforge.com/v1",
+        );
+        assert!(direct.attach_api_key());
+        assert!(!direct.withholds_api_key());
+    }
+
+    #[test]
+    fn lookalike_hosts_and_cleartext_endpoints_are_rejected() {
+        for hostile in [
+            "https://api.curseforge.com.evil.test/v1",
+            "https://notcurseforge.com/v1",
+            "https://api.curseforge.com@evil.test/v1",
+        ] {
+            assert!(
+                !is_official_endpoint(hostile),
+                "{hostile} must not be treated as official"
+            );
+        }
+        assert!(is_official_endpoint(DIRECT_API_BASE));
+
+        for insecure in [
+            "http://api.curseforge.com/v1",
+            "http://proxy.example.com/v1",
+            "file:///etc/passwd",
+            "ftp://proxy.example.com",
+        ] {
+            assert!(!is_secure_endpoint(insecure), "{insecure} must be rejected");
+            let client = CurseForgeClient::with_server(reqwest::Client::new(), "k", insecure);
+            assert_eq!(client.server_url(), DEFAULT_SERVICE_URL);
+            let effective = client.effective_url("/mods/1");
+            assert!(
+                effective.starts_with("https://services.demonz.org")
+                    || effective.starts_with(DIRECT_API_BASE),
+                "an insecure endpoint must never receive traffic, got {effective}"
+            );
+            assert!(
+                !effective.contains("proxy.example.com") && !effective.contains("passwd"),
+                "traffic must never reach a rejected endpoint, got {effective}"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_slashes_and_case_are_normalised_before_validation() {
+        let client = CurseForgeClient::with_server(
+            reqwest::Client::new(),
+            "k",
+            "  https://API.CurseForge.com/v1/  ",
+        );
+        assert!(client.attach_api_key());
+        assert_eq!(
+            client.effective_url("/mods/1"),
+            "https://API.CurseForge.com/v1/mods/1"
         );
     }
 }

@@ -30,26 +30,39 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     });
     ui.add_space(6.0);
     card_frame(ui, |ui| {
-        egui::ScrollArea::vertical()
-            .max_height(420.0)
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                if state.log_lines.is_empty() {
+        if state.log_lines.is_empty() {
+            egui::ScrollArea::vertical()
+                .max_height(420.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
                     ui.label(
                         RichText::new("No log lines yet. Launch the game or install content.")
                             .color(TEXT2),
                     );
-                }
-                for line in &state.log_lines {
-                    ui.add(
-                        egui::Label::new(RichText::new(line).size(11.0).color(TEXT).monospace())
+                });
+        } else {
+            let row_height = 15.0_f32;
+            let total = state.log_lines.len();
+            egui::ScrollArea::vertical()
+                .max_height(420.0)
+                .stick_to_bottom(true)
+                .show_rows(ui, row_height, total, |ui, range| {
+                    for index in range {
+                        let Some(line) = state.log_lines.get(index) else {
+                            continue;
+                        };
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(line).size(11.0).color(TEXT).monospace(),
+                            )
                             .selectable(true),
-                    );
-                }
-                if !state.last_exit.is_empty() {
-                    ui.label(RichText::new(&state.last_exit).color(DANGER));
-                }
-            });
+                        );
+                    }
+                });
+        }
+        if !state.last_exit.is_empty() {
+            ui.label(RichText::new(&state.last_exit).color(DANGER));
+        }
     });
     for (name, file) in [
         ("Forge installer", "forge-installer.log"),

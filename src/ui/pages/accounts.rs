@@ -8,19 +8,26 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     page_header(
         ui,
         "Accounts",
-        "Manage player identities, offline profiles, and Microsoft account.",
+        "Choose an offline username or sign in with Microsoft.",
     );
 
     card_frame(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("Active Player Identity")
+                RichText::new("Active account")
                     .size(16.0)
                     .strong()
                     .color(TEXT),
             );
             if state.config.active_account().is_some() {
-                badge_ok(ui, "Ready to Play");
+                badge_ok(
+                    ui,
+                    if state.config.use_microsoft_auth {
+                        "Ready to play"
+                    } else {
+                        "Ready for singleplayer"
+                    },
+                );
             } else {
                 badge_accent(ui, "No Profile Set");
             }
@@ -64,7 +71,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         }
                     });
                     ui.add_space(2.0);
-                    ui.horizontal(|ui| {
+                    ui.collapsing("Account details", |ui| {
                         ui.label(RichText::new("Player UUID:").size(11.5).color(MUTED));
                         ui.label(
                             RichText::new(account.uuid().to_string())
@@ -119,7 +126,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
         ui.label(
             RichText::new(
-                "Offline profiles allow you to play singleplayer and join offline/community servers without an internet login.",
+                "Play singleplayer and offline-mode servers. Servers that verify accounts require Microsoft sign-in.",
             )
             .size(12.0)
             .color(TEXT2),
@@ -339,10 +346,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if crate::ui::components::danger_button(ui, "Sign Out").clicked() {
-                                state.config.microsoft_profile = None;
-                                state.config.use_microsoft_auth = false;
-                                state.save_config();
-                                state.notify("Signed out from Microsoft account.");
+                                state.confirm_sign_out = true;
                             }
                             if !state.config.use_microsoft_auth
                                 && ui.button("Set as Active").clicked()
@@ -451,6 +455,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             });
         }
     });
+    sign_out_dialog(state, ctx);
 }
 
 fn save_account_config(state: &mut AppState, msg: String) {
@@ -477,6 +482,42 @@ pub fn save_offline_profile(
     updated.save(path)?;
     *config = updated;
     Ok(())
+}
+
+fn sign_out_dialog(state: &mut AppState, ctx: &egui::Context) {
+    if !state.confirm_sign_out {
+        return;
+    }
+    let mut finished = false;
+    egui::Window::new("Sign out of Microsoft?")
+        .order(egui::Order::Foreground)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(
+                    "MONORYX will forget the Microsoft account and delete its saved tokens from \
+                     your system credential store. You will need to sign in again to play online.",
+                )
+                .color(TEXT2),
+            );
+            ui.horizontal(|ui| {
+                if crate::ui::components::danger_button(ui, "Sign out").clicked() {
+                    state.config.microsoft_profile = None;
+                    state.config.use_microsoft_auth = false;
+                    state.save_config();
+                    state.notify("Signed out from Microsoft account.");
+                    finished = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    finished = true;
+                }
+            });
+        });
+    if finished {
+        state.confirm_sign_out = false;
+    }
 }
 
 #[cfg(test)]

@@ -56,8 +56,8 @@ pub fn select_runtime(
                 }
                 return Some(JavaRuntime {
                     path: p.clone(),
-                    major: required_major.unwrap_or(17),
-                    version_string: "custom".to_string(),
+                    major: 0,
+                    version_string: "custom (version not probed)".to_string(),
                     source: "custom".to_string(),
                 });
             }

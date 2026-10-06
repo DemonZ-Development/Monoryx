@@ -476,7 +476,7 @@ impl SupervisedProcess {
                 plan.java_exe.display()
             ))
         })?;
-        *state.lock().unwrap() = ProcessState::Running;
+        *state.lock().unwrap_or_else(|e| e.into_inner()) = ProcessState::Running;
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -505,7 +505,7 @@ impl SupervisedProcess {
 
     #[must_use]
     pub fn state(&self) -> ProcessState {
-        *self.state.lock().unwrap()
+        *self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     #[must_use]
@@ -523,7 +523,7 @@ impl SupervisedProcess {
             .await
             .map_err(|e| MonoryxError::Launch(format!("error waiting for game process: {e}")))?;
         let code = status.code().unwrap_or(-1);
-        *self.state.lock().unwrap() = if status.success() {
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = if status.success() {
             ProcessState::Stopped
         } else {
             ProcessState::Crashed(code)
@@ -537,7 +537,7 @@ impl SupervisedProcess {
                 .kill()
                 .await
                 .map_err(|e| MonoryxError::Launch(format!("couldn't stop game process: {e}")))?;
-            *self.state.lock().unwrap() = ProcessState::Stopped;
+            *self.state.lock().unwrap_or_else(|e| e.into_inner()) = ProcessState::Stopped;
         }
         Ok(())
     }

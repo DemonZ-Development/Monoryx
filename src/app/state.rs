@@ -12,6 +12,51 @@ use crate::modrinth::models::{Project, ProjectVersion};
 use crate::modrinth::search::{DiscoverTab, SearchFilters};
 use crate::modrinth::updates::UpdateInfo;
 use crate::storage::paths::MonoryxPaths;
+
+const SETTINGS_SAVE_FAILURE_PREFIX: &str =
+    "Settings could not be saved. Your changes will be lost when MONORYX closes.";
+
+const MAX_THUMBNAILS: usize = 96;
+const MAX_SCREENSHOT_THUMBNAILS: usize = 24;
+
+fn evict_lru<K, V>(map: &mut HashMap<K, V>, order: &mut std::collections::VecDeque<K>, limit: usize)
+where
+    K: Clone + Eq + std::hash::Hash,
+{
+    while map.len() > limit {
+        let Some(oldest) = order.pop_front() else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+    order.retain(|key| map.contains_key(key));
+}
+
+const CACHE_PRUNE_AGE_DAYS: u32 = 30;
+const CACHE_MAX_ENTRIES: usize = 20_000;
+const CACHE_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+
+fn prune_disk_caches(paths: &MonoryxPaths, bootstrap: bool) {
+    if !bootstrap {
+        return;
+    }
+    let day = std::time::Duration::from_secs(24 * 60 * 60);
+    let max_age = day * CACHE_PRUNE_AGE_DAYS;
+    for (dir, max_bytes) in [
+        (paths.images_dir(), 256 * 1024 * 1024),
+        (paths.metadata_dir(), 64 * 1024 * 1024),
+        (paths.manifests_dir(), 32 * 1024 * 1024),
+    ] {
+        let cache = crate::storage::cache::DiskCache::new(dir, max_age);
+        if let Err(error) = cache.prune_expired(max_age) {
+            tracing::warn!("could not prune cached data: {error}");
+        }
+        if let Err(error) = cache.evict_to_budget(CACHE_MAX_ENTRIES, max_bytes.min(CACHE_MAX_BYTES))
+        {
+            tracing::warn!("could not trim cached data: {error}");
+        }
+    }
+}
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Instant;
@@ -42,6 +87,16 @@ pub struct InstallOperation {
     pub instance_id: Option<String>,
     pub completed: usize,
     pub total: usize,
+}
+
+#[derive(Clone)]
+pub enum RetryAction {
+    Game(String),
+    Loader(String, String),
+    Content(String, String, String, String, ContentKind, Option<String>),
+    Update(String, UpdateInfo),
+    Pack(String, String),
+    PackFile(std::path::PathBuf),
 }
 
 impl InstallOperation {
@@ -118,6 +173,7 @@ pub struct AppState {
     pub config: LauncherConfig,
     pub http: reqwest::Client,
     pub metadata_slots: std::sync::Arc<tokio::sync::Semaphore>,
+    pub install_slots: std::sync::Arc<tokio::sync::Semaphore>,
     pub dm: DownloadManager,
     pub mr: ModrinthClient,
     pub nexeu: crate::nexeu::Session,
@@ -130,6 +186,8 @@ pub struct AppState {
     pub mod_counts: HashMap<String, usize>,
     pub mod_counts_generation: u64,
     pub selected_instance: Option<String>,
+    readiness_cache: HashMap<String, crate::instance::Readiness>,
+    installable_loader_cache: Vec<LoaderKind>,
     pub manifest: Option<VersionManifest>,
     pub manifest_loading: bool,
     pub patch_notes: HashMap<String, crate::minecraft::patch_notes::PatchNote>,
@@ -159,6 +217,9 @@ pub struct AppState {
     pub markdown_blocks: Vec<crate::ui::markdown::Block>,
     pub library_entries: Vec<InstalledEntry>,
     pub library_filter: ContentKind,
+    pub library_query: String,
+    pub library_status: u8,
+    pub retry_actions: HashMap<String, RetryAction>,
     pub library_view_hierarchy: bool,
     pub cached_hierarchy: Option<crate::content::DependencyHierarchy>,
     hierarchy_generation: u64,
@@ -171,10 +232,12 @@ pub struct AppState {
     pub updates_summary: String,
     pub updates_error: String,
     pub updates_instance: Option<String>,
+    pub instance_updates: crate::app::updates::InstanceUpdateState,
     pub loader_update_checking: Option<String>,
     pub loader_update_candidate: Option<(String, String)>,
     pub loader_update_busy: Option<String>,
     pub loader_update_error: String,
+    pub loader_update_instance: Option<String>,
     pub operations: std::collections::BTreeMap<String, InstallOperation>,
     pub downloads: HashMap<String, TrackedDownload>,
     pub downloads_history: Vec<TrackedDownload>,
@@ -200,12 +263,14 @@ pub struct AppState {
     pub error_dialog: String,
     pub confirm_delete: Option<String>,
     pub confirm_title: String,
+    pub confirm_sign_out: bool,
     pub edit_instance: Option<InstanceConfig>,
     pub edit_tab: usize,
     pub edit_error: String,
     pub new_draft: NewInstanceDraft,
     pub show_new_instance: bool,
     pub thumbnails: HashMap<String, egui::TextureHandle>,
+    thumbnail_order: std::collections::VecDeque<String>,
     pub image_slots: std::sync::Arc<tokio::sync::Semaphore>,
     pub pending_thumbs: HashMap<String, bool>,
     pub failed_thumbs: HashSet<String>,
@@ -220,6 +285,7 @@ pub struct AppState {
     pub screenshots_filter: Option<String>,
     pub screenshots_visible_count: usize,
     pub screenshot_thumbnails: HashMap<std::path::PathBuf, egui::TextureHandle>,
+    screenshot_thumbnail_order: std::collections::VecDeque<std::path::PathBuf>,
     pub pending_screenshot_thumbnails: HashSet<std::path::PathBuf>,
     pub screenshot_viewer: Option<std::path::PathBuf>,
     pub screenshot_full_image: Option<egui::TextureHandle>,
@@ -227,6 +293,7 @@ pub struct AppState {
     pub screenshot_full_error: String,
     pub worlds: WorldsUiState,
     pub classpath_preview: Option<Vec<std::path::PathBuf>>,
+    classpath_instance: Option<String>,
     pub global_status: String,
     pub global_frac: Option<f32>,
     pub settings_jvm: String,
@@ -277,6 +344,7 @@ impl AppState {
 
     fn build(_cc: &eframe::CreationContext<'_>, paths: MonoryxPaths, bootstrap: bool) -> Self {
         let _ = paths.ensure_all();
+        prune_disk_caches(&paths, bootstrap);
         let (config, config_error) = match LauncherConfig::load(&paths.config_file()) {
             Ok(config) => (config, String::new()),
             Err(error) => (LauncherConfig::default(), error.user_message()),
@@ -331,6 +399,7 @@ impl AppState {
             config,
             http,
             metadata_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(4)),
+            install_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
             dm,
             mr,
             nexeu: crate::nexeu::Session::default(),
@@ -343,6 +412,8 @@ impl AppState {
             mod_counts,
             mod_counts_generation: 0,
             selected_instance,
+            readiness_cache: HashMap::new(),
+            installable_loader_cache: Vec::new(),
             manifest: None,
             manifest_loading: false,
             patch_notes: HashMap::new(),
@@ -372,6 +443,9 @@ impl AppState {
             markdown_blocks: Vec::new(),
             library_entries: Vec::new(),
             library_filter: ContentKind::Mod,
+            library_query: String::new(),
+            library_status: 0,
+            retry_actions: HashMap::new(),
             library_view_hierarchy: false,
             cached_hierarchy: None,
             hierarchy_generation: 0,
@@ -384,10 +458,12 @@ impl AppState {
             updates_summary: String::new(),
             updates_error: String::new(),
             updates_instance: None,
+            instance_updates: crate::app::updates::InstanceUpdateState::new(bootstrap),
             loader_update_checking: None,
             loader_update_candidate: None,
             loader_update_busy: None,
             loader_update_error: String::new(),
+            loader_update_instance: None,
             operations: std::collections::BTreeMap::new(),
             downloads: HashMap::new(),
             downloads_history: Vec::new(),
@@ -413,13 +489,15 @@ impl AppState {
             error_dialog: config_error,
             confirm_delete: None,
             confirm_title: String::new(),
+            confirm_sign_out: false,
             edit_instance: None,
             edit_tab: 0,
             edit_error: String::new(),
             new_draft: NewInstanceDraft::default(),
             show_new_instance: false,
             thumbnails: HashMap::new(),
-            image_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(3)),
+            thumbnail_order: std::collections::VecDeque::new(),
+            image_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             pending_thumbs: HashMap::new(),
             failed_thumbs: HashSet::new(),
             reset_discover_scroll: false,
@@ -433,6 +511,7 @@ impl AppState {
             screenshots_filter: None,
             screenshots_visible_count: 48,
             screenshot_thumbnails: HashMap::new(),
+            screenshot_thumbnail_order: std::collections::VecDeque::new(),
             pending_screenshot_thumbnails: HashSet::new(),
             screenshot_viewer: None,
             screenshot_full_image: None,
@@ -440,6 +519,7 @@ impl AppState {
             screenshot_full_error: String::new(),
             worlds: WorldsUiState::default(),
             classpath_preview: None,
+            classpath_instance: None,
             global_status: String::new(),
             global_frac: None,
             settings_jvm: String::new(),
@@ -490,7 +570,13 @@ impl AppState {
         self.config.last_page = self.page.as_str().to_string();
         self.config.selected_instance = self.selected_instance.clone();
         self.config.show_snapshots = self.show_snapshots;
-        let _ = self.config.save(&self.paths.config_file());
+        if let Err(error) = self.config.save(&self.paths.config_file()) {
+            let message = error.user_message();
+            tracing::error!("Could not save settings: {message}");
+            if !self.error_dialog.starts_with(SETTINGS_SAVE_FAILURE_PREFIX) {
+                self.error_dialog = format!("{SETTINGS_SAVE_FAILURE_PREFIX}\n\n{message}");
+            }
+        }
     }
 
     pub fn discord_preview(&self) -> Option<serde_json::Value> {
@@ -519,6 +605,7 @@ impl AppState {
 
     pub fn refresh_instances(&mut self) {
         self.instance_list = self.instances.list().unwrap_or_default();
+        self.refresh_readiness_cache();
         self.mod_counts_generation = self.mod_counts_generation.wrapping_add(1);
         let generation = self.mod_counts_generation;
         let manager = self.instances.clone();
@@ -551,6 +638,14 @@ impl AppState {
             self.selected_instance = self.instance_list.first().map(|c| c.id.clone());
         }
         self.config.selected_instance = self.selected_instance.clone();
+        if self
+            .classpath_instance
+            .as_ref()
+            .is_some_and(|id| Some(id.as_str()) != self.selected_instance.as_deref())
+        {
+            self.classpath_instance = None;
+            self.classpath_preview = None;
+        }
         self.refresh_library();
         self.refresh_screenshots();
         if self.page == Page::Worlds {
@@ -565,11 +660,30 @@ impl AppState {
     }
 
     pub fn instance_readiness(&self, cfg: &InstanceConfig) -> crate::instance::Readiness {
-        crate::instance::readiness::readiness(
-            &self.paths,
-            cfg,
-            self.busy_install.contains_key(&cfg.id),
-        )
+        if self.busy_install.contains_key(&cfg.id) {
+            return crate::instance::Readiness::Installing;
+        }
+        self.readiness_cache
+            .get(&cfg.id)
+            .copied()
+            .unwrap_or(crate::instance::Readiness::NotDownloaded)
+    }
+
+    pub fn refresh_readiness_cache(&mut self) {
+        let mut readiness = std::collections::HashMap::with_capacity(self.instance_list.len());
+        let mut loaders: Vec<crate::instance::LoaderKind> = Vec::new();
+        for cfg in &self.instance_list {
+            let state = crate::instance::readiness::readiness(&self.paths, cfg, false);
+            if state.is_ready() && !loaders.contains(&cfg.loader) {
+                loaders.push(cfg.loader);
+            }
+            readiness.insert(cfg.id.clone(), state);
+        }
+        let ordered = crate::instance::LoaderKind::all();
+        loaders.retain(|kind| ordered.contains(kind));
+        loaders.sort_by_key(|kind| ordered.iter().position(|other| other == kind));
+        self.readiness_cache = readiness;
+        self.installable_loader_cache = loaders;
     }
 
     pub fn installable_instances(&self) -> Vec<InstanceConfig> {
@@ -581,11 +695,7 @@ impl AppState {
     }
 
     pub fn installable_loaders(&self) -> Vec<crate::instance::LoaderKind> {
-        crate::instance::readiness::installable_loaders(
-            self.instance_list.iter(),
-            &self.paths,
-            &self.busy_install,
-        )
+        self.installable_loader_cache.clone()
     }
 
     pub fn install_blocker(&self) -> Option<String> {
@@ -595,11 +705,11 @@ impl AppState {
         match self.instance_readiness(&cfg) {
             crate::instance::Readiness::Ready => None,
             crate::instance::Readiness::Installing => Some(format!(
-                "{} is still downloading. Wait for it to finish, or repair it.",
+                "{} is preparing game files. Wait for it to finish.",
                 cfg.name
             )),
             crate::instance::Readiness::NotDownloaded => Some(format!(
-                "{} has not been downloaded yet. Finish creating it, or repair its files, before installing mods.",
+                "{} needs game files. Download them from Home or Discover first.",
                 cfg.name
             )),
         }
@@ -611,12 +721,14 @@ impl AppState {
         if page != Page::Screenshots && page != Page::Home {
             self.screenshot_thumbnails.clear();
             self.screenshot_thumbnails.shrink_to_fit();
+            self.screenshot_thumbnail_order.clear();
             self.pending_screenshot_thumbnails.clear();
             self.pending_screenshot_thumbnails.shrink_to_fit();
         }
         if page != Page::Discover {
             self.thumbnails.clear();
             self.thumbnails.shrink_to_fit();
+            self.thumbnail_order.clear();
             self.pending_thumbs.clear();
             self.pending_thumbs.shrink_to_fit();
             self.failed_thumbs.clear();
@@ -850,7 +962,8 @@ impl AppState {
     }
 
     pub fn ensure_screenshot_thumb(&mut self, path: &std::path::Path) {
-        if !self.screenshots.iter().any(|entry| entry.path == path)
+        if self.pending_screenshot_thumbnails.len() >= 6
+            || !self.screenshots.iter().any(|entry| entry.path == path)
             || self.screenshot_thumbnails.contains_key(path)
             || !self
                 .pending_screenshot_thumbnails
@@ -895,7 +1008,7 @@ impl AppState {
             };
             let image_path = path.clone();
             let result =
-                tokio::task::spawn_blocking(move || read_local_image(&image_path, 2560, 1440))
+                tokio::task::spawn_blocking(move || read_local_image(&image_path, 1920, 1080))
                     .await
                     .map_err(|error| error.to_string())
                     .and_then(|result| result);
@@ -909,16 +1022,52 @@ impl AppState {
         self.notice_at = Some(Instant::now());
     }
 
-    fn ctx_follow(ctx: egui::Context) {
-        std::thread::spawn(move || {
-            for _ in 0..600 {
-                if ctx.input(|i| i.pointer.any_released()) {
-                    break;
-                }
-                ctx.request_repaint_after(std::time::Duration::from_millis(90));
-                std::thread::sleep(std::time::Duration::from_millis(80));
+    pub fn start_operation(
+        &mut self,
+        id: &str,
+        label: String,
+        instance: Option<String>,
+        retry: RetryAction,
+    ) -> bool {
+        if self.operations.contains_key(id) {
+            return false;
+        }
+        if let Some(instance) = &instance {
+            self.invalidate_instance_updates(instance);
+        }
+        self.retry_actions.insert(id.into(), retry);
+        self.downloads_history.retain(|history| history.id != id);
+        self.handle_event(
+            AppEvent::OperationStarted(id.into(), label.clone(), instance),
+            &self.egui_ctx.clone(),
+        );
+        self.notify(format!("{label}. See Downloads for progress."));
+        self.egui_ctx.request_repaint();
+        true
+    }
+
+    pub fn retry_operation(&mut self, id: &str) {
+        let Some(action) = self.retry_actions.get(id).cloned() else {
+            return;
+        };
+        match action {
+            RetryAction::Game(instance) => crate::app::tasks::repair_instance(self, instance),
+            RetryAction::Loader(instance, version) => {
+                crate::app::tasks::install_loader_update(self, instance, version);
             }
-        });
+            RetryAction::Content(instance, project, slug, title, kind, version) => {
+                let selected = self.selected_instance.replace(instance);
+                crate::app::tasks::install_content(self, project, slug, title, kind, version);
+                self.selected_instance = selected;
+            }
+            RetryAction::Update(instance, info) => {
+                let selected = self.selected_instance.replace(instance);
+                crate::app::tasks::update_one(self, info);
+                self.selected_instance = selected;
+            }
+            RetryAction::Pack(slug, title) => crate::app::tasks::install_modpack(self, slug, title),
+            RetryAction::PackFile(path) => crate::app::tasks::install_pack_file(self, path),
+        }
     }
 
     pub fn begin_row_activity(&mut self, file_name: &str, label: &str) {
@@ -931,7 +1080,8 @@ impl AppState {
                 finished: None,
             },
         );
-        Self::ctx_follow(self.egui_ctx.clone());
+        self.row_activity
+            .retain(|_, activity| activity.finished.is_none());
         self.egui_ctx.request_repaint();
     }
 
@@ -944,9 +1094,30 @@ impl AppState {
 
     #[must_use]
     pub fn row_is_busy(&self, file_name: &str) -> bool {
-        self.row_activity
-            .get(file_name)
-            .is_some_and(|entry| entry.finished.is_none())
+        if self.operations.contains_key(file_name) {
+            return true;
+        }
+        let Some(instance) = &self.selected_instance else {
+            return false;
+        };
+        if self
+            .operations
+            .contains_key(&format!("update:{instance}:{file_name}"))
+        {
+            return true;
+        }
+        self.library_entries
+            .iter()
+            .find(|entry| entry.file_name == file_name)
+            .is_some_and(|entry| {
+                [entry.project_id.as_deref(), entry.project_slug.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|project| {
+                        self.operations
+                            .contains_key(&format!("content:{instance}:{project}"))
+                    })
+            })
     }
 
     pub fn fail(&mut self, msg: impl Into<String>) {
@@ -1130,7 +1301,7 @@ impl AppState {
         }
     }
 
-    fn handle_event(&mut self, ev: AppEvent, ctx: &egui::Context) {
+    pub(crate) fn handle_event(&mut self, ev: AppEvent, ctx: &egui::Context) {
         match ev {
             AppEvent::HierarchyBuilt(generation, id, result) => {
                 if generation == self.hierarchy_generation
@@ -1378,11 +1549,21 @@ impl AppState {
             | AppEvent::NexeuCommand(..)
             | AppEvent::NexeuPower(..) => {}
             AppEvent::InstanceImported(result) => match result {
-                Ok(id) => {
+                Ok(imported) => {
                     self.refresh_instances();
-                    self.selected_instance = Some(id);
+                    self.selected_instance = Some(imported.id);
                     self.refresh_library();
-                    self.notify("Instance imported. Play to install any missing Minecraft files.");
+                    if imported.stripped_args.is_empty() {
+                        self.notify(
+                            "Instance imported. Play to install any missing Minecraft files.",
+                        );
+                    } else {
+                        self.notify(format!(
+                            "Instance imported. Removed {} unsafe argument(s) from the archive: {}. Re-add them in this instance's settings if you trust the source.",
+                            imported.stripped_args.len(),
+                            imported.stripped_args.join(" ")
+                        ));
+                    }
                 }
                 Err(error) => self.fail(error),
             },
@@ -1435,7 +1616,11 @@ impl AppState {
             }
             AppEvent::ClasspathResolved(id, cp) => {
                 if self.selected_instance.as_deref() == Some(id.as_str()) {
+                    self.classpath_instance = Some(id.clone());
                     self.classpath_preview = Some(cp);
+                } else {
+                    self.classpath_instance = None;
+                    self.classpath_preview = None;
                 }
             }
             AppEvent::AppCdsRecorded(id) => {
@@ -1445,18 +1630,26 @@ impl AppState {
                         let _ = self.instances.save(&cfg);
                         self.refresh_instances();
                         if crate::app::appcds::archive_exists(&self.instances, &id) {
-                            if let Some(cp) = self.classpath_preview.clone() {
-                                crate::app::appcds::write_stamp(&self.instances, &id, &cp);
-                                self.notify(
-                                    "Startup archive recorded. It applies from next launch.",
-                                );
+                            let matches_preview =
+                                self.classpath_instance.as_deref() == Some(id.as_str());
+                            if matches_preview {
+                                if let Some(cp) = self.classpath_preview.clone() {
+                                    crate::app::appcds::write_stamp(&self.instances, &id, &cp);
+                                    self.notify(
+                                        "Startup archive recorded. It applies from next launch.",
+                                    );
+                                } else {
+                                    self.notify(
+                                        "Startup archive recorded. Launch the game once so the \
+                                         archive can be verified, then use it from the launch after.",
+                                    );
+                                }
                             } else {
                                 self.notify(
-                                    "Startup archive recorded. Launch the game once so the \
-                                     archive can be verified, then use it from the launch after.",
+                                    "Startup archive recorded. Launch the game once so the archive \
+                                     can be verified against its classpath.",
                                 );
                             }
-                            self.notify("Startup archive recorded. It applies from next launch.");
                         } else {
                             self.notify(
                                 "Could not record a startup archive for this instance. It still \
@@ -1493,6 +1686,9 @@ impl AppState {
             }
             AppEvent::Thumbnail(url, r) => {
                 self.pending_thumbs.remove(&url);
+                if self.page != Page::Discover {
+                    return;
+                }
                 match r {
                     Ok(img) => {
                         let cimg = egui::ColorImage::from_rgba_unmultiplied(
@@ -1500,12 +1696,13 @@ impl AppState {
                             &img.pixels,
                         );
                         let tex = ctx.load_texture(url.clone(), cimg, egui::TextureOptions::LINEAR);
-                        if self.thumbnails.len() >= 96 {
-                            if let Some(old) = self.thumbnails.keys().next().cloned() {
-                                self.thumbnails.remove(&old);
-                            }
-                        }
+                        self.thumbnail_order.push_back(url.clone());
                         self.thumbnails.insert(url, tex);
+                        evict_lru(
+                            &mut self.thumbnails,
+                            &mut self.thumbnail_order,
+                            MAX_THUMBNAILS,
+                        );
                     }
                     Err(_) => {
                         self.failed_thumbs.insert(url);
@@ -1551,23 +1748,26 @@ impl AppState {
             }
             AppEvent::ScreenshotThumbnail(path, result) => {
                 self.pending_screenshot_thumbnails.remove(&path);
-                if self.screenshots.iter().any(|entry| entry.path == path) {
+                if matches!(self.page, Page::Home | Page::Screenshots)
+                    && self.screenshots.iter().any(|entry| entry.path == path)
+                {
                     if let Ok(image) = result {
                         let pixels = egui::ColorImage::from_rgba_unmultiplied(
                             [image.width, image.height],
                             &image.pixels,
                         );
-                        if self.screenshot_thumbnails.len() >= 24 {
-                            if let Some(old) = self.screenshot_thumbnails.keys().next().cloned() {
-                                self.screenshot_thumbnails.remove(&old);
-                            }
-                        }
                         let texture = ctx.load_texture(
                             format!("screenshot:{}", path.display()),
                             pixels,
                             egui::TextureOptions::LINEAR,
                         );
-                        self.screenshot_thumbnails.insert(path, texture);
+                        self.screenshot_thumbnails.insert(path.clone(), texture);
+                        self.screenshot_thumbnail_order.push_back(path);
+                        evict_lru(
+                            &mut self.screenshot_thumbnails,
+                            &mut self.screenshot_thumbnail_order,
+                            MAX_SCREENSHOT_THUMBNAILS,
+                        );
                     }
                 }
             }
@@ -1600,11 +1800,17 @@ impl AppState {
             }
             AppEvent::OperationStarted(id, label, instance_id) => {
                 self.error_dialog.clear();
+                if id.starts_with("game:") || id.starts_with("loader:") {
+                    if let Some(instance) = &instance_id {
+                        self.busy_install
+                            .insert(instance.clone(), ("Starting download…".into(), 0, 0));
+                    }
+                }
                 self.operations.insert(
                     id,
                     InstallOperation {
                         label,
-                        phase: "Preparing...".to_string(),
+                        phase: "Queued for installation…".to_string(),
                         instance_id,
                         completed: 0,
                         total: 0,
@@ -1613,6 +1819,12 @@ impl AppState {
             }
             AppEvent::InstallProgress(id, phase, a, b) => {
                 if let Some(operation) = self.operations.get_mut(&id) {
+                    if id.starts_with("game:") || id.starts_with("loader:") {
+                        if let Some(instance) = &operation.instance_id {
+                            self.busy_install
+                                .insert(instance.clone(), (phase.clone(), a, b));
+                        }
+                    }
                     operation.phase = phase;
                     operation.completed = a;
                     operation.total = b;
@@ -1620,6 +1832,14 @@ impl AppState {
             }
             AppEvent::OperationFinished(id, result) => {
                 if let Some(operation) = self.operations.remove(&id) {
+                    if id.starts_with("game:") || id.starts_with("loader:") {
+                        if let Some(instance) = &operation.instance_id {
+                            self.busy_install.remove(instance);
+                        }
+                    }
+                    if result.is_ok() {
+                        self.retry_actions.remove(&id);
+                    }
                     self.downloads_history.insert(
                         0,
                         TrackedDownload {
@@ -1638,6 +1858,95 @@ impl AppState {
                         },
                     );
                     self.downloads_history.truncate(50);
+                    self.retry_actions.retain(|key, _| {
+                        self.operations.contains_key(key)
+                            || self.downloads_history.iter().any(|h| &h.id == key)
+                    });
+                    if self.operations.is_empty() {
+                        self.global_status.clear();
+                        self.global_frac = None;
+                        self.row_activity.clear();
+                    }
+                }
+            }
+            AppEvent::ContentInstallDone(id, instance, result) => {
+                let updated_file = self.retry_actions.get(&id).and_then(|action| match action {
+                    RetryAction::Update(_, info) => Some(info.file_name.clone()),
+                    _ => None,
+                });
+                if let Some(action) = self.retry_actions.get(&id) {
+                    match action {
+                        RetryAction::Update(_, info) => {
+                            let file = info.file_name.clone();
+                            self.end_row_activity(&file, result.is_ok());
+                        }
+                        RetryAction::Content(_, _, slug, _, _, _) => {
+                            let files: Vec<_> = self
+                                .library_entries
+                                .iter()
+                                .filter(|entry| entry.project_slug.as_ref() == Some(slug))
+                                .map(|entry| entry.file_name.clone())
+                                .collect();
+                            for file in files {
+                                self.end_row_activity(&file, result.is_ok());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                self.end_row_activity(&id, result.is_ok());
+                self.handle_event(
+                    AppEvent::OperationFinished(
+                        id,
+                        result.as_ref().map(|_| ()).map_err(Clone::clone),
+                    ),
+                    ctx,
+                );
+                match result {
+                    Ok(files) => {
+                        self.invalidate_instance_updates(&instance);
+                        for file in &files {
+                            self.end_row_activity(file, true);
+                        }
+                        if self.selected_instance.as_deref() == Some(&instance) {
+                            self.refresh_library();
+                            self.updates.retain(|update| {
+                                !files.contains(&update.file_name)
+                                    && updated_file.as_ref() != Some(&update.file_name)
+                            });
+                            if self.updates_checked {
+                                self.updates_summary = if self.updates.is_empty() {
+                                    "Installed content is up to date.".into()
+                                } else {
+                                    format!("{} update(s) still available.", self.updates.len())
+                                };
+                            }
+                        }
+                        self.notify(format!("Installed {} file(s)", files.len()));
+                    }
+                    Err(error) => self.notify(format!(
+                        "Download failed: {error}. Open Downloads to retry."
+                    )),
+                }
+            }
+            AppEvent::PackInstallDone(id, result) => {
+                self.handle_event(
+                    AppEvent::OperationFinished(
+                        id,
+                        result.as_ref().map(|_| ()).map_err(Clone::clone),
+                    ),
+                    ctx,
+                );
+                match result {
+                    Ok(instance) => {
+                        self.refresh_instances();
+                        self.selected_instance = Some(instance);
+                        self.refresh_library();
+                        self.notify("Modpack ready to play");
+                    }
+                    Err(error) => self.notify(format!(
+                        "Modpack download failed: {error}. Open Downloads to retry."
+                    )),
                 }
             }
             AppEvent::InstallDone(id, r) => {
@@ -1646,111 +1955,22 @@ impl AppState {
                 self.global_frac = None;
                 match r {
                     Ok(v) => {
+                        self.invalidate_instance_updates(&id);
                         self.notify(format!("Instance ready ({v})"));
                         self.refresh_instances();
                     }
                     Err(e) => self.fail(e),
                 }
             }
-            AppEvent::ModInstallDone(r) => {
-                let ok = r.is_ok();
-                let message = r.as_ref().err().cloned().unwrap_or_default();
-                self.handle_operation_done("mod-install", ok, message);
-                match r {
-                    Ok(files) => {
-                        self.notify(format!("Installed {} file(s)", files.len()));
-                        for file in &files {
-                            self.end_row_activity(file, true);
-                        }
-                        self.refresh_library();
-                        self.updates.retain(|u| !files.contains(&u.file_name));
-                        if self.updates.is_empty() {
-                            self.updates_summary.clear();
-                            self.updates_checked = true;
-                        } else {
-                            self.updates_summary =
-                                format!("{} update(s) still available.", self.updates.len());
-                        }
-                    }
-                    Err(e) => {
-                        for key in self.row_activity.keys().cloned().collect::<Vec<_>>() {
-                            self.end_row_activity(&key, false);
-                        }
-                        self.fail(e);
-                    }
-                }
-            }
-            AppEvent::PackDone(r) => {
-                let ok = r.is_ok();
-                let message = r.as_ref().err().cloned().unwrap_or_default();
-                self.handle_operation_done("modpack-install", ok, message);
-                match r {
-                    Ok(id) => {
-                        self.refresh_instances();
-                        self.selected_instance = Some(id);
-                        self.notify("Modpack installed");
-                    }
-                    Err(e) => self.fail(e),
-                }
-            }
-            AppEvent::UpdatesFound(id, result) => {
-                if self.selected_instance.as_deref() != Some(&id) {
-                    return;
-                }
-                self.updates_loading = false;
-                self.updates_checked = true;
-                match result {
-                    Ok(scan) => {
-                        self.updates = scan.updates;
-                        let checked_sources =
-                            if scan.curseforge_checked > 0 && scan.modrinth_checked > 0 {
-                                format!(
-                                    "Checked {} items ({} Modrinth, {} CurseForge).",
-                                    scan.checked, scan.modrinth_checked, scan.curseforge_checked
-                                )
-                            } else if scan.curseforge_checked > 0 {
-                                format!("Checked {} CurseForge item(s).", scan.checked)
-                            } else if scan.modrinth_checked > 0 {
-                                format!("Checked {} Modrinth item(s).", scan.checked)
-                            } else {
-                                format!("Checked {} item(s).", scan.checked)
-                            };
-                        self.updates_summary = format!(
-                            "{} {} update(s) available.{}",
-                            checked_sources,
-                            self.updates.len(),
-                            if scan.untracked > 0 {
-                                format!(
-                                    " {} manual item(s) could not be identified.",
-                                    scan.untracked
-                                )
-                            } else {
-                                String::new()
-                            }
-                        );
-                        self.updates_error = if scan.errors.is_empty() {
-                            String::new()
-                        } else {
-                            format!(
-                                "Could not check {} item(s): {}",
-                                scan.errors.len(),
-                                scan.errors.join("; ")
-                            )
-                        };
-                        self.refresh_library();
-                    }
-                    Err(error) => {
-                        self.updates.clear();
-                        self.updates_summary.clear();
-                        self.updates_error = error;
-                    }
-                }
+            AppEvent::InstanceUpdatesChecked(generation, target, report) => {
+                self.finish_instance_update_check(generation, target, *report);
             }
             AppEvent::LoaderUpdateChecked(id, result) => {
                 if self.loader_update_checking.as_deref() != Some(&id) {
                     return;
                 }
                 self.loader_update_checking = None;
+                self.loader_update_instance = Some(id.clone());
                 match result {
                     Ok(Some(version)) => {
                         self.loader_update_candidate = Some((id, version));
@@ -1771,6 +1991,7 @@ impl AppState {
                 self.loader_update_busy = None;
                 match result {
                     Ok(version) => {
+                        self.invalidate_instance_updates(&id);
                         self.loader_update_candidate = None;
                         self.loader_update_error.clear();
                         if self.edit_instance.as_ref().is_some_and(|cfg| cfg.id == id) {
@@ -1832,7 +2053,12 @@ impl AppState {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
                 self.thumbnails.clear();
+                self.thumbnail_order.clear();
                 self.pending_thumbs.clear();
+                self.screenshot_thumbnails.clear();
+                self.screenshot_thumbnail_order.clear();
+                self.screenshot_full_image = None;
+                self.project_image = None;
                 self.global_status.clear();
                 self.global_frac = None;
                 self.notice.clear();
@@ -1999,54 +2225,7 @@ impl AppState {
             AppEvent::Download(event) => {
                 apply_download_event(&mut self.downloads, &mut self.downloads_history, event);
             }
-            AppEvent::RepairDone(r) => {
-                let ok = r.is_ok();
-                let message = r.as_ref().err().cloned().unwrap_or_default();
-                self.handle_operation_done("repair", ok, message);
-                match r {
-                    Ok(problems) => {
-                        if problems.is_empty() {
-                            self.notify("Repair finished: everything verified");
-                        } else {
-                            self.notify(format!(
-                                "Repair finished: {} issue(s) fixed",
-                                problems.len()
-                            ));
-                        }
-                        self.refresh_instances();
-                    }
-                    Err(e) => self.fail(e),
-                }
-            }
         }
-    }
-
-    fn handle_operation_done(&mut self, id: &str, ok: bool, message: String) {
-        let label = self.operations.get(id).map_or_else(
-            || match id {
-                "mod-install" => "Downloading mod and dependencies".to_string(),
-                "modpack-install" => "Installing modpack".to_string(),
-                "repair" => "Repairing instance".to_string(),
-                _ => id.to_string(),
-            },
-            |op| op.label.clone(),
-        );
-        self.operations.remove(id);
-        self.global_status.clear();
-        self.global_frac = None;
-        self.downloads_history.insert(
-            0,
-            TrackedDownload {
-                id: id.to_string(),
-                label,
-                downloaded: 0,
-                total: None,
-                speed_bps: 0.0,
-                state: if ok { "completed" } else { "failed" }.to_string(),
-                message,
-            },
-        );
-        self.downloads_history.truncate(50);
     }
 
     pub fn handle_game_crash(
@@ -2380,6 +2559,9 @@ impl AppState {
     }
 
     pub fn ensure_thumb(&mut self, url: &str) {
+        if self.pending_thumbs.len() >= 12 {
+            return;
+        }
         if url.is_empty()
             || !url.starts_with("https://")
             || self.thumbnails.contains_key(url)
@@ -2391,6 +2573,7 @@ impl AppState {
         self.pending_thumbs.insert(url.to_string(), true);
         let http = self.http.clone();
         let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
         let url_owned = url.to_string();
         let img_dir = self.paths.images_dir();
         let slots = self.image_slots.clone();
@@ -2422,6 +2605,7 @@ impl AppState {
                 Err(error) => Err(error),
             };
             let _ = tx.send(AppEvent::Thumbnail(url_owned, decoded));
+            ctx.request_repaint();
         });
     }
 
@@ -2718,10 +2902,21 @@ fn decode_image(
     let (width, height) = reader
         .into_dimensions()
         .map_err(|error| error.to_string())?;
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 50_000_000 {
+    let pixel_limit = if max_width <= 128 {
+        4_000_000
+    } else {
+        12_000_000
+    };
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > pixel_limit {
         return Err("Image dimensions are too large to display.".to_string());
     }
-    let image = image::load_from_memory(&bytes).map_err(|error| error.to_string())?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| error.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|error| error.to_string())?;
     let rgba = image.thumbnail(max_width, max_height).to_rgba8();
     Ok(DecodedImage {
         width: rgba.width() as usize,
@@ -2748,6 +2943,194 @@ fn read_local_image(
 #[cfg(test)]
 mod background_tests {
     use super::*;
+
+    #[test]
+    fn readiness_is_cached_and_tracks_installed_client_jars() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = MonoryxPaths::new(dir.path().into());
+        paths.ensure_all().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let mut state = AppState::new_for_preview(&cc, paths.clone());
+        let mut cfg = state
+            .instances
+            .create(
+                "Cached".into(),
+                "1.21.1".into(),
+                LoaderKind::Fabric,
+                "0.16.9".into(),
+            )
+            .unwrap();
+        cfg.resolved_version_id = "1.21.1-fabric".to_string();
+        state.instances.save(&cfg).unwrap();
+
+        state.refresh_instances();
+        assert_eq!(
+            state.instance_readiness(&cfg),
+            crate::instance::Readiness::NotDownloaded
+        );
+        assert!(state.installable_loaders().is_empty());
+
+        let jar = crate::instance::readiness::client_jar_for(&paths, &cfg).unwrap();
+        std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        std::fs::write(jar, b"fake jar").unwrap();
+
+        state.refresh_instances();
+        assert_eq!(
+            state.instance_readiness(&cfg),
+            crate::instance::Readiness::Ready
+        );
+        assert_eq!(
+            state.installable_loaders(),
+            vec![LoaderKind::Fabric],
+            "a ready instance must offer its loader"
+        );
+
+        state
+            .busy_install
+            .insert(cfg.id.clone(), (String::new(), 0, 0));
+        assert_eq!(
+            state.instance_readiness(&cfg),
+            crate::instance::Readiness::Installing,
+            "busy instances must still report Installing from the cache"
+        );
+    }
+
+    #[test]
+    fn operation_feedback_is_immediate_and_duplicate_requests_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx);
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        assert!(state.start_operation(
+            "game:one",
+            "Preparing game".into(),
+            Some("one".into()),
+            RetryAction::Game("one".into())
+        ));
+        assert!(state.busy_install.contains_key("one"));
+        assert!(state.operations.contains_key("game:one"));
+        assert!(!state.start_operation(
+            "game:one",
+            "Duplicate".into(),
+            Some("one".into()),
+            RetryAction::Game("one".into())
+        ));
+        assert_eq!(state.operations.len(), 1);
+        state.handle_event(
+            AppEvent::OperationFinished("game:one".into(), Err("Connection lost".into())),
+            &cc.egui_ctx,
+        );
+        assert!(state.busy_install.is_empty());
+        assert!(state.retry_actions.contains_key("game:one"));
+        assert_eq!(state.downloads_history[0].state, "failed");
+        assert!(state.start_operation(
+            "game:one",
+            "Retrying game".into(),
+            Some("one".into()),
+            RetryAction::Game("one".into())
+        ));
+        state.handle_event(
+            AppEvent::OperationFinished("game:one".into(), Ok(())),
+            &cc.egui_ctx,
+        );
+        assert!(state.retry_actions.is_empty());
+        assert!(state.busy_install.is_empty());
+        assert_eq!(state.downloads_history.len(), 1);
+        assert_eq!(state.downloads_history[0].state, "completed");
+    }
+
+    #[test]
+    fn failed_content_install_does_not_finish_another_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        for project in ["one", "two"] {
+            let id = format!("content:instance:{project}");
+            state.start_operation(
+                &id,
+                project.into(),
+                Some("instance".into()),
+                RetryAction::Content(
+                    "instance".into(),
+                    project.into(),
+                    project.into(),
+                    project.into(),
+                    ContentKind::Mod,
+                    None,
+                ),
+            );
+            state.begin_row_activity(&id, "Downloading");
+        }
+        state.handle_event(
+            AppEvent::ContentInstallDone(
+                "content:instance:one".into(),
+                "instance".into(),
+                Err("Disconnected".into()),
+            ),
+            &ctx,
+        );
+        assert!(!state.operations.contains_key("content:instance:one"));
+        assert!(state.operations.contains_key("content:instance:two"));
+        assert!(!state.row_is_busy("content:instance:one"));
+        assert!(state.row_is_busy("content:instance:two"));
+    }
+
+    #[test]
+    fn images_arriving_after_leaving_a_page_are_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        state.page = Page::Settings;
+        let image = DecodedImage {
+            width: 1,
+            height: 1,
+            pixels: vec![255; 4],
+        };
+        state.handle_event(
+            AppEvent::Thumbnail("https://example.com/icon.png".into(), Ok(image.clone())),
+            &ctx,
+        );
+        state.handle_event(
+            AppEvent::ScreenshotFull(dir.path().join("closed.png"), Ok(image)),
+            &ctx,
+        );
+        assert!(state.thumbnails.is_empty());
+        assert!(state.screenshot_full_image.is_none());
+    }
+
+    #[test]
+    fn updating_another_instance_does_not_mark_the_same_file_busy_here() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        state.selected_instance = Some("active".into());
+        state.start_operation(
+            "update:other:sodium.jar",
+            "Updating Sodium".into(),
+            Some("other".into()),
+            RetryAction::Game("other".into()),
+        );
+        state.begin_row_activity("sodium.jar", "Downloading");
+        assert!(!state.row_is_busy("sodium.jar"));
+        state.start_operation(
+            "update:active:sodium.jar",
+            "Updating Sodium".into(),
+            Some("active".into()),
+            RetryAction::Game("active".into()),
+        );
+        state.handle_event(
+            AppEvent::OperationFinished(
+                "update:other:sodium.jar".into(),
+                Err("Disconnected".into()),
+            ),
+            &ctx,
+        );
+        assert!(state.row_is_busy("sodium.jar"));
+    }
 
     #[test]
     fn hierarchy_results_cannot_overwrite_a_newer_instance_snapshot() {

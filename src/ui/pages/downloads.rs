@@ -11,7 +11,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     );
     for op in state.operations.clone().into_values() {
         card_frame(ui, |ui| {
-            ui.label(RichText::new(&op.label).strong().color(TEXT));
+            crate::ui::components::activity_indicator(ui, &op.label);
             ui.label(RichText::new(&op.phase).size(11.0).color(TEXT2));
             progress_row(ui, op.fraction(), Some(ProgressDetail::default()));
         });
@@ -28,7 +28,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     }
     for d in state.downloads.clone().into_values() {
         card_frame(ui, |ui| {
-            ui.label(RichText::new(&d.label).strong().color(TEXT));
+            crate::ui::components::activity_indicator(ui, &d.label);
             let frac = d.total.map(|t| {
                 if t > 0 {
                     (d.downloaded as f32 / t as f32).clamp(0.0, 1.0)
@@ -64,9 +64,17 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         .iter()
         .filter(|h| {
             h.state != "completed"
-                || h.label.starts_with("Installing ")
-                || h.id == "mod-install"
-                || h.id == "modpack-install"
+                || [
+                    "game:",
+                    "loader:",
+                    "content:",
+                    "update:",
+                    "pack:",
+                    "pack-file:",
+                    "launch-",
+                ]
+                .iter()
+                .any(|prefix| h.id.starts_with(prefix))
         })
         .take(20)
         .cloned()
@@ -84,6 +92,18 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     }
                     ui.label(RichText::new(&h.label).size(12.0).color(TEXT));
                 });
+                if h.state == "failed" {
+                    ui.horizontal_wrapped(|ui| {
+                        if state.retry_actions.contains_key(&h.id)
+                            && crate::ui::components::primary_button(ui, "Retry").clicked()
+                        {
+                            state.retry_operation(&h.id);
+                        }
+                        if ui.button("View logs").clicked() {
+                            state.set_page(crate::app::events::Page::Logs);
+                        }
+                    });
+                }
                 if !h.message.is_empty() {
                     ui.label(RichText::new(&h.message).size(11.0).color(TEXT2));
                 }
@@ -92,6 +112,9 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         if ui.button("Clear history").clicked() {
             state.downloads_history.clear();
+            state
+                .retry_actions
+                .retain(|id, _| state.operations.contains_key(id));
         }
     }
     ui.add_space(8.0);

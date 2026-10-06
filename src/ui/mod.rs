@@ -1,3 +1,4 @@
+pub mod backdrop;
 pub mod components;
 pub mod markdown;
 pub mod pages;

@@ -19,7 +19,19 @@ pub enum Block {
     Table(Vec<Vec<Vec<Span>>>),
 }
 
+const INLINE_SCAN_ALLOWANCE: usize = 8 * 1024 * 1024;
+const INLINE_SCAN_WINDOW: usize = 4096;
+const MAX_INPUT_BYTES: usize = 1024 * 1024;
+const MAX_BLOCKS: usize = 2000;
+const MAX_TABLE_ROWS: usize = 200;
+const MAX_TABLE_COLS: usize = 24;
+const MAX_LIST_ITEMS: usize = 1000;
+const MAX_CODE_BYTES: usize = 64 * 1024;
+const MAX_REFS: usize = 512;
+const TRUNCATION_NOTE: &str = "\n... description truncated";
+
 pub fn parse(markdown: &str) -> Vec<Block> {
+    let markdown = markdown.get(..MAX_INPUT_BYTES).unwrap_or(markdown);
     let mut refs = std::collections::HashMap::new();
     for line in markdown.lines() {
         let trimmed = line.trim();
@@ -29,6 +41,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
                 let url = trimmed[bracket_end + 2..].trim();
                 let clean_url = url.split_whitespace().next().unwrap_or(url);
                 if !key.is_empty()
+                    && refs.len() < MAX_REFS
                     && (clean_url.starts_with("http://") || clean_url.starts_with("https://"))
                 {
                     refs.insert(key, clean_url.to_string());
@@ -40,7 +53,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
     let lines: Vec<&str> = markdown.lines().collect();
     let mut blocks = Vec::new();
     let mut index = 0;
-    while index < lines.len() {
+    while index < lines.len() && blocks.len() < MAX_BLOCKS {
         let line = lines[index].trim();
         if line.is_empty() || is_reference_line(line) || is_ignorable_html_line(line) {
             index += 1;
@@ -50,12 +63,30 @@ pub fn parse(markdown: &str) -> Vec<Block> {
             let fence = &line[..3];
             index += 1;
             let mut code = String::new();
+            let mut truncated = false;
             while index < lines.len() && !lines[index].trim().starts_with(fence) {
+                if code.len() >= MAX_CODE_BYTES {
+                    truncated = true;
+                    index += 1;
+                    continue;
+                }
                 if !code.is_empty() {
                     code.push('\n');
                 }
+                let remaining = MAX_CODE_BYTES.saturating_sub(code.len());
+                if lines[index].len() > remaining {
+                    if let Some(head) = lines[index].get(..remaining) {
+                        code.push_str(head);
+                    }
+                    truncated = true;
+                    index += 1;
+                    continue;
+                }
                 code.push_str(lines[index]);
                 index += 1;
+            }
+            if truncated {
+                code.push_str(TRUNCATION_NOTE);
             }
             blocks.push(Block::Code(code));
             index += 1;
@@ -95,9 +126,18 @@ pub fn parse(markdown: &str) -> Vec<Block> {
         if is_table_line(line) && index + 1 < lines.len() && is_table_separator(lines[index + 1]) {
             let mut rows = vec![parse_table_row(line, &refs)];
             index += 2;
-            while index < lines.len() && is_table_line(lines[index].trim()) {
+            while index < lines.len()
+                && rows.len() < MAX_TABLE_ROWS
+                && is_table_line(lines[index].trim())
+            {
                 rows.push(parse_table_row(lines[index], &refs));
                 index += 1;
+            }
+            while index < lines.len() && is_table_line(lines[index].trim()) {
+                index += 1;
+            }
+            for row in &mut rows {
+                row.truncate(MAX_TABLE_COLS);
             }
             blocks.push(Block::Table(rows));
             continue;
@@ -105,7 +145,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
         if let Some((indent, item)) = list_item(lines[index]) {
             let mut items = vec![(indent, parse_inline_with_refs(item, &refs))];
             index += 1;
-            while index < lines.len() {
+            while index < lines.len() && items.len() < MAX_LIST_ITEMS {
                 if let Some((indent, item)) = list_item(lines[index]) {
                     items.push((indent, parse_inline_with_refs(item, &refs)));
                     index += 1;
@@ -164,24 +204,109 @@ fn is_reference_line(line: &str) -> bool {
     false
 }
 
-fn decode_html_entities(s: &str) -> String {
-    s.replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&#160;", " ")
-        .replace("&ndash;", "-")
-        .replace("&mdash;", "—")
-        .replace("&bull;", "•")
-        .replace("&copy;", "©")
-        .replace("&reg;", "®")
-        .replace("&trade;", "™")
-        .replace("&#x2F;", "/")
-        .replace("&#47;", "/")
-        .replace("&#32;", " ")
+fn decode_inline_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while !rest.is_empty() {
+        let Some(offset) = rest.find(['<', '&']) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..offset]);
+        rest = &rest[offset..];
+        if rest.is_empty() {
+            break;
+        }
+        if rest.starts_with('&') {
+            match entity_len(rest) {
+                Some(len) => {
+                    out.push_str(&decode_entity(&rest[..len]));
+                    rest = &rest[len..];
+                }
+                None => {
+                    out.push('&');
+                    rest = &rest[1..];
+                }
+            }
+            continue;
+        }
+        match rest.find('>') {
+            Some(end) => {
+                if is_break_tag(&rest[1..end]) {
+                    out.push('\n');
+                }
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('<');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out
+}
+
+fn is_break_tag(tag: &str) -> bool {
+    let name = tag
+        .trim_start_matches('/')
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(name.as_str(), "br" | "wbr")
+}
+
+fn entity_len(s: &str) -> Option<usize> {
+    let end = s[1..].find(';')? + 1;
+    let body = &s[1..end];
+    if !body.is_empty()
+        && body
+            .strip_prefix('#')
+            .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_alphanumeric()))
+    {
+        return Some(end + 1);
+    }
+    match body.to_ascii_lowercase().as_str() {
+        "nbsp" | "amp" | "lt" | "gt" | "quot" | "apos" | "copy" | "reg" | "trade" | "ndash"
+        | "mdash" | "hellip" | "laquo" | "raquo" | "middot" | "bull" | "deg" => Some(end + 1),
+        _ => None,
+    }
+}
+
+fn decode_entity(entity: &str) -> String {
+    let body = &entity[1..entity.len() - 1];
+    let decoded = match body.to_ascii_lowercase().as_str() {
+        "nbsp" => Some(' '),
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "ndash" | "mdash" => Some('-'),
+        "hellip" => Some('\u{2026}'),
+        "laquo" => Some('\u{ab}'),
+        "raquo" => Some('\u{bb}'),
+        "middot" | "bull" => Some('\u{b7}'),
+        "deg" => Some('\u{b0}'),
+        "copy" => Some('\u{a9}'),
+        "reg" => Some('\u{ae}'),
+        "trade" => Some('\u{2122}'),
+        other => other.strip_prefix('#').and_then(decode_numeric),
+    };
+    decoded.map(String::from).unwrap_or_default()
+}
+
+fn decode_numeric(body: &str) -> Option<char> {
+    let (radix, digits) = if let Some(hex) = body.strip_prefix(['x', 'X']) {
+        (16, hex)
+    } else {
+        (10, body)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let code = u32::from_str_radix(digits, radix).ok()?;
+    char::from_u32(code)
 }
 
 fn strip_html_tags(s: &str) -> String {
@@ -402,19 +527,19 @@ fn extract_link_label(inner: &str, target_url: &str) -> String {
             let tag = &trimmed[start..start + end + 1];
             if let Some(alt) = extract_attr(tag, "alt") {
                 if !alt.trim().is_empty() {
-                    return decode_html_entities(alt.trim());
+                    return decode_inline_text(alt.trim());
                 }
             }
             if let Some(title) = extract_attr(tag, "title") {
                 if !title.trim().is_empty() {
-                    return decode_html_entities(title.trim());
+                    return decode_inline_text(title.trim());
                 }
             }
             let before = &trimmed[..start];
             let after = &trimmed[start + end + 1..];
             let surrounding = format!("{} {}", before.trim(), after.trim());
             let clean = strip_html_tags(&surrounding);
-            let decoded = decode_html_entities(&clean);
+            let decoded = decode_inline_text(&clean);
             if !decoded.trim().is_empty() {
                 return decoded.trim().to_string();
             }
@@ -429,12 +554,12 @@ fn extract_link_label(inner: &str, target_url: &str) -> String {
         if let Some(close) = after.find(']') {
             let alt = &after[..close];
             if !alt.trim().is_empty() {
-                return decode_html_entities(alt.trim());
+                return decode_inline_text(alt.trim());
             }
         }
     }
     let stripped = strip_html_tags(trimmed);
-    let decoded = decode_html_entities(&stripped);
+    let decoded = decode_inline_text(&stripped);
     let clean = decoded.trim();
     if !clean.is_empty() {
         return clean.to_string();
@@ -451,19 +576,33 @@ fn extract_link_label(inner: &str, target_url: &str) -> String {
     "Link".to_string()
 }
 
-fn find_matching_close(s: &str, open: char, close: char) -> Option<usize> {
-    let mut depth = 0;
-    for (idx, ch) in s.char_indices() {
+fn find_matching_close(s: &str, open: char, close: char, budget: &mut usize) -> Option<usize> {
+    let limit = INLINE_SCAN_WINDOW.min(s.len());
+    let window = s.get(..limit)?;
+    let mut depth = 0u32;
+    let mut scanned = 0usize;
+    for (idx, ch) in window.char_indices() {
+        scanned += ch.len_utf8();
         if ch == open {
             depth += 1;
         } else if ch == close {
-            depth -= 1;
+            depth = depth.saturating_sub(1);
             if depth == 0 {
+                *budget = budget.saturating_sub(scanned);
                 return Some(idx);
             }
         }
     }
+    *budget = budget.saturating_sub(scanned);
     None
+}
+
+fn find_within(s: &str, needle: &str, budget: &mut usize) -> Option<usize> {
+    let limit = INLINE_SCAN_WINDOW.min(s.len());
+    let window = s.get(..limit)?;
+    let found = window.find(needle);
+    *budget = budget.saturating_sub(found.map_or(window.len(), |at| at + needle.len()));
+    found
 }
 
 #[cfg(test)]
@@ -478,7 +617,13 @@ fn parse_inline_with_refs(
 ) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut rest = input;
+    let mut budget = INLINE_SCAN_ALLOWANCE;
     while !rest.is_empty() {
+        if budget == 0 {
+            spans.push(Span::Text(decode_inline_text(rest), false, false, false));
+            break;
+        }
+
         if rest.starts_with('\\') && rest.len() > 1 {
             let next_byte = rest.as_bytes()[1];
             if matches!(next_byte, b'<' | b'[' | b'!' | b'*' | b'_' | b'`' | b'#') {
@@ -486,7 +631,7 @@ fn parse_inline_with_refs(
             }
         }
         if rest.starts_with("<img") || rest.starts_with("<IMG") {
-            if let Some(gt) = rest.find('>') {
+            if let Some(gt) = find_within(rest, ">", &mut budget) {
                 let tag = &rest[..gt + 1];
                 if let Some(src) = extract_attr(tag, "src") {
                     let raw_alt = extract_attr(tag, "alt")
@@ -494,7 +639,7 @@ fn parse_inline_with_refs(
                         .map(|s| s.trim())
                         .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("image"));
                     let alt_label = if let Some(a) = raw_alt {
-                        decode_html_entities(a)
+                        decode_inline_text(a)
                     } else if let Some(badge) = label_from_badge_or_url(src, "") {
                         badge
                     } else {
@@ -507,12 +652,11 @@ fn parse_inline_with_refs(
             }
         }
         if rest.starts_with("<a ") || rest.starts_with("<A ") {
-            if let Some(gt) = rest.find('>') {
+            if let Some(gt) = find_within(rest, ">", &mut budget) {
                 let tag = &rest[..gt + 1];
                 if let Some(href) = extract_attr(tag, "href") {
-                    let close_opt = rest[gt + 1..]
-                        .find("</a>")
-                        .or_else(|| rest[gt + 1..].find("</A>"));
+                    let close_opt = find_within(&rest[gt + 1..], "</a>", &mut budget)
+                        .or_else(|| find_within(&rest[gt + 1..], "</A>", &mut budget));
                     if let Some(close_a) = close_opt {
                         let inner = &rest[gt + 1..gt + 1 + close_a];
                         let label = extract_link_label(inner, href.trim());
@@ -524,10 +668,12 @@ fn parse_inline_with_refs(
             }
         }
         if rest.starts_with("<summary>") || rest.starts_with("<SUMMARY>") {
-            if let Some(close) = rest.find("</summary>").or_else(|| rest.find("</SUMMARY>")) {
+            if let Some(close) = find_within(rest, "</summary>", &mut budget)
+                .or_else(|| find_within(rest, "</SUMMARY>", &mut budget))
+            {
                 let title = &rest[9..close];
                 spans.push(Span::Text(
-                    decode_html_entities(title.trim()),
+                    decode_inline_text(title.trim()),
                     true,
                     false,
                     false,
@@ -537,7 +683,7 @@ fn parse_inline_with_refs(
             }
         }
         if rest.starts_with('<') {
-            if let Some(gt) = rest.find('>') {
+            if let Some(gt) = find_within(rest, ">", &mut budget) {
                 let tag_body = rest[1..gt].trim();
                 if tag_body.eq_ignore_ascii_case("br")
                     || tag_body.eq_ignore_ascii_case("br/")
@@ -551,13 +697,15 @@ fn parse_inline_with_refs(
         }
         if rest.starts_with("![") {
             let after_bang = &rest[1..];
-            if let Some(close) = find_matching_close(after_bang, '[', ']') {
+            if let Some(close) = find_matching_close(after_bang, '[', ']', &mut budget) {
                 let alt = &after_bang[1..close];
                 if after_bang[close..].starts_with("](") {
                     let url_start = close + 2;
-                    if let Some(paren_close) = after_bang[url_start..].find(')') {
+                    if let Some(paren_close) =
+                        find_within(&after_bang[url_start..], ")", &mut budget)
+                    {
                         let url = &after_bang[url_start..url_start + paren_close];
-                        let clean_alt = decode_html_entities(alt.trim());
+                        let clean_alt = decode_inline_text(alt.trim());
                         spans.push(Span::Image(clean_alt, url.trim().to_string()));
                         rest = &after_bang[url_start + paren_close + 1..];
                         continue;
@@ -566,11 +714,11 @@ fn parse_inline_with_refs(
             }
         }
         if rest.starts_with('[') {
-            if let Some(close) = find_matching_close(rest, '[', ']') {
+            if let Some(close) = find_matching_close(rest, '[', ']', &mut budget) {
                 let inner = &rest[1..close];
                 if rest[close..].starts_with("](") {
                     let url_start = close + 2;
-                    if let Some(paren_close) = rest[url_start..].find(')') {
+                    if let Some(paren_close) = find_within(&rest[url_start..], ")", &mut budget) {
                         let url = &rest[url_start..url_start + paren_close];
                         let label = extract_link_label(inner, url.trim());
                         spans.push(Span::Link(label, url.trim().to_string()));
@@ -579,7 +727,7 @@ fn parse_inline_with_refs(
                     }
                 } else if rest[close..].starts_with("][") {
                     let ref_start = close + 2;
-                    if let Some(ref_close) = rest[ref_start..].find(']') {
+                    if let Some(ref_close) = find_within(&rest[ref_start..], "]", &mut budget) {
                         let ref_key = rest[ref_start..ref_start + ref_close]
                             .trim()
                             .to_ascii_lowercase();
@@ -610,12 +758,12 @@ fn parse_inline_with_refs(
             ("`", false, false, true),
         ] {
             if let Some(after) = rest.strip_prefix(marker) {
-                if let Some(end) = after.find(marker) {
+                if let Some(end) = find_within(after, marker, &mut budget) {
                     if end > 0 {
                         let text = if code {
                             after[..end].to_owned()
                         } else {
-                            decode_html_entities(&after[..end])
+                            decode_inline_text(&after[..end])
                         };
                         spans.push(Span::Text(text, bold, italic, code));
                         rest = &after[end + marker.len()..];
@@ -631,10 +779,12 @@ fn parse_inline_with_refs(
         let next = rest
             .char_indices()
             .skip(1)
+            .take_while(|(i, _)| *i <= INLINE_SCAN_WINDOW)
             .find(|(_, ch)| matches!(ch, '<' | '!' | '[' | '*' | '_' | '`' | '\\'))
             .map(|(i, _)| i)
-            .unwrap_or(rest.len());
-        let text = decode_html_entities(&rest[..next]);
+            .unwrap_or_else(|| rest.len().min(INLINE_SCAN_WINDOW).clamp(1, rest.len()));
+        budget = budget.saturating_sub(next);
+        let text = decode_inline_text(&rest[..next]);
         spans.push(Span::Text(text, false, false, false));
         rest = &rest[next..];
     }
@@ -684,7 +834,8 @@ pub fn show(ui: &mut egui::Ui, blocks: &[Block]) -> Option<String> {
                             egui::Label::new(
                                 RichText::new(code).monospace().size(12.0).color(TEXT2),
                             )
-                            .selectable(true),
+                            .selectable(true)
+                            .wrap(),
                         );
                     });
             }
@@ -754,7 +905,7 @@ fn draw_spans(
             }
             Span::Image(label, url) => {
                 if url.starts_with("https://") || url.starts_with("http://") {
-                    let clean = decode_html_entities(&strip_html_tags(label));
+                    let clean = decode_inline_text(&strip_html_tags(label));
                     let clean_label = clean.trim();
                     let display =
                         if clean_label.is_empty() || clean_label.eq_ignore_ascii_case("image") {
@@ -833,5 +984,109 @@ mod tests {
         assert!(matches!(blocks[0], Block::Heading(2, _)));
         assert!(matches!(blocks[1], Block::Paragraph(_)));
         assert!(matches!(blocks[2], Block::Paragraph(_)));
+    }
+
+    #[test]
+    fn realistic_curseforge_html_never_leaks_raw_markup() {
+        let mut body = String::new();
+        for index in 0..400 {
+            body.push_str("<span style=\"font-size:14px\">word");
+            body.push_str(&index.to_string());
+            body.push_str(" **bold** and [link](https://example.com/) plus </span> ");
+        }
+        assert!(body.len() > 20_000, "fixture must be realistically long");
+        let blocks = parse(&body);
+        let mut rendered = String::new();
+        for block in &blocks {
+            if let Block::Paragraph(spans) = block {
+                for span in spans {
+                    match span {
+                        Span::Text(text, _, _, _) => rendered.push_str(text),
+                        Span::Link(label, _) => rendered.push_str(label),
+                        Span::Image(label, _) => rendered.push_str(label),
+                    }
+                }
+            }
+        }
+        for leaked in ["<span", "</span>", "<a ", "</a>", "style="] {
+            assert!(
+                !rendered.contains(leaked),
+                "raw markup {leaked:?} leaked into rendered text: {:?}",
+                &rendered[..rendered.len().min(300)]
+            );
+        }
+        if let Some(at) = rendered.find('*') {
+            panic!(
+                "literal emphasis leaked at {at}: {:?}",
+                &rendered[at.saturating_sub(80)..(at + 80).min(rendered.len())]
+            );
+        }
+        assert!(
+            rendered.contains("word399"),
+            "content must survive: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn pathological_inline_input_parses_in_bounded_time() {
+        let started = std::time::Instant::now();
+        for body in [
+            "[".repeat(200_000),
+            "![".repeat(100_000),
+            "[![".repeat(70_000),
+            "![img".repeat(50_000),
+            "<img".repeat(50_000),
+        ] {
+            let spans = parse_inline(&body);
+            assert!(!spans.is_empty());
+            let blocks = parse(&format!("{body}\n"));
+            assert!(blocks.len() <= MAX_BLOCKS);
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "inline parsing of adversarial input took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn large_documents_stay_inside_render_budgets() {
+        let doc = format!(
+            "{}\n|{}\n|{}\n{}\n{}\n```\n{}\n```\n",
+            "paragraph line\n".repeat(20_000),
+            "h|h|h|h|h|h|".repeat(60),
+            "|a|b|\n".repeat(5_000),
+            "item ".repeat(20_000),
+            "- list tail",
+            "x".repeat(2_000_000),
+        );
+        let blocks = parse(&doc);
+        assert!(blocks.len() <= MAX_BLOCKS);
+        for block in &blocks {
+            match block {
+                Block::Table(rows) => {
+                    assert!(rows.len() <= MAX_TABLE_ROWS);
+                    assert!(rows.iter().all(|row| row.len() <= MAX_TABLE_COLS));
+                }
+                Block::List(items) => assert!(items.len() <= MAX_LIST_ITEMS),
+                Block::Code(code) => {
+                    assert!(code.len() <= MAX_CODE_BYTES + TRUNCATION_NOTE.len());
+                    assert!(code.ends_with(TRUNCATION_NOTE));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_descriptions_are_never_truncated() {
+        let doc = "# Title\n\nSome **bold** text with a [link](https://example.com).\n\n- one\n- two\n- three\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\nkey = value\n```\n";
+        let blocks = parse(doc);
+        assert_eq!(blocks.len(), 5);
+        assert!(matches!(blocks[0], Block::Heading(1, _)));
+        assert!(matches!(blocks[1], Block::Paragraph(_)));
+        assert!(matches!(blocks[2], Block::List(_)));
+        assert!(matches!(blocks[3], Block::Table(_)));
+        assert!(matches!(blocks[4], Block::Code(ref code) if code == "key = value"));
     }
 }

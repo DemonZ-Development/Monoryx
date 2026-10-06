@@ -186,12 +186,13 @@ pub enum AppEvent {
     InstallProgress(String, String, usize, usize),
     OperationFinished(String, std::result::Result<(), String>),
     InstallDone(String, std::result::Result<String, String>),
-    ModInstallDone(std::result::Result<Vec<String>, String>),
-    PackDone(std::result::Result<String, String>),
-    InstanceImported(std::result::Result<String, String>),
-    UpdatesFound(
-        String,
-        std::result::Result<crate::modrinth::updates::UpdateScan, String>,
+    ContentInstallDone(String, String, std::result::Result<Vec<String>, String>),
+    PackInstallDone(String, std::result::Result<String, String>),
+    InstanceImported(std::result::Result<ImportedInstance, String>),
+    InstanceUpdatesChecked(
+        u64,
+        crate::app::updates::UpdateTarget,
+        Box<crate::app::updates::InstanceUpdateReport>,
     ),
     LoaderUpdateChecked(String, std::result::Result<Option<String>, String>),
     LoaderUpdateDone(String, std::result::Result<String, String>),
@@ -208,7 +209,6 @@ pub enum AppEvent {
     PlayLog(String),
     CrashLogShared(u64, std::result::Result<String, String>),
     Download(crate::downloads::job::DownloadEvent),
-    RepairDone(std::result::Result<Vec<String>, String>),
     LauncherUpdate(std::result::Result<crate::app::updater::LauncherUpdateInfo, String>),
     LauncherUpdateDownloadProgress(Option<f32>),
     LauncherUpdateDownloaded(std::result::Result<std::path::PathBuf, String>),
@@ -234,4 +234,10 @@ pub struct DecodedImage {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportedInstance {
+    pub id: String,
+    pub stripped_args: Vec<String>,
 }

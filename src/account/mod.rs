@@ -48,3 +48,40 @@ impl Account {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum AccountRef<'a> {
+    Offline(&'a offline::OfflineProfile),
+    Microsoft(&'a microsoft::MicrosoftProfile),
+}
+
+impl<'a> AccountRef<'a> {
+    #[must_use]
+    pub fn to_owned(self) -> Account {
+        match self {
+            Self::Offline(profile) => Account::Offline(profile.clone()),
+            Self::Microsoft(profile) => Account::Microsoft(profile.clone()),
+        }
+    }
+
+    #[must_use]
+    pub fn username(self) -> &'a str {
+        match self {
+            Self::Offline(profile) => profile.username.as_str(),
+            Self::Microsoft(profile) => profile.username.as_str(),
+        }
+    }
+
+    #[must_use]
+    pub fn uuid(self) -> uuid::Uuid {
+        match self {
+            Self::Offline(profile) => profile.uuid,
+            Self::Microsoft(profile) => profile.uuid,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_offline(self) -> bool {
+        matches!(self, Self::Offline(_))
+    }
+}

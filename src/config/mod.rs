@@ -376,6 +376,8 @@ pub struct LauncherConfig {
     #[serde(default = "default_true")]
     pub auto_check_updates: bool,
     #[serde(default = "default_true")]
+    pub auto_check_instance_updates: bool,
+    #[serde(default = "default_true")]
     pub skins_restorer_compat: bool,
     #[serde(default)]
     pub curseforge: CurseForgeSettings,
@@ -435,6 +437,7 @@ impl Default for LauncherConfig {
             show_snapshots: false,
             boost_mode: false,
             auto_check_updates: true,
+            auto_check_instance_updates: true,
             skins_restorer_compat: true,
             curseforge: CurseForgeSettings {
                 api_key: String::new(),
@@ -454,14 +457,19 @@ impl Default for LauncherConfig {
 impl LauncherConfig {
     #[must_use]
     pub fn active_account(&self) -> Option<crate::account::Account> {
+        self.active_account_ref().map(|account| account.to_owned())
+    }
+
+    #[must_use]
+    pub fn active_account_ref(&self) -> Option<crate::account::AccountRef<'_>> {
         if self.use_microsoft_auth {
             if let Some(ms) = &self.microsoft_profile {
-                return Some(crate::account::Account::Microsoft(ms.clone()));
+                return Some(crate::account::AccountRef::Microsoft(ms));
             }
         }
         self.profile
             .as_ref()
-            .map(|p| crate::account::Account::Offline(p.clone()))
+            .map(crate::account::AccountRef::Offline)
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -585,6 +593,15 @@ impl LauncherConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_preferences_enable_compatible_instance_checks_by_default() {
+        let config: LauncherConfig = toml::from_str("auto_check_updates = false").unwrap();
+        assert!(!config.auto_check_updates);
+        assert!(config.auto_check_instance_updates);
+        let config: LauncherConfig = toml::from_str("auto_check_instance_updates = false").unwrap();
+        assert!(!config.auto_check_instance_updates);
+    }
 
     fn signed_in_config() -> LauncherConfig {
         LauncherConfig {

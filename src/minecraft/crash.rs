@@ -402,6 +402,134 @@ struct MclogsResponse {
     error: Option<String>,
 }
 
+const REDACTED: &str = "<redacted>";
+
+const SECRET_KEYS: &[&str] = &[
+    "--accesstoken",
+    "accesstoken=",
+    "access_token",
+    "\"accesstoken\"",
+    "'accesstoken'",
+    "--xboxaccesstoken",
+    "xboxaccesstoken",
+    "xbl3.0",
+    "rpsticket",
+    "refresh_token",
+    "\"refresh_token\"",
+    "client_secret",
+    "clientsecret",
+    "\"client_secret\"",
+    "x-api-key",
+    "authorization",
+];
+
+const MIN_SECRET_LEN: usize = 6;
+
+fn skip_separator(bytes: &[u8], mut index: usize) -> usize {
+    for _ in 0..4 {
+        let before = index;
+        while index < bytes.len() && (bytes[index] as char).is_whitespace() {
+            index += 1;
+        }
+        if index < bytes.len() && matches!(bytes[index], b':' | b'=' | b'{' | b',' | b'"' | b'\'') {
+            index += 1;
+            continue;
+        }
+        if index == before {
+            break;
+        }
+    }
+    index
+}
+
+fn secret_value_span(line: &str, from: usize) -> Option<std::ops::Range<usize>> {
+    let bytes = line.as_bytes();
+    let mut start = skip_separator(bytes, from);
+    let word = line[start..]
+        .split(|c: char| c.is_whitespace())
+        .next()
+        .unwrap_or_default();
+    if matches!(
+        word.to_ascii_lowercase().as_str(),
+        "bearer" | "basic" | "token"
+    ) {
+        let after = start + word.len();
+        if after < bytes.len() && (bytes[after] as char).is_whitespace() {
+            start = skip_separator(bytes, after);
+        }
+    }
+    if start >= bytes.len() {
+        return None;
+    }
+    let quote = bytes[start];
+    if quote == b'"' || quote == b'\'' {
+        let content_start = start + 1;
+        let end = line[content_start..].find(quote as char)? + content_start;
+        return (end - content_start >= MIN_SECRET_LEN).then_some(content_start..end);
+    }
+    let mut end = start;
+    while end < bytes.len()
+        && !(bytes[end] as char).is_whitespace()
+        && !matches!(bytes[end], b'"' | b'\'' | b',' | b')' | b']' | b'}')
+    {
+        end += 1;
+    }
+    (end - start >= MIN_SECRET_LEN).then_some(start..end)
+}
+
+fn ends_on_separator(bytes: &[u8], index: usize) -> bool {
+    match bytes.get(index) {
+        None => true,
+        Some(byte) => matches!(byte, b':' | b'=' | b'"' | b'\'') || (*byte as char).is_whitespace(),
+    }
+}
+
+fn redact_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
+    for key in SECRET_KEYS {
+        let mut from = 0;
+        while let Some(found) = lower[from..].find(key) {
+            let start = from + found;
+            from = start + key.len();
+            if !key.starts_with("--") && !ends_on_separator(line.as_bytes(), start + key.len()) {
+                continue;
+            }
+            if let Some(span) = secret_value_span(line, start + key.len()) {
+                from = span.end.max(from);
+                spans.push(span);
+            }
+        }
+    }
+    if spans.is_empty() {
+        return line.to_string();
+    }
+    spans.sort_by_key(|span| span.start);
+    let mut out = String::with_capacity(line.len());
+    let mut cursor = 0;
+    for span in spans {
+        if span.start < cursor {
+            continue;
+        }
+        out.push_str(&line[cursor..span.start]);
+        out.push_str(REDACTED);
+        cursor = span.end;
+    }
+    out.push_str(&line[cursor..]);
+    out
+}
+
+#[must_use]
+pub fn redact_sensitive(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for segment in text.split_inclusive('\n') {
+        let body = segment.trim_end_matches(['\r', '\n']);
+        out.push_str(&redact_line(body));
+        out.push_str(&segment[body.len()..]);
+    }
+    out
+}
+
 pub async fn share_on_mclogs(
     http: &reqwest::Client,
     info: &CrashInfo,
@@ -422,6 +550,7 @@ pub async fn share_on_mclogs(
     if content.trim().is_empty() {
         return Err("There is no crash log to share.".to_string());
     }
+    let content = redact_sensitive(&content);
     if content.len() > 10 * 1024 * 1024 {
         return Err("Crash log exceeds mclo.gs' 10 MiB limit.".to_string());
     }
@@ -788,5 +917,83 @@ Details:
         assert_eq!(info.exit_code, -1073740791);
         assert!(info.summary.contains("STATUS_STACK_BUFFER_OVERRUN"));
         assert_eq!(info.report_path, None);
+    }
+
+    #[test]
+    fn shared_logs_never_carry_live_credentials() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let xbl = "d1234567890abcdefghijklmnopqrstuvw";
+        let raw = format!(
+            "java -Xmx4G -cp a.jar net.minecraft.client.main.Main --username Steve --accessToken{jwt} --uuid 0000 --version 1.21.1 --xboxAccessToken {xbl}\n\
+             {{\"access_token\":\"{jwt}\",\"refresh_token\":\"M.R3_BAY.longsecretrefreshvalue\"}}\n\
+             [STDERR]: xbl3.0 x=dXNlcg==;{xbl}\n\
+             [INFO]: Sending RpsTicket:rpsticketsecretvalue to server\n\
+             [INFO]: x-api-key: cf-live-secret-key-value\n\
+             [INFO]: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.bodypart.signature\n\
+             [INFO]: Loading 512 mods from fabric.mod.json\n\
+             Description: java.lang.RuntimeException: Boom!\n\
+             [CHAT]: player said the word accessToken in chat\n"
+        );
+        let cleaned = redact_sensitive(&raw);
+        for secret in [
+            jwt,
+            xbl,
+            "M.R3_BAY.longsecretrefreshvalue",
+            "rpsticketsecretvalue",
+            "cf-live-secret-key-value",
+            "eyJhbGciOiJIUzI1NiJ9.bodypart.signature",
+        ] {
+            assert!(
+                !cleaned.contains(secret),
+                "secret survived redaction: {secret}"
+            );
+        }
+        assert!(cleaned.contains(REDACTED));
+        assert!(cleaned.contains("net.minecraft.client.main.Main"));
+        assert!(cleaned.contains("Loading 512 mods from fabric.mod.json"));
+        assert!(cleaned.contains("java.lang.RuntimeException: Boom!"));
+        assert!(cleaned.contains("--username Steve"));
+        assert!(cleaned.contains("player said the word accessToken in chat"));
+        assert_eq!(cleaned.lines().count(), raw.lines().count());
+    }
+
+    #[test]
+    fn redaction_leaves_ordinary_log_prose_untouched() {
+        let raw = "Description: Could not find or load main class net.minecraft.Main\n\
+                   authorization flow uses the device code grant\n\
+                   access token refresh happened\n\
+                   loading access_tokens.json from the instance folder\n\
+                   --version 1.21.1 --assetIndex 12\n";
+        assert_eq!(redact_sensitive(raw), raw);
+    }
+
+    #[test]
+    fn camel_case_and_client_secret_forms_are_redacted() {
+        let secret = "M.R3_BAY.anotherlongrefreshtokenvalue";
+        let raw = format!(
+            "{{\"accessToken\":\"{secret}\",\"client_secret\":\"abcdef0123456789\"}}\n\
+             Passing --clientSecret 0123456789abcdef to the endpoint\n"
+        );
+        let cleaned = redact_sensitive(&raw);
+        assert!(!cleaned.contains(secret), "camelCase accessToken survived");
+        assert!(
+            !cleaned.contains("abcdef0123456789"),
+            "client_secret survived"
+        );
+        assert!(
+            !cleaned.contains("0123456789abcdef"),
+            "clientSecret survived"
+        );
+        assert!(cleaned.contains(REDACTED));
+    }
+
+    #[test]
+    fn redaction_handles_crlf_and_missing_trailing_newline() {
+        assert_eq!(redact_sensitive("a\r\nb"), "a\r\nb");
+        assert_eq!(redact_sensitive(""), "");
+        let out = redact_sensitive("--accessToken abcdefghijklmnop\r\nnext");
+        assert!(!out.contains("abcdefghijklmnop"));
+        assert!(out.contains("next"));
+        assert!(out.contains("\r\n"));
     }
 }

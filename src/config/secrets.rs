@@ -118,6 +118,10 @@ pub(super) mod backend {
         VALUES.get_or_init(Mutex::default)
     }
 
+    fn slot() -> std::sync::MutexGuard<'static, HashMap<String, String>> {
+        values().lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn check_available() -> Result<()> {
         if FAIL.get() {
             Err(MonoryxError::Auth("Credential store unavailable".into()))
@@ -128,9 +132,7 @@ pub(super) mod backend {
 
     pub fn read(id: &str, name: &str) -> Result<String> {
         check_available()?;
-        values()
-            .lock()
-            .unwrap()
+        slot()
             .get(&format!("{id}-{name}"))
             .cloned()
             .ok_or_else(|| MonoryxError::Auth("Saved credential is missing".into()))
@@ -138,15 +140,12 @@ pub(super) mod backend {
 
     pub fn write(id: &str, name: &str, value: &str) -> Result<()> {
         check_available()?;
-        values()
-            .lock()
-            .unwrap()
-            .insert(format!("{id}-{name}"), value.into());
+        slot().insert(format!("{id}-{name}"), value.into());
         Ok(())
     }
 
     pub fn delete(id: &str, name: &str) -> Result<()> {
-        values().lock().unwrap().remove(&format!("{id}-{name}"));
+        slot().remove(&format!("{id}-{name}"));
         Ok(())
     }
 }

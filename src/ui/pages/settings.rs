@@ -24,25 +24,30 @@ pub(crate) fn select_discord_for_preview(ctx: &egui::Context) {
 pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     page_header(ui, "Settings", "Make MONORYX feel right for you.");
 
+    let before = preferences_signature(state);
     let tab_id = egui::Id::new("settings-tab");
     let mut tab = ctx.data_mut(|data| {
         data.get_temp::<SettingsTab>(tab_id)
             .unwrap_or(SettingsTab::Launcher)
     });
-    ui.horizontal_wrapped(|ui| {
-        for (value, label) in [
-            (SettingsTab::Launcher, "Launcher"),
-            (SettingsTab::Appearance, "Appearance"),
-            (SettingsTab::Minecraft, "Minecraft"),
-            (SettingsTab::Runtime, "Java & GPU"),
-            (SettingsTab::Discord, "Discord"),
-            (SettingsTab::About, "About"),
-        ] {
-            if tab_button(ui, label, tab == value).clicked() {
-                tab = value;
+    let tabs = [
+        (SettingsTab::Launcher, "Launcher"),
+        (SettingsTab::Appearance, "Appearance"),
+        (SettingsTab::Minecraft, "Minecraft"),
+        (SettingsTab::Runtime, "Java & GPU"),
+        (SettingsTab::Discord, "Discord"),
+        (SettingsTab::About, "About"),
+    ];
+    let columns = ((ui.available_width() + 8.0) / 118.0).floor().max(1.0) as usize;
+    for row in tabs.chunks(columns) {
+        ui.horizontal(|ui| {
+            for &(value, label) in row {
+                if tab_button(ui, label, tab == value).clicked() {
+                    tab = value;
+                }
             }
-        }
-    });
+        });
+    }
     ctx.data_mut(|data| data.insert_temp(tab_id, tab));
     ui.add_space(12.0);
 
@@ -54,6 +59,30 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         SettingsTab::Discord => discord_settings(state, ui),
         SettingsTab::About => about_settings(state, ui),
     }
+    if preferences_signature(state) != before {
+        state.save_config();
+    }
+    let pending = state.settings_mem_min != state.config.memory.min_mb.to_string()
+        || state.settings_mem_max != state.config.memory.max_mb.to_string()
+        || state.settings_jvm != state.config.default_jvm_args
+        || state.settings_game_args != state.config.default_game_args
+        || ctx.data(|data| {
+            data.get_temp::<crate::config::CurseForgeSettings>(egui::Id::new("curseforge-draft"))
+                .is_some_and(|draft| {
+                    draft.api_key != state.config.curseforge.api_key
+                        || draft.custom_endpoint != state.config.curseforge.custom_endpoint
+                })
+        });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new(if pending {
+            "Some text edits have not been applied yet."
+        } else {
+            "Preferences save automatically. Text fields with Apply buttons save when you apply them."
+        })
+        .size(11.0)
+        .color(MUTED),
+    );
 }
 
 fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -84,6 +113,19 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
         {
             save_settings(state, "Update preference saved".to_string());
         }
+        if ui
+            .checkbox(
+                &mut state.config.auto_check_instance_updates,
+                "Automatically check packages and loaders for updates",
+            )
+            .changed()
+        {
+            save_settings(state, "Instance update preference saved".into());
+        }
+        ui.add(egui::Label::new(
+            RichText::new("Checks the selected instance on startup and every 30 minutes. Only updates for its Minecraft version and loader are offered; you choose when to install.")
+                .size(11.0).color(MUTED),
+        ).wrap());
 
         ui.add_space(8.0);
         let is_checking = state.launcher_update_loading;
@@ -242,7 +284,8 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
         egui::Grid::new("launch-behavior-grid")
             .num_columns(2)
             .spacing([24.0, 12.0])
-            .min_col_width(200.0)
+            .min_col_width(130.0)
+            .max_col_width((ui.available_width() - 170.0).max(170.0))
             .show(ui, |ui| {
                 ui.label(RichText::new("When game starts").color(TEXT2));
                 ui.vertical(|ui| {
@@ -252,7 +295,7 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
                             ui.selectable_value(
                                 &mut state.config.close_action,
                                 CloseAction::Hide,
-                                "Close / Hide (restore after game exits) (Recommended)",
+                                "Hide until Minecraft exits",
                             );
                             ui.selectable_value(
                                 &mut state.config.close_action,
@@ -356,61 +399,62 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
         );
 
         ui.add_space(10.0);
-        if crate::ui::components::primary_button(ui, "Save Window & Launch Settings").clicked() {
-            save_settings(state, "Launch settings saved".to_string());
-        }
     });
 
     ui.add_space(10.0);
 
-    card_frame(ui, |ui| {
-        ui.horizontal(|ui| {
+    ui.collapsing("Advanced cache & storage", |ui| {
+        card_frame(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Cache & storage")
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT),
+                );
+                badge_accent(ui, "Image cache");
+            });
+
             ui.label(
-                RichText::new("Launcher Performance & Memory")
-                    .size(16.0)
-                    .strong()
+                RichText::new(
+                    "Thumbnail caches are limited and cleared when you leave their pages.",
+                )
+                .size(12.0)
+                .color(TEXT2),
+            );
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "Cached thumbnail textures: {}",
+                        state.thumbnails.len()
+                    ))
                     .color(TEXT),
-            );
-            badge_accent(ui, "Low Footprint");
-        });
+                );
+                if crate::ui::components::secondary_button(ui, "Clear image cache").clicked() {
+                    let count = state.thumbnails.len();
+                    state.thumbnails.clear();
+                    state.notify(format!("Purged {count} cached textures; memory freed"));
+                }
+            });
 
-        ui.label(
-            RichText::new(
-                "MONORYX is built in native Rust without Electron or Chromium overhead, keeping idle memory light.",
-            )
-            .size(12.0)
-            .color(TEXT2),
-        );
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
+            ui.add_space(4.0);
             ui.label(
-                RichText::new(format!(
-                    "Cached thumbnail textures: {}",
-                    state.thumbnails.len()
-                ))
-                .color(TEXT),
+                RichText::new("Hide the launcher while Minecraft runs to reduce rendering work.")
+                    .size(11.5)
+                    .color(MUTED),
             );
-            if crate::ui::components::secondary_button(ui, "Purge Image Cache (Free RAM)").clicked()
-            {
-                let count = state.thumbnails.len();
-                state.thumbnails.clear();
-                state.notify(format!("Purged {count} cached textures; memory freed"));
-            }
         });
-
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Tip: Setting 'When game starts' to 'Close / Hide' fully suspends window rendering and releases GPU resources while Minecraft runs.",
-            )
-            .size(11.5)
-            .color(MUTED),
-        );
     });
-
     ui.add_space(10.0);
 
+    ui.collapsing("Advanced CurseForge connection", |ui| {
+    let draft_id = egui::Id::new("curseforge-draft");
+    let mut connection = ctx.data_mut(|data| {
+        data.get_temp::<crate::config::CurseForgeSettings>(draft_id)
+            .unwrap_or_else(|| state.config.curseforge.clone())
+    });
     card_frame(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(
@@ -438,15 +482,18 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
 
         ui.add_space(8.0);
         field_label(ui, "Custom API Key (Optional)");
-        let mut key = state.config.curseforge.api_key.clone();
+        ui.label(RichText::new("Apply connection changes below to save them.").size(11.0).color(MUTED));
+        let mut key = connection.api_key.clone();
         let resp = ui.add(
             egui::TextEdit::singleline(&mut key)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
                 .password(true)
                 .hint_text("Leave blank to use official server")
                 .desired_width(ui.available_width().min(480.0)),
         );
         if resp.changed() {
-            state.config.curseforge.api_key = key.trim().to_string();
+            connection.api_key = key.trim().to_string();
         }
         ui.add(
             egui::Label::new(
@@ -460,28 +507,45 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
         ui.add_space(6.0);
         ui.collapsing("Advanced Server Configuration (Optional)", |ui| {
             field_label(ui, "Custom Proxy Endpoint (Optional)");
-            let mut endpoint = state.config.curseforge.custom_endpoint.clone();
+            let mut endpoint = connection.custom_endpoint.clone();
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut endpoint)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
                     .hint_text("https://services.demonz.org/curseforge/v1")
                     .desired_width(ui.available_width().min(480.0)),
             );
             if resp.changed() {
-                state.config.curseforge.custom_endpoint = endpoint.trim().to_string();
+                connection.custom_endpoint = endpoint.trim().to_string();
             }
             ui.add(
                 egui::Label::new(
-                    RichText::new("If you host your own Cloudflare Worker proxy, enter its URL here. Leave empty to use the default official server.")
+                    RichText::new("If you host your own Cloudflare Worker proxy, enter its URL here. Leave empty to use the default official server. HTTPS is required.")
                         .size(11.0)
                         .color(MUTED),
                 )
                 .wrap(),
             );
+            let endpoint_text = connection.custom_endpoint.trim();
+            if !endpoint_text.is_empty()
+                && !connection.api_key.trim().is_empty()
+                && !crate::curseforge::is_official_endpoint(endpoint_text)
+            {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("Your custom API key will not be sent to this third-party endpoint, so it will be ignored. Clear the key field to remove it from MONORYX's credential store.")
+                            .size(11.5)
+                            .color(WARNING),
+                    )
+                    .wrap(),
+                );
+            }
         });
 
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if crate::ui::components::primary_button(ui, "Save Settings").clicked() {
+        ui.horizontal_wrapped(|ui| {
+            if crate::ui::components::primary_button(ui, "Apply CurseForge settings").clicked() {
+                state.config.curseforge = connection.clone();
                 save_settings(state, "CurseForge settings saved".to_string());
             }
 
@@ -490,6 +554,7 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
                 && crate::ui::components::secondary_button(ui, "Use Official Server").clicked()
             {
                 state.config.curseforge.clear_custom();
+                connection = state.config.curseforge.clone();
                 save_settings(state, "Switched to official server".to_string());
             }
 
@@ -503,7 +568,8 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
             }
         });
     });
-
+    ctx.data_mut(|data| data.insert_temp(draft_id, connection));
+    });
     ui.add_space(10.0);
 
     card_frame(ui, |ui| {
@@ -609,41 +675,26 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
         }
 
         ui.add_space(10.0);
-        ui.label(
-            RichText::new("Quick Memory Presets:")
-                .size(12.0)
-                .strong()
-                .color(TEXT),
-        );
+        ui.label(RichText::new("Game memory").size(12.0).strong().color(TEXT));
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             for (label, min, max, hint) in [
                 (
-                    "2 GB (Low RAM / Vanilla)",
+                    "2 GB",
                     "512",
                     "2048",
                     "Minimal RAM consumption for vanilla and light play",
                 ),
                 (
-                    "3 GB (Balanced / Light Mods)",
+                    "3 GB",
                     "512",
                     "3072",
                     "Great balance for modded 1.20+ with Fabric",
                 ),
+                ("4 GB", "1024", "4096", "For modpacks with 80-150 mods"),
+                ("6 GB", "1024", "6144", "For large 200+ modpacks"),
                 (
-                    "4 GB (Modpacks)",
-                    "1024",
-                    "4096",
-                    "For modpacks with 80-150 mods",
-                ),
-                (
-                    "6 GB (Heavy Modpacks)",
-                    "1024",
-                    "6144",
-                    "For large 200+ modpacks",
-                ),
-                (
-                    "8 GB (Extreme Shaders)",
+                    "8 GB",
                     "2048",
                     "8192",
                     "For heavy modpacks with high-res shaders",
@@ -663,46 +714,73 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
         });
 
         ui.add_space(12.0);
-        egui::Grid::new("minecraft-memory-grid")
-            .num_columns(2)
-            .spacing([24.0, 12.0])
-            .min_col_width(200.0)
-            .show(ui, |ui| {
-                ui.label(RichText::new("Default min memory").color(TEXT2));
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.settings_mem_min)
-                            .id(egui::Id::new("settings-mem-min"))
-                            .desired_width(110.0)
-                            .char_limit(7)
-                            .hint_text("512"),
-                    );
-                    ui.label(RichText::new("MB").size(12.0).color(MUTED));
-                });
-                ui.end_row();
-
-                ui.label(RichText::new("Default max memory").color(TEXT2));
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.settings_mem_max)
-                            .id(egui::Id::new("settings-mem-max"))
-                            .desired_width(110.0)
-                            .char_limit(7)
-                            .hint_text("3072"),
-                    );
-                    ui.label(RichText::new("MB").size(12.0).color(MUTED));
-                });
-                ui.end_row();
-            });
-
-        ui.add_space(10.0);
-        if crate::ui::components::primary_button(ui, "Save Minecraft defaults").clicked() {
-            save_memory_and_defaults(state);
+        let mut memory_gb = state.config.memory.max_mb as f64 / 1024.0;
+        if ui
+            .add(
+                egui::Slider::new(&mut memory_gb, 0.5..=32.0)
+                    .step_by(0.25)
+                    .suffix(" GB"),
+            )
+            .changed()
+        {
+            state.config.memory.max_mb = (memory_gb * 1024.0).round() as u64;
+            state.config.memory.min_mb = state.config.memory.min_mb.min(state.config.memory.max_mb);
+            state.settings_mem_min = state.config.memory.min_mb.to_string();
+            state.settings_mem_max = state.config.memory.max_mb.to_string();
         }
+        ui.collapsing("Advanced memory values (MB)", |ui| {
+            ui.label(
+                RichText::new("Edit both values, then choose Apply memory values.")
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            egui::Grid::new("minecraft-memory-grid")
+                .num_columns(2)
+                .spacing([24.0, 12.0])
+                .min_col_width(130.0)
+                .max_col_width((ui.available_width() - 170.0).max(170.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Default min memory").color(TEXT2));
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.settings_mem_min)
+                                .margin(egui::vec2(10.0, 8.0))
+                                .min_size(egui::vec2(0.0, 34.0))
+                                .id(egui::Id::new("settings-mem-min"))
+                                .desired_width(110.0)
+                                .char_limit(7)
+                                .hint_text("512"),
+                        );
+                        ui.label(RichText::new("MB").size(12.0).color(MUTED));
+                    });
+                    ui.end_row();
+
+                    ui.label(RichText::new("Default max memory").color(TEXT2));
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.settings_mem_max)
+                                .margin(egui::vec2(10.0, 8.0))
+                                .min_size(egui::vec2(0.0, 34.0))
+                                .id(egui::Id::new("settings-mem-max"))
+                                .desired_width(110.0)
+                                .char_limit(7)
+                                .hint_text("3072"),
+                        );
+                        ui.label(RichText::new("MB").size(12.0).color(MUTED));
+                    });
+                    ui.end_row();
+                });
+
+            ui.add_space(10.0);
+            if crate::ui::components::primary_button(ui, "Apply memory values").clicked() {
+                save_memory_and_defaults(state);
+            }
+        });
     });
 
     ui.add_space(10.0);
 
+    ui.collapsing("Advanced launch & backups", |ui| {
     card_frame(ui, |ui| {
         ui.label(
             RichText::new("Startup & Optimization")
@@ -722,7 +800,8 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
         egui::Grid::new("minecraft-startup-grid")
             .num_columns(2)
             .spacing([24.0, 12.0])
-            .min_col_width(200.0)
+            .min_col_width(130.0)
+            .max_col_width((ui.available_width() - 170.0).max(170.0))
             .show(ui, |ui| {
                 ui.label(RichText::new("Before launching, verify").color(TEXT2));
                 ui.vertical(|ui| {
@@ -911,6 +990,8 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
             field_label(ui, "Default JVM arguments");
             ui.add(
                 egui::TextEdit::singleline(&mut state.settings_jvm)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
                     .id(egui::Id::new("settings-jvm-args"))
                     .hint_text("-Xmx4G")
                     .desired_width(ui.available_width().min(480.0)),
@@ -927,6 +1008,8 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
             field_label(ui, "Default game arguments");
             ui.add(
                 egui::TextEdit::singleline(&mut state.settings_game_args)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
                     .id(egui::Id::new("settings-game-args"))
                     .hint_text("--username Steve")
                     .desired_width(ui.available_width().min(480.0)),
@@ -940,10 +1023,13 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
                 .wrap(),
             );
             ui.add_space(8.0);
-            if crate::ui::components::primary_button(ui, "Save Launch Arguments").clicked() {
-                save_memory_and_defaults(state);
+            if crate::ui::components::primary_button(ui, "Apply launch arguments").clicked() {
+                state.config.default_jvm_args = state.settings_jvm.clone();
+                state.config.default_game_args = state.settings_game_args.clone();
+                save_settings(state, "Launch arguments saved".into());
             }
         });
+    });
     });
 }
 
@@ -956,8 +1042,6 @@ fn save_memory_and_defaults(state: &mut AppState) {
             Ok(warn) => {
                 state.config.memory.min_mb = min;
                 state.config.memory.max_mb = max;
-                state.config.default_jvm_args = state.settings_jvm.clone();
-                state.config.default_game_args = state.settings_game_args.clone();
                 save_settings(
                     state,
                     warn.unwrap_or_else(|| "Minecraft defaults saved".to_string()),
@@ -1022,7 +1106,8 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
         egui::Grid::new("runtime-settings-grid")
             .num_columns(2)
             .spacing([24.0, 12.0])
-            .min_col_width(200.0)
+            .min_col_width(130.0)
+            .max_col_width((ui.available_width() - 170.0).max(170.0))
             .show(ui, |ui| {
                 ui.label(RichText::new("Java Mode").color(TEXT2));
                 ui.vertical(|ui| {
@@ -1063,8 +1148,10 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut state.config.java.custom_path)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
                                 .id(egui::Id::new("settings-java-path"))
-                                .desired_width((ui.available_width() - 85.0).clamp(180.0, 380.0))
+                                .desired_width((ui.available_width() - 85.0).clamp(100.0, 380.0))
                                 .hint_text("C:\\Program Files\\Java\\bin\\javaw.exe"),
                         );
                         if crate::ui::components::secondary_button(ui, "Browse").clicked() {
@@ -1108,7 +1195,7 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
             });
 
         ui.add_space(8.0);
-        card_frame(ui, |ui| {
+        ui.collapsing("Advanced Java tuning", |ui| {
             ui.label(
                 RichText::new("Java & GC Performance Presets")
                     .size(14.0)
@@ -1117,22 +1204,19 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
             );
             ui.label(
                 RichText::new(
-                    "Choose an optimized garbage collection preset for smoother framerates and lower stutter.",
+                    "Choose Java flags for your game. The default works for most instances.",
                 )
                 .size(11.5)
                 .color(TEXT2),
             );
             ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                for preset in crate::config::JvmPreset::all() {
-                    let is_active = state.config.jvm_preset == preset;
-                    if crate::ui::components::pill_tab_button(ui, preset.label(), is_active)
-                        .clicked()
-                    {
-                        state.config.jvm_preset = preset;
+            egui::ComboBox::from_id_salt("runtime-jvm-preset")
+                .selected_text(state.config.jvm_preset.label())
+                .show_ui(ui, |ui| {
+                    for preset in crate::config::JvmPreset::all() {
+                        ui.selectable_value(&mut state.config.jvm_preset, preset, preset.label());
                     }
-                }
-            });
+                });
             ui.add_space(4.0);
             ui.label(
                 RichText::new(state.config.jvm_preset.hint())
@@ -1142,11 +1226,8 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
             if state.config.jvm_preset != crate::config::JvmPreset::None {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if crate::ui::components::secondary_button(
-                        ui,
-                        "Copy preset flags to default JVM args",
-                    )
-                    .clicked()
+                    if crate::ui::components::secondary_button(ui, "Copy flags to defaults")
+                        .clicked()
                     {
                         state.config.default_jvm_args = state.config.jvm_preset.flags().to_string();
                         state.settings_jvm = state.config.default_jvm_args.clone();
@@ -1160,9 +1241,6 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
         gpu_status(ui, ctx, state);
 
         ui.add_space(10.0);
-        if crate::ui::components::primary_button(ui, "Save Java & GPU settings").clicked() {
-            save_settings(state, "Java & GPU settings saved".to_string());
-        }
     });
 }
 
@@ -1433,6 +1511,45 @@ fn about_settings(state: &mut AppState, ui: &mut egui::Ui) {
             .wrap(),
         );
     });
+}
+
+pub(crate) fn show_appearance(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("settings-tab"), SettingsTab::Appearance));
+}
+
+fn preferences_signature(state: &AppState) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    (
+        state.config.close_action as u8,
+        state.config.gpu_preference as u8,
+        state.config.start_maximized,
+        state.config.remember_instance,
+        state.show_snapshots,
+        state.config.parallel_downloads,
+        state.config.window_width.to_bits(),
+        state.config.window_height.to_bits(),
+        state.config.memory.min_mb,
+        state.config.memory.max_mb,
+    )
+        .hash(&mut hash);
+    state.config.java.mode.hash(&mut hash);
+    state.config.java.custom_path.hash(&mut hash);
+    state.config.default_jvm_args.hash(&mut hash);
+    state.config.default_game_args.hash(&mut hash);
+    state.config.jvm_preset.label().hash(&mut hash);
+    hash.finish()
+}
+
+#[cfg(test)]
+pub(crate) fn select_review_tab(ctx: &egui::Context, scene: &str) {
+    let tab = match scene {
+        "settings-appearance" => SettingsTab::Appearance,
+        "settings-minecraft" => SettingsTab::Minecraft,
+        "settings-runtime" => SettingsTab::Runtime,
+        _ => SettingsTab::Launcher,
+    };
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("settings-tab"), tab));
 }
 
 #[cfg(test)]

@@ -57,13 +57,221 @@ fn review_home_worlds_crash_and_discord_layouts() {
             ThemeKind::Monochrome,
             false,
         ),
+        (
+            "home-medium",
+            Page::Home,
+            1024,
+            576,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "home-long-name",
+            Page::Home,
+            850,
+            560,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "home-empty",
+            Page::Home,
+            1024,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "home-no-screenshot",
+            Page::Home,
+            1280,
+            720,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "discover-small",
+            Page::Discover,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "discover-wide",
+            Page::Discover,
+            1536,
+            816,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "discover-project-small",
+            Page::Discover,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "downloads-active",
+            Page::Downloads,
+            850,
+            650,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "library-small",
+            Page::Library,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "home-updates-small",
+            Page::Home,
+            850,
+            650,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "library-updates-small",
+            Page::Library,
+            850,
+            650,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "library-wide",
+            Page::Library,
+            1536,
+            816,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "instances-small",
+            Page::Instances,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "new-instance-small",
+            Page::Instances,
+            850,
+            560,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "new-loader-small",
+            Page::Instances,
+            850,
+            560,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "onboarding-intro",
+            Page::Onboarding,
+            1024,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "onboarding-account",
+            Page::Onboarding,
+            850,
+            560,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "onboarding-defaults",
+            Page::Onboarding,
+            850,
+            560,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "settings-small",
+            Page::Settings,
+            850,
+            560,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "settings-appearance",
+            Page::Settings,
+            1024,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "settings-minecraft",
+            Page::Settings,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "settings-runtime",
+            Page::Settings,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "accounts-small",
+            Page::Accounts,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "downloads-small",
+            Page::Downloads,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "screenshots-small",
+            Page::Screenshots,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "nexeu-small",
+            Page::Nexeu,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
     ] {
         let is_halloween = label == "home-halloween";
         let ctx = egui::Context::default();
         let temp = tempfile::tempdir().unwrap();
         let paths = crate::storage::paths::MonoryxPaths::new(temp.path().into());
         let manager = crate::instance::InstanceManager::new(paths.clone());
-        let first = if is_halloween {
+        let mut first = if is_halloween {
             let mut inst = manager
                 .create(
                     "THE BEST LAUNCHERRR".into(),
@@ -95,6 +303,23 @@ fn review_home_worlds_crash_and_discord_layouts() {
                 .unwrap();
             inst
         };
+
+        if label == "home-long-name" {
+            first.name = "Survival with friends - shaders and adventures".into();
+            manager.save(&first).unwrap();
+        }
+        if label.contains("updates-small") {
+            first.loader_version = "0.16.9".into();
+            manager.save(&first).unwrap();
+        }
+
+        if label == "discover-wide" || page == Page::Library || label == "home-updates-small" {
+            first.resolved_version_id = "fabric-1.21.1".into();
+            let jar = crate::instance::readiness::client_jar_for(&paths, &first).unwrap();
+            std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+            std::fs::write(jar, b"review fixture").unwrap();
+            manager.save(&first).unwrap();
+        }
         let cc = eframe::CreationContext::_new_kittest(ctx.clone());
         let mut state = AppState::new_for_preview(&cc, paths);
         state.page = page;
@@ -104,17 +329,33 @@ fn review_home_worlds_crash_and_discord_layouts() {
             Some(crate::account::offline::OfflineProfile::new("PreviewPlayer").unwrap())
         };
         state.config.theme = theme;
+        crate::ui::theme::apply_selected_theme(&ctx, theme);
         state.selected_instance = Some(first.id.clone());
         state
             .mod_counts
             .insert(first.id.clone(), if is_halloween { 4 } else { 12 });
         if is_halloween {
             let shot_files = [
-                ("shot_main.png", "target/ref_crops/shot_main.png"),
-                ("shot_1.png", "target/ref_crops/shot_instance.png"),
-                ("shot_2.png", "target/ref_crops/shot_2.png"),
-                ("shot_3.png", "target/ref_crops/shot_3.png"),
-                ("shot_4.png", "target/ref_crops/shot_4.png"),
+                (
+                    "shot_main.png",
+                    "C:/Users/satya/projects/Monoryx/target/ref_crops/shot_main.png",
+                ),
+                (
+                    "shot_1.png",
+                    "C:/Users/satya/projects/Monoryx/target/ref_crops/shot_instance.png",
+                ),
+                (
+                    "shot_2.png",
+                    "C:/Users/satya/projects/Monoryx/target/ref_crops/shot_2.png",
+                ),
+                (
+                    "shot_3.png",
+                    "C:/Users/satya/projects/Monoryx/target/ref_crops/shot_3.png",
+                ),
+                (
+                    "shot_4.png",
+                    "C:/Users/satya/projects/Monoryx/target/ref_crops/shot_4.png",
+                ),
             ];
             for (idx, (fname, crop_path_str)) in shot_files.iter().enumerate() {
                 let p = temp.path().join(fname);
@@ -218,8 +459,8 @@ fn review_home_worlds_crash_and_discord_layouts() {
         if crash {
             let log = "Mod 'CraftyAI' (craftyai) 1.4.0 requires version 0.160.6 or later of mod 'Fabric API' (fabric-api), which is missing!";
             state.crash_report = Some(crate::minecraft::crash::CrashInfo {
-                instance_id: first.id,
-                instance_name: first.name,
+                instance_id: first.id.clone(),
+                instance_name: first.name.clone(),
                 exit_code: 1,
                 summary: "Incompatible mods found".into(),
                 advice: crate::minecraft::diagnostics::explain(log, 1),
@@ -230,8 +471,151 @@ fn review_home_worlds_crash_and_discord_layouts() {
                 logs_dir: temp.path().join("logs"),
             });
         }
-        if page == Page::Settings {
+
+        if label == "discord" {
             crate::ui::pages::settings::select_discord_for_preview(&ctx);
+        } else if page == Page::Settings {
+            crate::ui::pages::settings::select_review_tab(&ctx, label);
+        }
+        if label == "home-empty" {
+            state.instance_list.clear();
+            state.selected_instance = None;
+        }
+        if label == "home-no-screenshot" {
+            state.screenshots.clear();
+        }
+        if page == Page::Onboarding {
+            state.config.profile = None;
+            state.onboarding_user = "PreviewPlayer".into();
+            state.onboarding_step = match label {
+                "onboarding-account" => 1,
+                "onboarding-defaults" => 2,
+                _ => 0,
+            };
+            if label == "onboarding-defaults" {
+                state.onboarding_mem_auto = false;
+            }
+        }
+        if label.starts_with("new-") {
+            state.show_new_instance = true;
+            state.new_draft.name = "Survival with friends".into();
+            state.new_draft.version = "1.21.1".into();
+            state.new_draft.versions = vec!["1.21.1".into(), "1.20.1".into(), "1.19.4".into()];
+            state.new_draft.step = if label == "new-loader-small" { 1 } else { 0 };
+        }
+
+        if label == "new-loader-small" {
+            state.new_draft.loader = crate::instance::LoaderKind::Fabric;
+            state.new_draft.loader_version = "0.16.14".into();
+            state.new_draft.loader_versions = vec!["0.16.14".into(), "0.16.13".into()];
+            state.new_draft.loader_fetch_key = "1.21.1::fabric".into();
+        }
+        if page == Page::Downloads {
+            state
+                .downloads_history
+                .push(crate::app::state::TrackedDownload {
+                    id: "mod-install".into(),
+                    label: "Installing Iris Shaders".into(),
+                    downloaded: 100000,
+                    total: Some(1250000),
+                    speed_bps: 0.0,
+                    state: "failed".into(),
+                    message:
+                        "Could not reach the download server. Check your connection and try again."
+                            .into(),
+                });
+        }
+        if page == Page::Downloads {
+            state.retry_actions.insert(
+                "mod-install".into(),
+                crate::app::state::RetryAction::Game(first.id.clone()),
+            );
+            if label == "downloads-active" {
+                let id = format!("game:{}", first.id);
+                state.start_operation(
+                    &id,
+                    "Preparing Minecraft for Survival with friends".into(),
+                    Some(first.id.clone()),
+                    crate::app::state::RetryAction::Game(first.id.clone()),
+                );
+                state.handle_event(
+                    crate::app::events::AppEvent::InstallProgress(
+                        id,
+                        "Downloading game files".into(),
+                        14,
+                        42,
+                    ),
+                    &ctx,
+                );
+                state.downloads.insert(
+                    "client".into(),
+                    crate::app::state::TrackedDownload {
+                        id: "client".into(),
+                        label: "Minecraft client".into(),
+                        downloaded: 12_000_000,
+                        total: Some(32_000_000),
+                        speed_bps: 2_000_000.0,
+                        state: "downloading".into(),
+                        message: String::new(),
+                    },
+                );
+            }
+        }
+        if page == Page::Discover {
+            state.search.loader = "fabric".into();
+            state.search.game_version = "1.21.1".into();
+            state.search_total = 4;
+            state.search_results = ["Sodium", "Fabric API", "Iris Shaders", "A mod with a long title for the narrow layout"]
+                .into_iter().enumerate().map(|(index, name)| serde_json::from_value(serde_json::json!({
+                    "slug": format!("review-{index}"), "title": name,
+                    "description": "A Minecraft mod that improves performance and adds useful features to your world.",
+                    "author": "Example author", "downloads": 12345678, "project_type": "mod",
+                    "categories": ["fabric", "optimization"], "versions": ["1.21.1"]
+                })).unwrap()).collect();
+        }
+        if label == "discover-project-small" {
+            state.detail_slug = Some("review-0".into());
+            state.detail_project = Some(serde_json::from_value(serde_json::json!({"slug": "review-0", "title": "Sodium", "description": "Improve Minecraft rendering performance.", "project_type": "mod", "body": "A performance mod for Minecraft."})).unwrap());
+            state.detail_versions = ["1.21.1", "1.20.1"].into_iter().map(|game| serde_json::from_value(serde_json::json!({"id": game, "project_id": "review-0", "name": game, "version_number": game, "files": [], "dependencies": [], "game_versions": [game], "loaders": ["fabric"]})).unwrap()).collect();
+        }
+        if page == Page::Library {
+            state.library_entries = [
+                "Sodium",
+                "Fabric API",
+                "Iris Shaders",
+                "Example long mod name with additional details",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                serde_json::from_value(serde_json::json!({
+                    "file_name": format!("example-{index}-1.21.1.jar"), "kind": "mod",
+                    "project_slug": format!("review-{index}"), "project_title": name,
+                    "version_number": "0.16.14+1.21.1", "size": 1250000,
+                    "enabled": index != 2, "installed_at": "2026-10-06T10:00:00Z",
+                    "loader": "fabric", "game_version": "1.21.1"
+                }))
+                .unwrap()
+            })
+            .collect();
+        }
+
+        if label.contains("updates-small") {
+            state.updates_instance = Some(first.id.clone());
+            state.updates_checked = true;
+            state.updates_summary =
+                "1 compatible package update is available for Minecraft 1.21.1.".into();
+            state.updates = vec![crate::modrinth::updates::UpdateInfo {
+                file_name: "example-1-1.21.1.jar".into(),
+                kind: crate::content::ContentKind::Mod,
+                project_id: "fabric-api".into(),
+                title: "Fabric API".into(),
+                current_version: "0.100".into(),
+                new_version: "0.101".into(),
+                new_version_id: "review-new-version".into(),
+            }];
+            state.loader_update_instance = Some(first.id.clone());
+            state.loader_update_candidate = Some((first.id.clone(), "0.16.14".into()));
         }
         ctx.data_mut(|data| data.insert_temp(egui::Id::new("startup-window-size-applied"), 5_u8));
         let mut frame = eframe::Frame::_new_kittest();
@@ -271,12 +655,40 @@ fn review_home_worlds_crash_and_discord_layouts() {
         assert!(!output.shapes.is_empty());
         for shape in &output.shapes {
             if let egui::Shape::Text(text) = &shape.shape {
-                let rect = text.visual_bounding_rect().intersect(shape.clip_rect);
-                assert!(
-                    rect.right() <= width as f32 + 1.0,
-                    "{label}: text extends outside the window"
-                );
+                let rect = text.visual_bounding_rect();
+                if rect.intersects(shape.clip_rect) {
+                    assert!(
+                        rect.right() <= width as f32 + 1.0,
+                        "{label}: {:?} extends outside the window: {rect:?}",
+                        text.galley.job.text
+                    );
+                }
             }
+        }
+        if page == Page::Onboarding {
+            let button = if label == "onboarding-defaults" {
+                "Open MONORYX"
+            } else {
+                "Continue"
+            };
+            let (rect, clip) = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == button => {
+                        Some((text.visual_bounding_rect(), shape.clip_rect))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label}: missing {button}"));
+            assert!(
+                clip.expand(1.0).contains_rect(rect),
+                "{label}: {button} is clipped"
+            );
+            assert!(
+                rect.bottom() < height as f32 && rect.top() >= 0.0,
+                "{label}: {button} is outside the window"
+            );
         }
         if let Some(dir) = &output_dir {
             std::fs::create_dir_all(dir).unwrap();

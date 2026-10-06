@@ -27,12 +27,38 @@ impl Readiness {
 }
 
 #[must_use]
-pub fn client_jar_for(paths: &MonoryxPaths, cfg: &InstanceConfig) -> Option<std::path::PathBuf> {
+pub fn version_dir_for(paths: &MonoryxPaths, cfg: &InstanceConfig) -> Option<std::path::PathBuf> {
     let id = cfg.resolved_version_id.trim();
     if id.is_empty() || crate::utils::fs::safe_file_name(id).is_err() {
         return None;
     }
-    Some(paths.versions_dir().join(id).join(format!("{id}.jar")))
+    Some(paths.versions_dir().join(id))
+}
+
+#[must_use]
+pub fn client_jar_for(paths: &MonoryxPaths, cfg: &InstanceConfig) -> Option<std::path::PathBuf> {
+    let dir = version_dir_for(paths, cfg)?;
+    let id = cfg.resolved_version_id.trim();
+    Some(dir.join(format!("{id}.jar")))
+}
+
+fn client_jar_installed(paths: &MonoryxPaths, cfg: &InstanceConfig) -> bool {
+    let Some(dir) = version_dir_for(paths, cfg) else {
+        return false;
+    };
+    if let Some(jar) = client_jar_for(paths, cfg) {
+        if jar.is_file() {
+            return true;
+        }
+    }
+    std::fs::read_dir(&dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".jar"))
+        })
+    })
 }
 
 #[must_use]
@@ -40,9 +66,10 @@ pub fn readiness(paths: &MonoryxPaths, cfg: &InstanceConfig, busy: bool) -> Read
     if busy {
         return Readiness::Installing;
     }
-    match client_jar_for(paths, cfg) {
-        Some(jar) if jar.is_file() => Readiness::Ready,
-        _ => Readiness::NotDownloaded,
+    if client_jar_installed(paths, cfg) {
+        Readiness::Ready
+    } else {
+        Readiness::NotDownloaded
     }
 }
 
@@ -201,6 +228,22 @@ mod tests {
         assert_eq!(
             installable_loaders([&a, &b].into_iter(), &paths, &busy),
             vec![LoaderKind::Fabric, LoaderKind::Quilt]
+        );
+    }
+
+    #[test]
+    fn a_version_whose_jar_name_differs_from_its_id_is_still_ready() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = MonoryxPaths::new(temp.path().into());
+        let cfg = instance("1.21.5-pre1", "1.21.5-pre1");
+        assert_eq!(readiness(&paths, &cfg, false), Readiness::NotDownloaded);
+        let dir = version_dir_for(&paths, &cfg).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("1.21.5-pre1-rc1.jar"), b"x").unwrap();
+        assert_eq!(
+            readiness(&paths, &cfg, false),
+            Readiness::Ready,
+            "a client jar whose name differs from the version id must count as installed"
         );
     }
 }

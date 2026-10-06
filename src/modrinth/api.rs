@@ -48,7 +48,20 @@ impl ModrinthClient {
                     "Modrinth returned HTTP {status} for {url}"
                 )));
             }
-            return Ok(resp.json::<T>().await?);
+            if let Some(len) = resp.content_length() {
+                if len > crate::utils::net::MAX_JSON_BODY_BYTES as u64 {
+                    return Err(MonoryxError::Modrinth(format!(
+                        "Refusing a {len} byte response from {url}"
+                    )));
+                }
+            }
+            let bytes = resp.bytes().await?;
+            if bytes.len() > crate::utils::net::MAX_JSON_BODY_BYTES {
+                return Err(MonoryxError::Modrinth(format!(
+                    "Response from {url} exceeded the size limit"
+                )));
+            }
+            return Ok(serde_json::from_slice(&bytes)?);
         }
     }
 
@@ -129,7 +142,13 @@ impl ModrinthClient {
                 resp.status()
             )));
         }
-        Ok(resp.json().await?)
+        let bytes = resp.bytes().await?;
+        if bytes.len() > crate::utils::net::MAX_JSON_BODY_BYTES {
+            return Err(MonoryxError::Modrinth(
+                "Hash lookup response exceeded the size limit".to_string(),
+            ));
+        }
+        Ok(serde_json::from_slice(&bytes)?)
     }
 }
 

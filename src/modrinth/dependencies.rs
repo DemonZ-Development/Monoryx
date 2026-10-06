@@ -82,6 +82,13 @@ where
                     continue;
                 }
                 DependencyType::Required => {}
+                DependencyType::Unknown => {
+                    plan.warnings.push(format!(
+                        "unknown dependency type skipped ({})",
+                        dep.project_id.as_deref().unwrap_or("unknown")
+                    ));
+                    continue;
+                }
             }
             if let Some(pid) = &dep.project_id {
                 if !selected.contains_key(pid)

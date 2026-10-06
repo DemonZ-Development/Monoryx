@@ -140,6 +140,7 @@ pub async fn check_updates(
 
     let mut sha1_map: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, entry) in content.entries.iter_mut().enumerate() {
+        tokio::task::yield_now().await;
         if entry.project_id.is_some() {
             continue;
         }
@@ -186,6 +187,7 @@ pub async fn check_updates(
     if let Some(cf_client) = cf {
         let mut fp_map: HashMap<u32, Vec<usize>> = HashMap::new();
         for (idx, entry) in content.entries.iter().enumerate() {
+            tokio::task::yield_now().await;
             if entry.project_id.is_some() {
                 continue;
             }
@@ -380,6 +382,31 @@ pub async fn update_project(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updates_only_pick_the_instances_minecraft_version_and_loader() {
+        let versions: Vec<ProjectVersion> = serde_json::from_value(serde_json::json!([
+            {"id":"supported","project_id":"p","name":"Supported","version_number":"1", "date_published":"2026-01-01T00:00:00Z", "files":[], "dependencies":[], "game_versions":["1.21.1"], "loaders":["fabric"]},
+            {"id":"newer-game","project_id":"p","name":"Newer game","version_number":"2", "date_published":"2026-02-01T00:00:00Z", "files":[], "dependencies":[], "game_versions":["1.21.2"], "loaders":["fabric"]},
+            {"id":"other-loader","project_id":"p","name":"Other loader","version_number":"3", "date_published":"2026-03-01T00:00:00Z", "files":[], "dependencies":[], "game_versions":["1.21.1"], "loaders":["forge"]}
+        ])).unwrap();
+        assert_eq!(
+            best_compatible_version(&versions, ContentKind::Mod, "1.21.1", "fabric")
+                .unwrap()
+                .id,
+            "supported"
+        );
+        assert!(best_compatible_version(&versions, ContentKind::Mod, "1.20.1", "fabric").is_none());
+        assert!(
+            best_compatible_version(&versions, ContentKind::Mod, "1.21.1", "neoforge").is_none()
+        );
+        assert_eq!(
+            best_compatible_version(&versions, ContentKind::Shader, "1.21.2", "iris")
+                .unwrap()
+                .id,
+            "newer-game"
+        );
+    }
 
     #[test]
     fn resource_pack_updates_ignore_loader_and_pick_newest_publish_date() {

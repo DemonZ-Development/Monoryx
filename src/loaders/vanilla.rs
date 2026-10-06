@@ -9,6 +9,17 @@ use async_trait::async_trait;
 
 pub struct VanillaLoader;
 
+fn manifest_cache() -> &'static crate::storage::cache::DiskCache {
+    static CACHE: std::sync::OnceLock<crate::storage::cache::DiskCache> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        crate::storage::cache::DiskCache::new(
+            MonoryxPaths::global().manifests_dir(),
+            std::time::Duration::from_secs(3600),
+        )
+    })
+}
+
 fn versions_for_mc(
     manifest: &crate::minecraft::manifest::VersionManifest,
     mc: &str,
@@ -43,13 +54,7 @@ impl ModLoader for VanillaLoader {
         client: &reqwest::Client,
         minecraft_version: &str,
     ) -> Result<Vec<String>> {
-        let manifest: crate::minecraft::manifest::VersionManifest =
-            crate::utils::net::get_json_with_retry(
-                client,
-                crate::minecraft::manifest::VERSION_MANIFEST_URL,
-                None,
-            )
-            .await?;
+        let manifest = crate::minecraft::manifest::fetch_manifest(client, manifest_cache()).await?;
         Ok(versions_for_mc(&manifest, minecraft_version))
     }
 

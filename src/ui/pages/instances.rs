@@ -40,7 +40,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     state.spawn(async move {
                         let result = tokio::task::spawn_blocking(move || {
                             crate::instance::export::import_instance_export(&manager, &path)
-                                .map(|config| config.id)
+                                .map(|report| crate::app::events::ImportedInstance {
+                                    id: report.config.id,
+                                    stripped_args: report.stripped_args,
+                                })
                                 .map_err(|error| error.user_message())
                         })
                         .await
@@ -200,13 +203,14 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     }
     if state.show_new_instance {
         let response = egui::Modal::new(egui::Id::new("new-instance"))
-            .backdrop_color(egui::Color32::from_black_alpha(180))
+            .backdrop_color(egui::Color32::TRANSPARENT)
             .frame(
                 egui::Frame::popup(&_ctx.style())
                     .inner_margin(24)
                     .corner_radius(16),
             )
             .show(_ctx, |ui| {
+                crate::ui::components::dialog_content(ui);
                 ui.set_width((_ctx.screen_rect().width() - 48.0).clamp(320.0, 540.0));
                 show_new_dialog(state, ui);
             });
@@ -217,6 +221,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     if let Some(id) = state.confirm_delete.clone() {
         let title = state.confirm_title.clone();
         egui::Window::new(title)
+            .order(egui::Order::Foreground)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -443,6 +448,8 @@ fn show_step_basic(state: &mut AppState, ui: &mut egui::Ui) {
         let filter_width = (ui.available_width() * 0.38).clamp(110.0, 180.0);
         ui.add(
             egui::TextEdit::singleline(&mut state.new_draft.version_query)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
                 .hint_text("Filter...")
                 .desired_width(filter_width),
         );

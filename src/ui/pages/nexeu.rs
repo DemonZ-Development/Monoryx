@@ -3,6 +3,16 @@ use crate::ui::components::{card_frame, content_primary_button, page_header};
 use crate::ui::theme::{format_bytes, palette, DANGER, MUTED, TEXT, TEXT2};
 use egui::{CornerRadius, RichText, Stroke};
 
+const MAX_CONSOLE_LINES: usize = 400;
+
+fn console_tail(logs: &str, limit: usize) -> Vec<&str> {
+    let mut lines: Vec<&str> = logs.lines().collect();
+    if lines.len() > limit {
+        lines = lines.split_off(lines.len() - limit);
+    }
+    lines
+}
+
 pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     page_header(
         ui,
@@ -177,10 +187,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         state.nexeu_power(server.uuid.clone(), "start");
                     }
                     if ui.button("Restart").clicked() {
-                        state.nexeu_power(server.uuid.clone(), "restart");
+                        state.nexeu.pending_power = Some((server.uuid.clone(), "restart"));
                     }
                     if ui.button("Stop").clicked() {
-                        state.nexeu_power(server.uuid.clone(), "stop");
+                        state.nexeu.pending_power = Some((server.uuid.clone(), "stop"));
                     }
                     if ui.button("Refresh usage").clicked() {
                         state.nexeu_select_server(server.uuid.clone());
@@ -232,19 +242,33 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(
-                                            state.nexeu.logs.as_deref().unwrap_or(
-                                                "Refresh the log to view server output.",
-                                            ),
-                                        )
-                                        .monospace()
-                                        .size(11.5)
-                                        .color(TEXT2),
-                                    )
-                                    .wrap(),
-                                );
+                                match state.nexeu.logs.as_deref() {
+                                    Some(logs) => {
+                                        let visible = console_tail(logs, MAX_CONSOLE_LINES);
+                                        for line in visible {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(line)
+                                                        .monospace()
+                                                        .size(11.5)
+                                                        .color(TEXT2),
+                                                )
+                                                .wrap(),
+                                            );
+                                        }
+                                    }
+                                    None => {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(
+                                                    "Refresh the log to view server output.",
+                                                )
+                                                .color(TEXT2),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                }
                             });
                     });
                 ui.add_space(6.0);
@@ -309,6 +333,53 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 ui.label(content);
             }
         });
+    }
+    power_confirmation(state, _ctx);
+}
+
+fn power_confirmation(state: &mut AppState, ctx: &egui::Context) {
+    let Some((id, action)) = state.nexeu.pending_power.clone() else {
+        return;
+    };
+    let label = match action {
+        "restart" => "Restart server?",
+        "stop" => "Stop server?",
+        _ => "Power action?",
+    };
+    let warning = match action {
+        "restart" => "Players on this server will be disconnected.",
+        "stop" => "This shuts the server down and players will be disconnected.",
+        _ => "",
+    };
+    let mut finished = false;
+    egui::Window::new(label)
+        .order(egui::Order::Foreground)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(RichText::new(warning).color(DANGER));
+            ui.horizontal(|ui| {
+                if crate::ui::components::danger_button(
+                    ui,
+                    if action == "restart" {
+                        "Restart"
+                    } else {
+                        "Stop"
+                    },
+                )
+                .clicked()
+                {
+                    state.nexeu_power(id, action);
+                    finished = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    finished = true;
+                }
+            });
+        });
+    if finished {
+        state.nexeu.pending_power = None;
     }
 }
 

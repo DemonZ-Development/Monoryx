@@ -216,6 +216,12 @@ pub async fn install_version(
                 client.get("size").and_then(|v| v.as_u64()),
                 client.get("url").and_then(|v| v.as_str()),
             ) {
+                crate::utils::fs::safe_file_name(id)?;
+                if !url.starts_with("https://") {
+                    return Err(MonoryxError::VersionNotFound(
+                        "version JSON requested an insecure logging config URL".to_string(),
+                    ));
+                }
                 let dest = version_dir.join(id);
                 let job = DownloadJob::new("logging config", url, dest)
                     .with_sha1(sha1.to_string())

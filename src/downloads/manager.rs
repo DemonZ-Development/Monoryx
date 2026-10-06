@@ -193,8 +193,11 @@ impl DownloadManager {
                         let _ = tokio::fs::remove_file(&part).await;
                         return Err(e);
                     }
-                    let backoff = Duration::from_millis(400 * 2u64.pow(attempt.min(4)));
-                    tokio::time::sleep(backoff).await;
+                    let backoff = match retry_after_hint(&e) {
+                        Some(delay) => delay,
+                        None => Duration::from_millis(400 * 2u64.pow(attempt.min(4))),
+                    };
+                    tokio::time::sleep(backoff.min(Duration::from_secs(30))).await;
                 }
             }
         }
@@ -225,8 +228,13 @@ impl DownloadManager {
         let status = resp.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(MonoryxError::Download(format!(
-                "GET {} returned HTTP 429",
-                job.url
+                "GET {} returned HTTP 429, retry after {}s",
+                job.url,
+                resp.headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .unwrap_or(5)
             )));
         }
         if status.is_client_error() {
@@ -265,25 +273,45 @@ impl DownloadManager {
 
         let mut downloaded: u64 = if resumed { resume_from } else { 0 };
         let start = Instant::now();
+        let mut reported_bytes: u64 = 0;
+        let ceiling = job
+            .expected_size
+            .zip(total)
+            .map(|(expected, total)| expected.max(total))
+            .map_or_else(
+                || MAX_DOWNLOAD_BYTES,
+                |known| known.saturating_add(SIZE_SLACK_BYTES),
+            );
         let mut stream = resp.bytes_stream();
-        let mut last_report = Instant::now();
+        let mut last_report_at = Instant::now();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > ceiling {
+                return Err(MonoryxError::Download(format!(
+                    "{} exceeded its expected size of {ceiling} bytes",
+                    job.label
+                )));
+            }
             file.write_all(&chunk).await.map_err(MonoryxError::Io)?;
-            downloaded += chunk.len() as u64;
             if let Some(cb) = &progress {
-                if last_report.elapsed() >= Duration::from_millis(100) {
-                    let elapsed = start.elapsed().as_secs_f64().max(0.001);
+                if last_report_at.elapsed() >= Duration::from_millis(100) {
+                    let elapsed = last_report_at
+                        .duration_since(start)
+                        .as_secs_f64()
+                        .max(0.001);
                     cb(DownloadProgress {
                         downloaded,
                         total,
-                        speed_bps: downloaded as f64 / elapsed,
+                        speed_bps: (downloaded - reported_bytes) as f64 / elapsed,
                     });
-                    last_report = Instant::now();
+                    reported_bytes = downloaded;
+                    last_report_at = Instant::now();
                 }
             }
         }
         file.flush().await.map_err(MonoryxError::Io)?;
+        file.sync_all().await.map_err(MonoryxError::Io)?;
         drop(file);
 
         let actual_size = tokio::fs::metadata(&part)
@@ -367,17 +395,43 @@ fn part_path(dest: &Path) -> std::path::PathBuf {
 
 fn is_permanent_http(e: &MonoryxError) -> bool {
     if let MonoryxError::Download(msg) = e {
-        if msg.contains("HTTP 404")
-            || msg.contains("HTTP 400")
-            || msg.contains("HTTP 401")
-            || msg.contains("HTTP 403")
-            || msg.contains("HTTP 422")
-        {
+        if let Some(code) = http_status_in(msg) {
+            return matches!(code, 400 | 401 | 403 | 404 | 410 | 422);
+        }
+        if msg.contains("exceeded its expected size") {
             return true;
         }
     }
     false
 }
+
+fn http_status_in(msg: &str) -> Option<u16> {
+    let marker = msg.find("HTTP ")?;
+    let digits: String = msg[marker + 5..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
+fn retry_after_hint(e: &MonoryxError) -> Option<Duration> {
+    let MonoryxError::Download(msg) = e else {
+        return None;
+    };
+    let marker = msg.find("retry after ")?;
+    let digits: String = msg[marker + "retry after ".len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits
+        .parse()
+        .ok()
+        .map(Duration::from_secs)
+        .map(|delay| delay + Duration::from_millis(250))
+}
+
+const MAX_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const SIZE_SLACK_BYTES: u64 = 1024 * 1024;
 
 const SIZE_TOLERANCE_BYTES: u64 = 4096;
 
@@ -464,6 +518,42 @@ mod tests {
 #[cfg(test)]
 mod size_verdict_tests {
     use super::*;
+
+    #[test]
+    fn permanent_statuses_are_read_from_the_typed_code_not_the_message() {
+        for code in [400u16, 401, 403, 404, 410, 422] {
+            let err = MonoryxError::Download(format!("GET https://x/y returned HTTP {code}"));
+            assert!(is_permanent_http(&err), "HTTP {code} must not be retried");
+        }
+        for code in [408u16, 429, 500, 502, 503, 504] {
+            let err = MonoryxError::Download(format!("GET https://x/y returned HTTP {code}"));
+            assert!(!is_permanent_http(&err), "HTTP {code} should be retried");
+        }
+        let misleading =
+            MonoryxError::Download("GET https://x/?note=HTTP%20404 returned HTTP 500".to_string());
+        assert!(!is_permanent_http(&misleading));
+    }
+
+    #[test]
+    fn rate_limit_backoff_is_taken_from_the_retry_after_header() {
+        let err = MonoryxError::Download(
+            "GET https://x/y returned HTTP 429, retry after 17s".to_string(),
+        );
+        assert_eq!(
+            retry_after_hint(&err),
+            Some(Duration::from_secs(17) + Duration::from_millis(250))
+        );
+        let none = MonoryxError::Download("GET https://x/y returned HTTP 500".to_string());
+        assert_eq!(retry_after_hint(&none), None);
+        assert!(!is_permanent_http(&err), "429 must stay retryable");
+    }
+
+    #[test]
+    fn oversized_payloads_are_rejected_before_they_fill_the_disk() {
+        assert!(is_permanent_http(&MonoryxError::Download(
+            "iris exceeded its expected size of 10 bytes".to_string()
+        )));
+    }
 
     #[test]
     fn a_large_drift_with_a_matching_hash_is_still_rejected() {

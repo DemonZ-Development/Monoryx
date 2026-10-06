@@ -14,6 +14,7 @@ pub struct Session {
     pub logs: Option<String>,
     pub backups: Option<Vec<Backup>>,
     pub console_command: String,
+    pub pending_power: Option<(String, &'static str)>,
 }
 
 #[derive(Debug, Clone)]

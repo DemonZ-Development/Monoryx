@@ -83,7 +83,14 @@ impl InstanceManager {
     pub fn save(&self, cfg: &InstanceConfig) -> Result<()> {
         cfg.validate()?;
         let text = toml::to_string_pretty(cfg).map_err(|e| MonoryxError::TomlSer(e.to_string()))?;
-        crate::storage::atomic::atomic_write_str(&self.config_path(&cfg.id), &text)
+        let path = self.config_path(&cfg.id);
+        if path.exists() {
+            let previous = std::fs::read_to_string(&path)?;
+            if toml::from_str::<InstanceConfig>(&previous).is_ok() {
+                crate::storage::atomic::atomic_write_str(&backup_path(&path), &previous)?;
+            }
+        }
+        crate::storage::atomic::atomic_write_str(&path, &text)
     }
 
     pub fn rename(&self, id: &str, new_name: String) -> Result<InstanceConfig> {
@@ -261,9 +268,40 @@ impl InstanceManager {
     }
 }
 
+fn backup_path(path: &Path) -> std::path::PathBuf {
+    path.with_extension("toml.bak")
+}
+
+fn recover_config(path: &Path, damaged: &str, error: &toml::de::Error) -> Result<InstanceConfig> {
+    let backup = backup_path(path);
+    let Ok(backup_text) = std::fs::read_to_string(&backup) else {
+        return Err(MonoryxError::TomlDe(format!(
+            "{error}. Instance settings were preserved at {}",
+            path.display()
+        )));
+    };
+    let Ok(recovered) = toml::from_str::<InstanceConfig>(&backup_text) else {
+        return Err(MonoryxError::TomlDe(format!(
+            "{error}. Instance settings and its backup were preserved at {}",
+            path.display()
+        )));
+    };
+    let preserved = path.with_extension(format!("corrupt-{}.toml", uuid::Uuid::new_v4()));
+    std::fs::write(&preserved, damaged)?;
+    crate::storage::atomic::atomic_write_str(path, &backup_text)?;
+    tracing::warn!(
+        "Damaged instance settings preserved at {} and recovered from backup",
+        preserved.display()
+    );
+    Ok(recovered)
+}
+
 fn load_config(path: &Path) -> Result<InstanceConfig> {
     let text = std::fs::read_to_string(path)?;
-    toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))
+    match toml::from_str::<InstanceConfig>(&text) {
+        Ok(cfg) => Ok(cfg),
+        Err(error) => recover_config(path, &text, &error),
+    }
 }
 
 fn natural_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
@@ -344,6 +382,57 @@ mod tests {
         assert_eq!(m.list().unwrap().len(), 1);
         let r = m.rename(&c.id, "Fast".into()).unwrap();
         assert_eq!(r.name, "Fast");
+    }
+
+    #[test]
+    fn damaged_instance_settings_recover_from_backup_instead_of_vanishing() {
+        let (d, m) = manager();
+        let mut cfg = m
+            .create(
+                "Keep Me".into(),
+                "1.21".into(),
+                LoaderKind::Fabric,
+                "0.16.9".into(),
+            )
+            .unwrap();
+        cfg.memory_max_mb = 6144;
+        m.save(&cfg).unwrap();
+        m.save(&cfg).unwrap();
+        let path = m.config_path(&cfg.id);
+        std::fs::write(&path, "name = \"Keep Me\"\nthis is not = = valid toml").unwrap();
+
+        let listed = m.list().unwrap();
+        assert_eq!(listed.len(), 1, "instance must not disappear");
+        assert_eq!(listed[0].id, cfg.id);
+        assert_eq!(listed[0].memory_max_mb, 6144);
+        assert_eq!(listed[0].name, "Keep Me");
+
+        let salvaged: Vec<_> = std::fs::read_dir(d.path().join("instances").join(&cfg.id))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("instance.corrupt-"))
+            .collect();
+        assert_eq!(salvaged.len(), 1, "damaged file must be preserved");
+    }
+
+    #[test]
+    fn damaged_instance_without_backup_is_reported_not_deleted() {
+        let (d, m) = manager();
+        let cfg = m
+            .create(
+                "Only Copy".into(),
+                "1.21".into(),
+                LoaderKind::Vanilla,
+                String::new(),
+            )
+            .unwrap();
+        let path = m.config_path(&cfg.id);
+        let _ = std::fs::remove_file(backup_path(&path));
+        std::fs::write(&path, "totally broken = = =").unwrap();
+        assert!(m.list().unwrap().is_empty());
+        assert!(path.exists(), "damaged file must stay on disk");
+        assert!(d.path().join("instances").join(&cfg.id).exists());
     }
 
     #[test]

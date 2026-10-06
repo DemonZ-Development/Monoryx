@@ -52,64 +52,21 @@ pub fn fetch_loader_versions(state: &AppState, loader: LoaderKind, mc: String, f
 }
 
 pub fn create_and_install(
-    state: &AppState,
+    state: &mut AppState,
     name: String,
     mc: String,
     loader: LoaderKind,
     loader_version: String,
 ) {
-    let tx = state.tx.clone();
-    let paths = state.paths.clone();
-    let dm = state.dm.clone();
-    let http = state.http.clone();
-    let instances = state.instances.clone();
-    let op_id = uuid::Uuid::new_v4().to_string();
-    let _ = tx.send(AppEvent::OperationStarted(
-        op_id.clone(),
-        if loader == LoaderKind::Vanilla {
-            format!("Installing Minecraft for {name}")
-        } else {
-            format!("Installing {} loader for {name}", loader.display_name())
-        },
-        None,
-    ));
-    state.runtime.spawn(async move {
-        let cfg = match instances.create(name, mc.clone(), loader, loader_version.clone()) {
-            Ok(c) => c,
-            Err(e) => {
-                let msg = e.user_message();
-                let _ = tx.send(AppEvent::OperationFinished(op_id.clone(), Err(msg.clone())));
-                let _ = tx.send(AppEvent::InstallDone(String::new(), Err(msg)));
-                return;
-            }
-        };
-        let id = cfg.id.clone();
-        let _ = instances.ensure_game_dirs(&id);
-        let op_tx = tx.clone();
-        let op_id_for_prog = op_id.clone();
-        let phase_cb: Arc<
-            dyn Fn(crate::minecraft::installer::InstallPhase, usize, usize) + Send + Sync,
-        > = Arc::new(move |phase, a, b| {
-            let _ = op_tx.send(AppEvent::InstallProgress(
-                op_id_for_prog.clone(),
-                phase.label().to_string(),
-                a,
-                b.max(1),
-            ));
-        });
-        let result =
-            install_instance_inner(&dm, &http, &paths, &instances, &id, Some(phase_cb)).await;
-        match result {
-            Ok(version_id) => {
-                let _ = tx.send(AppEvent::OperationFinished(op_id.clone(), Ok(())));
-                let _ = tx.send(AppEvent::InstallDone(id, Ok(version_id)));
-            }
-            Err(e) => {
-                let _ = tx.send(AppEvent::OperationFinished(op_id, Err(e.clone())));
-                let _ = tx.send(AppEvent::InstallDone(id, Err(e)));
-            }
+    match state.instances.create(name, mc, loader, loader_version) {
+        Ok(cfg) => {
+            state.refresh_instances();
+            state.selected_instance = Some(cfg.id.clone());
+            repair_instance(state, cfg.id);
+            state.set_page(crate::app::events::Page::Downloads);
         }
-    });
+        Err(error) => state.fail(error.user_message()),
+    }
 }
 
 pub async fn install_instance_inner(
@@ -352,6 +309,13 @@ async fn play_inner(
     if runtimes.is_empty() {
         runtimes = crate::java::discovery::discover_all(&paths.java_dir()).await;
     }
+    if let JavaMode::Custom(path) = &mode {
+        if !runtimes.iter().any(|runtime| &runtime.path == path) {
+            if let Some(probed) = crate::java::discovery::probe(path, "custom").await {
+                runtimes.push(probed);
+            }
+        }
+    }
     let mut selected = select_runtime(&runtimes, required, &mode);
     if selected.is_none() {
         if let Some(req) = required {
@@ -378,6 +342,12 @@ async fn play_inner(
         )
     })?;
     if let Some(req) = required {
+        if rt.major == 0 {
+            return Err(format!(
+                "Could not determine the Java version at {} (needs Java {req}). Pick another Java in this instance's settings.",
+                rt.path.display()
+            ));
+        }
         if rt.major < req {
             return Err(format!(
                 "Found Java {} but Minecraft {} needs Java {req}.",
@@ -493,7 +463,6 @@ async fn play_inner(
         version_id,
         plan.java_exe.display()
     )));
-    let _ = instances.mark_played(instance_id);
     if let Err(e) =
         crate::minecraft::launcher::apply_gpu_preference(&plan.java_exe, config.gpu_preference)
             .await
@@ -507,6 +476,7 @@ async fn play_inner(
     let mut proc = crate::minecraft::launcher::SupervisedProcess::spawn(&plan, &log_file)
         .await
         .map_err(|e| e.user_message())?;
+    let _ = instances.mark_played(instance_id);
     let _ = tx.send(AppEvent::OperationFinished(operation_id.clone(), Ok(())));
     let _ = tx.send(AppEvent::PlaySpawned);
     if config.close_action == crate::config::CloseAction::Hide {
@@ -558,7 +528,7 @@ async fn play_inner(
 }
 
 pub fn install_mod(
-    state: &AppState,
+    state: &mut AppState,
     project_id: String,
     slug: String,
     title: String,
@@ -573,7 +543,7 @@ pub fn install_mod(
 }
 
 pub fn install_content(
-    state: &AppState,
+    state: &mut AppState,
     project_id: String,
     slug: String,
     title: String,
@@ -601,6 +571,24 @@ pub fn install_content(
             .ok();
         return;
     }
+    let op_id = format!("content:{}:{project_id}", cfg.id);
+    let retry = crate::app::state::RetryAction::Content(
+        cfg.id.clone(),
+        project_id.clone(),
+        slug.clone(),
+        title.clone(),
+        kind,
+        version_id.clone(),
+    );
+    if !state.start_operation(
+        &op_id,
+        format!("Installing {title}"),
+        Some(cfg.id.clone()),
+        retry,
+    ) {
+        return;
+    }
+    state.begin_row_activity(&op_id, "Finding compatible files…");
     let dm = state.dm.clone();
     let mr = state.mr.clone();
     let instances = state.instances.clone();
@@ -623,7 +611,17 @@ pub fn install_content(
     } else {
         None
     };
+    let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
+        let Ok(_permit) = slots.acquire_owned().await else {
+            return;
+        };
+        let _ = tx.send(AppEvent::InstallProgress(
+            op_id.clone(),
+            "Preparing files…".into(),
+            0,
+            0,
+        ));
         let req = InstallRequest {
             project_id,
             project_slug: slug,
@@ -635,7 +633,17 @@ pub fn install_content(
             curseforge_api_key: cf_key,
             curseforge_endpoint: cf_endpoint,
         };
-        let r = install_project(&dm, &mr, &instances, &cfg.id, req, None)
+        let progress_tx = tx.clone();
+        let progress_id = op_id.clone();
+        let progress = Arc::new(move |phase, completed, total| {
+            let _ = progress_tx.send(AppEvent::InstallProgress(
+                progress_id.clone(),
+                phase,
+                completed,
+                total,
+            ));
+        });
+        let r = install_project(&dm, &mr, &instances, &cfg.id, req, Some(progress))
             .await
             .map(|outcome| {
                 for warning in outcome.warnings {
@@ -644,16 +652,26 @@ pub fn install_content(
                 outcome.installed_files
             })
             .map_err(|e| e.user_message());
-        let _ = tx.send(AppEvent::ModInstallDone(r));
+        let _ = tx.send(AppEvent::ContentInstallDone(op_id, cfg.id, r));
     });
 }
 
-pub fn check_updates(state: &AppState) {
-    let Some(cfg) = state.selected() else { return };
-    let instance_id = cfg.id.clone();
+pub fn check_updates(state: &mut AppState) {
+    state.check_instance_updates(false);
+}
+
+pub fn scan_instance_updates(
+    state: &AppState,
+    cfg: crate::instance::InstanceConfig,
+    generation: u64,
+    target: crate::app::updates::UpdateTarget,
+) -> tokio::task::AbortHandle {
     let mr = state.mr.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
+    let http = state.http.clone();
+    let slots = state.metadata_slots.clone();
+    let ctx = state.egui_ctx.clone();
     let cf = crate::curseforge::CurseForgeClient::with_server(
         state.http.clone(),
         &state.config.curseforge.api_key,
@@ -667,23 +685,49 @@ pub fn check_updates(state: &AppState) {
         LoaderKind::Vanilla => "vanilla",
     }
     .to_string();
-    state.runtime.spawn(async move {
-        let r = crate::modrinth::updates::check_updates(
-            &mr,
-            Some(&cf),
-            &instances,
-            &cfg.id,
-            &cfg.minecraft_version,
-            &loader_str,
-        )
-        .await
-        .map_err(|error| error.user_message());
-        let _ = tx.send(AppEvent::UpdatesFound(instance_id, r));
-    });
+    state
+        .runtime
+        .spawn(async move {
+            let Ok(_permit) = slots.acquire_owned().await else {
+                return;
+            };
+            let content = crate::modrinth::updates::check_updates(
+                &mr,
+                Some(&cf),
+                &instances,
+                &cfg.id,
+                &cfg.minecraft_version,
+                &loader_str,
+            );
+            let loader = compatible_loader_update(&http, &cfg);
+            let (content, loader) = tokio::join!(content, loader);
+            let report = crate::app::updates::InstanceUpdateReport {
+                content: content.map_err(|error| error.user_message()),
+                loader,
+            };
+            let _ = tx.send(AppEvent::InstanceUpdatesChecked(
+                generation,
+                target,
+                Box::new(report),
+            ));
+            ctx.request_repaint();
+        })
+        .abort_handle()
 }
 
-pub fn update_one(state: &AppState, info: crate::modrinth::updates::UpdateInfo) {
+pub fn update_one(state: &mut AppState, info: crate::modrinth::updates::UpdateInfo) {
     let Some(cfg) = state.selected() else { return };
+    let op_id = format!("update:{}:{}", cfg.id, info.file_name);
+    let retry = crate::app::state::RetryAction::Update(cfg.id.clone(), info.clone());
+    if !state.start_operation(
+        &op_id,
+        format!("Updating {}", info.file_name),
+        Some(cfg.id.clone()),
+        retry,
+    ) {
+        return;
+    }
+    state.begin_row_activity(&info.file_name, "Downloading update…");
     let dm = state.dm.clone();
     let mr = state.mr.clone();
     let instances = state.instances.clone();
@@ -701,7 +745,17 @@ pub fn update_one(state: &AppState, info: crate::modrinth::updates::UpdateInfo) 
         LoaderKind::Vanilla => "vanilla",
     }
     .to_string();
+    let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
+        let Ok(_permit) = slots.acquire_owned().await else {
+            return;
+        };
+        let _ = tx.send(AppEvent::InstallProgress(
+            op_id.clone(),
+            "Preparing files…".into(),
+            0,
+            0,
+        ));
         let r = crate::modrinth::updates::update_project(
             &dm,
             &mr,
@@ -715,11 +769,11 @@ pub fn update_one(state: &AppState, info: crate::modrinth::updates::UpdateInfo) 
         .await
         .map(|f| vec![f])
         .map_err(|e| e.user_message());
-        let _ = tx.send(AppEvent::ModInstallDone(r));
+        let _ = tx.send(AppEvent::ContentInstallDone(op_id, cfg.id, r));
     });
 }
 
-pub fn update_all_mods(state: &AppState) {
+pub fn update_all_mods(state: &mut AppState) {
     let infos = state.updates.clone();
     for info in infos {
         update_one(state, info);
@@ -733,26 +787,54 @@ pub fn check_loader_update(state: &AppState, instance_id: String) {
     state.runtime.spawn(async move {
         let result = async {
             let cfg = instances.get(&instance_id).map_err(|e| e.user_message())?;
-            if cfg.loader == LoaderKind::Vanilla {
-                return Ok(None);
-            }
-            let latest = crate::loaders::loader_for(cfg.loader)
-                .latest_stable(&http, &cfg.minecraft_version)
-                .await
-                .map_err(|e| e.user_message())?;
-            Ok((latest != cfg.loader_version).then_some(latest))
+            compatible_loader_update(&http, &cfg).await
         }
         .await;
         let _ = tx.send(AppEvent::LoaderUpdateChecked(instance_id, result));
     });
 }
 
-pub fn install_loader_update(state: &AppState, instance_id: String, version: String) {
+async fn compatible_loader_update(
+    http: &reqwest::Client,
+    cfg: &crate::instance::InstanceConfig,
+) -> std::result::Result<Option<String>, String> {
+    if cfg.loader == LoaderKind::Vanilla {
+        return Ok(None);
+    }
+    let latest = crate::loaders::loader_for(cfg.loader)
+        .latest_stable(http, &cfg.minecraft_version)
+        .await
+        .map_err(|error| error.user_message())?;
+    Ok(crate::loaders::is_newer_version(&cfg.loader_version, &latest).then_some(latest))
+}
+
+pub fn install_loader_update(state: &mut AppState, instance_id: String, version: String) {
+    let op_id = format!("loader:{instance_id}");
+    if !state.start_operation(
+        &op_id,
+        format!("Updating loader to {version}"),
+        Some(instance_id.clone()),
+        crate::app::state::RetryAction::Loader(instance_id.clone(), version.clone()),
+    ) {
+        return;
+    }
+    state.loader_update_busy = Some(instance_id.clone());
+    state.loader_update_error.clear();
     let instances = state.instances.clone();
     let dm = state.dm.clone();
     let paths = state.paths.clone();
     let tx = state.tx.clone();
+    let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
+        let Ok(_permit) = slots.acquire_owned().await else {
+            return;
+        };
+        let _ = tx.send(AppEvent::InstallProgress(
+            op_id.clone(),
+            "Preparing loader…".into(),
+            0,
+            0,
+        ));
         let result = async {
             let mut cfg = instances.get(&instance_id).map_err(|e| e.user_message())?;
             if cfg.loader == LoaderKind::Vanilla {
@@ -762,7 +844,18 @@ pub fn install_loader_update(state: &AppState, instance_id: String, version: Str
                 .install(&dm, &paths, &cfg.minecraft_version, &version)
                 .await
                 .map_err(|e| e.user_message())?;
-            crate::minecraft::installer::install_version(&dm, &paths, &resolved, None)
+            let progress_tx = tx.clone();
+            let progress_id = op_id.clone();
+            let progress: crate::minecraft::installer::PhaseCallback =
+                Arc::new(move |phase, completed, total| {
+                    let _ = progress_tx.send(AppEvent::InstallProgress(
+                        progress_id.clone(),
+                        phase.label().into(),
+                        completed,
+                        total,
+                    ));
+                });
+            crate::minecraft::installer::install_version(&dm, &paths, &resolved, Some(progress))
                 .await
                 .map_err(|e| e.user_message())?;
             cfg.loader_version = version.clone();
@@ -771,65 +864,129 @@ pub fn install_loader_update(state: &AppState, instance_id: String, version: Str
             Ok(version)
         }
         .await;
+        let _ = tx.send(AppEvent::OperationFinished(
+            op_id,
+            result.as_ref().map(|_| ()).map_err(Clone::clone),
+        ));
         let _ = tx.send(AppEvent::LoaderUpdateDone(instance_id, result));
     });
 }
 
-pub fn repair_instance(state: &AppState, instance_id: String) {
+pub fn repair_instance(state: &mut AppState, instance_id: String) {
+    let op_id = format!("game:{instance_id}");
+    let name = state
+        .instances
+        .get(&instance_id)
+        .map_or_else(|_| instance_id.clone(), |cfg| cfg.name);
+    if !state.start_operation(
+        &op_id,
+        format!("Preparing Minecraft for {name}"),
+        Some(instance_id.clone()),
+        crate::app::state::RetryAction::Game(instance_id.clone()),
+    ) {
+        return;
+    }
     let dm = state.dm.clone();
     let paths = state.paths.clone();
     let instances = state.instances.clone();
     let http = state.http.clone();
     let tx = state.tx.clone();
+    let ctx = state.egui_ctx.clone();
+    let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
-        let r: std::result::Result<Vec<String>, String> = async {
-            let mut cfg = instances.get(&instance_id).map_err(|e| e.user_message())?;
-            let loader = crate::loaders::loader_for(cfg.loader);
-            let resolved = loader
-                .install(&dm, &paths, &cfg.minecraft_version, &cfg.loader_version)
-                .await
-                .map_err(|e| e.user_message())?;
-            cfg.resolved_version_id = resolved.id.clone();
-            instances.save(&cfg).map_err(|e| e.user_message())?;
-            let problems = crate::minecraft::installer::validate_install(
-                &paths,
-                &resolved,
-                crate::minecraft::installer::Verify::Full,
-            );
-            crate::minecraft::installer::install_version(&dm, &paths, &resolved, None)
-                .await
-                .map_err(|e| e.user_message())?;
-            let _ = http;
-            Ok(problems)
-        }
-        .await;
-        let _ = tx.send(AppEvent::RepairDone(r));
+        let Ok(_permit) = slots.acquire_owned().await else {
+            return;
+        };
+        let _ = tx.send(AppEvent::InstallProgress(
+            op_id.clone(),
+            "Preparing files…".into(),
+            0,
+            0,
+        ));
+        let progress_tx = tx.clone();
+        let progress_id = op_id.clone();
+        let progress: crate::minecraft::installer::PhaseCallback =
+            Arc::new(move |phase, completed, total| {
+                let _ = progress_tx.send(AppEvent::InstallProgress(
+                    progress_id.clone(),
+                    phase.label().into(),
+                    completed,
+                    total,
+                ));
+            });
+        let result =
+            install_instance_inner(&dm, &http, &paths, &instances, &instance_id, Some(progress))
+                .await;
+        let _ = tx.send(AppEvent::OperationFinished(
+            op_id,
+            result.as_ref().map(|_| ()).map_err(Clone::clone),
+        ));
+        let _ = tx.send(AppEvent::InstallDone(instance_id, result));
+        ctx.request_repaint();
     });
 }
 
-pub fn install_pack_file(state: &AppState, path: std::path::PathBuf) {
+pub fn install_pack_file(state: &mut AppState, path: std::path::PathBuf) {
+    let op_id = format!("pack-file:{}", path.display());
+    if !state.start_operation(
+        &op_id,
+        "Installing modpack".into(),
+        None,
+        crate::app::state::RetryAction::PackFile(path.clone()),
+    ) {
+        return;
+    }
     let dm = state.dm.clone();
     let paths = state.paths.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
+    let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
+        let Ok(_permit) = slots.acquire_owned().await else {
+            return;
+        };
+        let _ = tx.send(AppEvent::InstallProgress(
+            op_id.clone(),
+            "Preparing files…".into(),
+            0,
+            0,
+        ));
         let r =
             crate::modrinth::modpack::install_mrpack(&dm, &paths, &instances, &path, None, None)
                 .await
                 .map(|rep| rep.instance_id)
                 .map_err(|e| e.user_message());
-        let _ = tx.send(AppEvent::PackDone(r));
+        let _ = tx.send(AppEvent::PackInstallDone(op_id, r));
     });
 }
 
-pub fn install_modpack(state: &AppState, slug: String, title: String) {
+pub fn install_modpack(state: &mut AppState, slug: String, title: String) {
+    let op_id = format!("pack:{slug}");
+    if !state.start_operation(
+        &op_id,
+        format!("Installing {title}"),
+        None,
+        crate::app::state::RetryAction::Pack(slug.clone(), title.clone()),
+    ) {
+        return;
+    }
     let dm = state.dm.clone();
     let mr = state.mr.clone();
     let paths = state.paths.clone();
     let instances = state.instances.clone();
     let tx = state.tx.clone();
     let ctx = state.egui_ctx.clone();
+    let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
+        let Ok(_permit) = slots.acquire_owned().await else {
+            return;
+        };
+        let _ = tx.send(AppEvent::InstallProgress(
+            op_id.clone(),
+            "Preparing files…".into(),
+            0,
+            0,
+        ));
         let res: std::result::Result<String, String> = async {
             let versions = mr
                 .project_versions(&slug, None, None)
@@ -844,7 +1001,7 @@ pub fn install_modpack(state: &AppState, slug: String, title: String) {
                 .into_iter()
                 .find(|f| f.filename.ends_with(".mrpack"))
                 .ok_or_else(|| "No .mrpack file found in latest modpack release.".to_string())?;
-            let temp_dir = paths.cache_dir().join("modpacks");
+            let temp_dir = paths.modpack_staging_dir();
             let _ = tokio::fs::create_dir_all(&temp_dir).await;
             let dest = temp_dir.join(
                 crate::utils::fs::safe_file_name(&pack_file.filename)
@@ -874,7 +1031,7 @@ pub fn install_modpack(state: &AppState, slug: String, title: String) {
             Ok(rep.instance_id)
         }
         .await;
-        let _ = tx.send(AppEvent::PackDone(res));
+        let _ = tx.send(AppEvent::PackInstallDone(op_id, res));
         ctx.request_repaint();
     });
 }

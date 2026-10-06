@@ -157,17 +157,8 @@ impl ModLoader for ForgeLoader {
         }
         merged.libraries.extend(extra_libs);
 
-        let jobs: Vec<DownloadJob> = merged
-            .libraries
-            .iter()
-            .filter_map(|l| {
-                crate::minecraft::libraries::artifact_location(l, MAVEN_BASE).map(|(_, url)| {
-                    let path = crate::minecraft::manifest::maven_coord_to_path(&l.name)
-                        .unwrap_or_else(|| format!("{}.jar", l.name.replace(':', "/")));
-                    DownloadJob::new(&l.name, url, paths.libraries_dir().join(&path))
-                })
-            })
-            .collect();
+        let jobs =
+            super::profile_library_jobs(&merged.libraries, &paths.libraries_dir(), MAVEN_BASE)?;
         dm.download_all(&jobs, None).await?;
 
         persist_profile(paths, &merged).await?;

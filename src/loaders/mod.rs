@@ -94,6 +94,15 @@ pub(crate) fn sort_versions(versions: &mut Vec<String>) {
     versions.dedup();
 }
 
+pub(crate) fn is_newer_version(current: &str, available: &str) -> bool {
+    if current.is_empty() || available.is_empty() || current == available {
+        return false;
+    }
+    let mut versions = vec![current.to_string(), available.to_string()];
+    sort_versions(&mut versions);
+    versions.first().is_some_and(|version| version == available)
+}
+
 pub(crate) fn profile_library_jobs(
     libraries: &[crate::minecraft::version::Library],
     libraries_dir: &std::path::Path,
@@ -145,6 +154,27 @@ pub(crate) async fn persist_profile(paths: &MonoryxPaths, profile: &VersionJson)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loader_updates_only_offer_newer_versions() {
+        for (current, available, expected) in [
+            ("0.16.9", "0.16.14", true),
+            ("0.16.14", "0.16.9", false),
+            ("52.0.1", "52.0.10", true),
+            ("21.1.100", "21.1.99", false),
+            ("0.18.0-beta.1", "0.17.0", false),
+            ("0.18.0-beta.1", "0.18.0", true),
+            ("26.1.0.2", "26.1.0.3", true),
+            ("0.16.14", "0.16.14", false),
+            ("", "0.16.14", false),
+        ] {
+            assert_eq!(
+                is_newer_version(current, available),
+                expected,
+                "{current} -> {available}"
+            );
+        }
+    }
 
     #[test]
     fn profile_dependencies_include_asm_mixin_and_remapper_with_rules() {
@@ -201,5 +231,51 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    #[test]
+    fn downloaded_library_paths_match_the_classpath_exactly() {
+        let libraries: Vec<crate::minecraft::version::Library> = serde_json::from_value(
+            serde_json::json!([
+                {"name":"net.minecraftforge:forge:1.20.1-47.2.0"},
+                {"name":"org.spongepowered:mixin:0.8.5", "downloads":{"artifact":{"path":"nonstandard/mixin.jar","url":"https://example.com/mixin.jar","sha1":"aa","size":7}}},
+                {"name":"cpw.mods:bootstraplauncher:1.1.2"}
+            ]),
+        )
+        .unwrap();
+        let libraries_dir = std::path::Path::new("/data/libraries");
+        let jobs = profile_library_jobs(
+            &libraries,
+            libraries_dir,
+            "https://maven.minecraftforge.net/",
+        )
+        .unwrap();
+        let classpath = crate::minecraft::libraries::build_classpath(
+            &libraries,
+            libraries_dir,
+            std::path::Path::new("/data/versions/client.jar"),
+            "https://libraries.minecraft.net",
+        );
+        let mut downloaded: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
+        for job in &jobs {
+            assert!(
+                downloaded.insert(job.dest.clone()),
+                "two libraries claim the same destination: {}",
+                job.dest.display()
+            );
+        }
+        for entry in &classpath {
+            if entry == std::path::Path::new("/data/versions/client.jar") {
+                continue;
+            }
+            let absolute = libraries_dir.join(entry);
+            assert!(
+                downloaded.contains(&absolute),
+                "classpath entry {} is never downloaded to that path",
+                absolute.display()
+            );
+        }
+        assert!(downloaded.contains(&libraries_dir.join("nonstandard/mixin.jar")));
     }
 }

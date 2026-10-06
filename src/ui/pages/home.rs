@@ -2,8 +2,8 @@ use crate::app::{events::Page, state::AppState};
 use crate::instance::InstanceConfig;
 use crate::ui::components::{
     action_button, badge, button, card_frame, compact_search_field, draw_instance_banner_fallback,
-    format_last_played, hero_card_frame, page_header, play_hero_split_button, primary_button,
-    render_instance_thumbnail, stat, thin_progress, Tone,
+    format_last_played, hero_card_frame, page_header, primary_button, render_instance_thumbnail,
+    stat, thin_progress, Tone,
 };
 use crate::ui::theme::{metrics, type_scale, MUTED, TEXT, TEXT2};
 use egui::{Color32, CornerRadius, RichText, Stroke};
@@ -48,7 +48,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         });
         return;
     };
-    if ui.available_width() >= 720.0 {
+    if ui.available_width() >= 900.0 {
         let total_w = ui.available_width();
         let spacing = 12.0_f32;
         let left_w = ((total_w - spacing) * 0.54).clamp(380.0, 520.0);
@@ -75,7 +75,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     } else {
         selected_instance(state, &cfg, ui);
         ui.add_space(12.0);
+        instance_list(state, ui);
+        ui.add_space(18.0);
         screenshots(state, &cfg, ui);
+        return;
     }
     ui.add_space(18.0);
     instance_list(state, ui);
@@ -86,31 +89,34 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
     let installing = state.busy_install.contains_key(&cfg.id);
     let eco = cfg.boost_mode.unwrap_or(state.config.boost_mode);
     hero_card_frame(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
         ui.horizontal(|ui| {
             render_instance_thumbnail(ui, 46.0, &cfg.name, cfg.loader.display_name(), false);
             ui.add_space(8.0);
-            ui.vertical(|ui| {
-                ui.label(RichText::new("SELECTED INSTANCE").size(10.5).color(MUTED));
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&cfg.name).size(20.0).strong().color(TEXT));
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("✏").size(12.0).color(TEXT2))
-                                .frame(false),
-                        )
-                        .on_hover_text("Edit instance")
-                        .clicked()
-                    {
-                        state.edit_instance = Some(cfg.clone());
-                    }
-                });
-            });
+            let identity_width = (ui.available_width() - 86.0).max(120.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(identity_width, 46.0),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ui.set_width(identity_width);
+                    ui.add(
+                        egui::Label::new(RichText::new(&cfg.name).size(20.0).strong().color(TEXT))
+                            .truncate(),
+                    )
+                    .on_hover_text(&cfg.name);
+                    ui.label(
+                        RichText::new(format!(
+                            "Minecraft {} · {}",
+                            cfg.minecraft_version,
+                            cfg.loader.display_name()
+                        ))
+                        .size(11.5)
+                        .color(TEXT2),
+                    );
+                },
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let menu_resp = ui.menu_button("•••", |ui| {
-                    if action_button(ui, "Edit instance").clicked() {
-                        state.edit_instance = Some(cfg.clone());
-                        ui.close();
-                    }
+                let menu_resp = ui.menu_button("More", |ui| {
                     if action_button(ui, "Open game folder").clicked() {
                         let _ = open::that(state.instances.game_dir(&cfg.id));
                         ui.close();
@@ -159,24 +165,21 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
             });
         });
         ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            badge(ui, &format!("Minecraft {}", cfg.minecraft_version));
-            badge(ui, cfg.loader.display_name());
-            if eco {
-                crate::ui::components::badge_boost(ui, "Eco mode");
-            }
-            if ui
-                .add(
-                    egui::Button::new(RichText::new("+ Add tag").size(11.0).color(TEXT2))
-                        .frame(false),
-                )
-                .on_hover_text("Edit instance tags")
-                .clicked()
-            {
-                state.edit_instance = Some(cfg.clone());
-            }
-        });
-        ui.add_space(12.0);
+        let available_updates = state.instance_update_count();
+        if state.updates_loading && state.updates_instance.as_deref() == Some(&cfg.id) {
+            crate::ui::components::activity_indicator(ui, "Checking compatible updates…");
+        }
+        if available_updates > 0 {
+            ui.horizontal_wrapped(|ui| {
+                crate::ui::components::badge_accent(
+                    ui,
+                    &format!("{available_updates} compatible update(s)"),
+                );
+                if action_button(ui, "Review updates").clicked() {
+                    state.set_page(Page::Library);
+                }
+            });
+        }
         let default_ram = ui.ctx().data_mut(|data| {
             *data.get_temp_mut_or_insert_with(egui::Id::new("home-default-memory"), || {
                 (
@@ -227,7 +230,7 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                 .color(crate::ui::theme::MUTED),
             );
         }
-        ui.add_space(14.0);
+        ui.add_space(8.0);
         ui.add_enabled_ui(!running && !installing, |ui| {
             let play_text = if running {
                 "Game is running"
@@ -236,37 +239,7 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
             } else {
                 "▶ Play Minecraft"
             };
-            let play_btn = play_hero_split_button(ui, play_text, |ui| {
-                if action_button(ui, "▶ Launch with standard options").clicked() {
-                    crate::app::tasks::play_instance(state, cfg.id.clone());
-                    ui.close();
-                }
-                if action_button(ui, "📁 Open game directory").clicked() {
-                    let _ = open::that(state.instances.game_dir(&cfg.id));
-                    ui.close();
-                }
-                if action_button(ui, "⚙ Instance settings").clicked() {
-                    state.edit_instance = Some(cfg.clone());
-                    ui.close();
-                }
-                if action_button(ui, "🔧 Repair game files").clicked() {
-                    crate::app::tasks::repair_instance(state, cfg.id.clone());
-                    ui.close();
-                }
-                if action_button(
-                    ui,
-                    if eco {
-                        "🌱 Turn off Eco mode"
-                    } else {
-                        "🌱 Turn on Eco mode"
-                    },
-                )
-                .clicked()
-                {
-                    state.toggle_boost();
-                    ui.close();
-                }
-            });
+            let play_btn = primary_button(ui, play_text);
             if play_btn
                 .on_hover_text(if running {
                     "Game is currently running"
@@ -278,99 +251,37 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                 crate::app::tasks::play_instance(state, cfg.id.clone());
             }
         });
-        if let Some((_, completed, total)) = state.busy_install.get(&cfg.id) {
-            thin_progress(ui, Some(*completed as f32 / (*total).max(1) as f32));
+        if let Some((phase, completed, total)) = state.busy_install.get(&cfg.id) {
+            thin_progress(ui, (*total > 1).then(|| *completed as f32 / *total as f32));
             ui.label(
-                RichText::new(format!("Preparing game files · {completed}/{total}"))
-                    .size(12.0)
-                    .color(TEXT2),
+                RichText::new(if *total > 1 {
+                    format!("{phase} · {completed}/{total}")
+                } else {
+                    phase.clone()
+                })
+                .size(12.0)
+                .color(TEXT2),
             );
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let spacing = ui.spacing().item_spacing.x;
-            let item_w = ((ui.available_width() - spacing * 3.0) / 4.0).max(40.0);
+            let item_w = ((ui.available_width() - spacing * 2.0) / 3.0).max(40.0);
             let btn_size = egui::vec2(item_w, metrics::BUTTON_H);
-            if action_card_button(ui, "📦 Mods & packs", btn_size)
+            if action_card_button(ui, "Mods & packs", btn_size)
                 .on_hover_text("Manage mods, resource packs, and shaders")
                 .clicked()
             {
                 state.set_page(Page::Library);
             }
-            if action_card_button(ui, "📁 Worlds & backups", btn_size)
+            if action_card_button(ui, "Worlds & backups", btn_size)
                 .on_hover_text("View and back up world saves")
                 .clicked()
             {
                 state.set_page(Page::Worlds);
             }
-            ui.scope(|ui| {
-                let p = crate::ui::theme::palette(ui.ctx());
-                let corner = egui::CornerRadius::same(metrics::CONTROL_RADIUS);
-                let widgets = &mut ui.style_mut().visuals.widgets;
-                widgets.inactive.bg_fill = p.elevated2;
-                widgets.hovered.bg_fill = p.hover;
-                widgets.active.bg_fill = p.hover;
-                widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
-                widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
-                widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
-                widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.border);
-                widgets.hovered.bg_stroke =
-                    egui::Stroke::new(1.0_f32, p.border.lerp_to_gamma(TEXT, 0.3));
-                widgets.inactive.corner_radius = corner;
-                widgets.hovered.corner_radius = corner;
-                ui.style_mut().spacing.button_padding = egui::vec2(6.0, 4.0);
-                ui.style_mut().spacing.interact_size = btn_size;
-                let tools_resp = ui.menu_button(
-                    egui::RichText::new("🔧 Instance tools").size(type_scale::CAPTION),
-                    |ui| {
-                        if action_button(ui, "Edit instance").clicked() {
-                            state.edit_instance = Some(cfg.clone());
-                            ui.close();
-                        }
-                        if action_button(ui, "Open game folder").clicked() {
-                            let _ = open::that(state.instances.game_dir(&cfg.id));
-                            ui.close();
-                        }
-                        if action_button(ui, "View logs").clicked() {
-                            state.set_page(Page::Logs);
-                            ui.close();
-                        }
-                        ui.separator();
-                        ui.add_enabled_ui(!running && !installing, |ui| {
-                            if action_button(ui, "Repair game files")
-                                .on_hover_text(
-                                    "Check and re-download missing or damaged game files.",
-                                )
-                                .clicked()
-                            {
-                                crate::app::tasks::repair_instance(state, cfg.id.clone());
-                                ui.close();
-                            }
-                        });
-                        if action_button(
-                            ui,
-                            if eco {
-                                "Turn off Eco mode"
-                            } else {
-                                "Turn on Eco mode"
-                            },
-                        )
-                        .on_hover_text(
-                            "Eco mode uses less memory and may lower FPS in demanding worlds.",
-                        )
-                        .clicked()
-                        {
-                            state.toggle_boost();
-                            ui.close();
-                        }
-                    },
-                );
-                tools_resp
-                    .response
-                    .on_hover_text("Instance repair, tools, and diagnostics");
-            });
-            if action_card_button(ui, "⚙ Settings", btn_size)
+            if action_card_button(ui, "Instance settings", btn_size)
                 .on_hover_text("Configure instance settings and Java memory")
                 .clicked()
             {
@@ -435,41 +346,34 @@ fn instance_list(state: &mut AppState, ui: &mut egui::Ui) {
                 .strong()
                 .color(TEXT),
         );
-        let count_str = format!("{}", filtered.len());
-        badge(ui, &count_str);
-        ui.add_space(8.0);
-        let right_w = 200.0_f32;
-        let search_w = (ui.available_width() - right_w - 16.0).clamp(140.0, 240.0);
+        badge(ui, &filtered.len().to_string());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if button(ui, "+ New instance", Tone::Primary).clicked() {
+                crate::ui::pages::instances::open_new_dialog(state);
+                state.set_page(Page::Instances);
+            }
+        });
+    });
+    ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
-            egui::vec2(search_w, 32.0),
+            egui::vec2((ui.available_width() - 88.0).min(280.0), 32.0),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                let (_search_resp, _) = compact_search_field(
+                compact_search_field(
                     ui,
                     "home-instances-search",
                     &mut state.home_instance_search,
                     48,
-                    "Search instances...",
+                    "Search instances…",
                 );
             },
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if button(ui, "+ New instance", Tone::Primary)
-                .on_hover_text("Create a new Minecraft instance")
-                .clicked()
-            {
-                crate::ui::pages::instances::open_new_dialog(state);
-                state.set_page(Page::Instances);
-            }
-            ui.add_space(6.0);
-            if view_toggle_btn(ui, state.home_grid_view, "⊞", "Grid view").clicked() {
-                state.home_grid_view = true;
-            }
-            ui.add_space(2.0);
-            if view_toggle_btn(ui, !state.home_grid_view, "☰", "List view").clicked() {
-                state.home_grid_view = false;
-            }
-        });
+        if view_toggle_btn(ui, !state.home_grid_view, "☰", "List view").clicked() {
+            state.home_grid_view = false;
+        }
+        if view_toggle_btn(ui, state.home_grid_view, "⊞", "Grid view").clicked() {
+            state.home_grid_view = true;
+        }
     });
     ui.add_space(8.0);
 
@@ -703,11 +607,15 @@ fn render_instance_banner_card(
         MUTED,
     );
 
+    crate::ui::components::focus_ring(ui, &resp, &format!("Select {}", instance.name));
+    crate::ui::components::focus_ring(ui, &play_resp, &format!("Play {}", instance.name));
     if play_resp.clicked() {
+        state.home_screenshot_index = 0;
         state.selected_instance = Some(instance.id.clone());
         state.save_config();
         crate::app::tasks::play_instance(state, instance.id.clone());
     } else if resp.clicked() && !is_selected {
+        state.home_screenshot_index = 0;
         state.selected_instance = Some(instance.id.clone());
         state.save_config();
         state.refresh_library();
@@ -755,6 +663,7 @@ fn view_toggle_btn(ui: &mut egui::Ui, active: bool, icon: &str, tooltip: &str) -
         egui::FontId::proportional(15.0),
         text_color,
     );
+    crate::ui::components::focus_ring(ui, &resp, tooltip);
     resp.on_hover_text(tooltip)
 }
 
@@ -983,11 +892,15 @@ fn render_instance_list_row(
         MUTED,
     );
 
+    crate::ui::components::focus_ring(ui, &resp, &format!("Select {}", instance.name));
+    crate::ui::components::focus_ring(ui, &play_resp, &format!("Play {}", instance.name));
     if play_resp.clicked() {
+        state.home_screenshot_index = 0;
         state.selected_instance = Some(instance.id.clone());
         state.save_config();
         crate::app::tasks::play_instance(state, instance.id.clone());
     } else if resp.clicked() && !is_selected {
+        state.home_screenshot_index = 0;
         state.selected_instance = Some(instance.id.clone());
         state.save_config();
         state.refresh_library();
@@ -1017,7 +930,8 @@ fn screenshots(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::Ui) {
                 if let Some(first_shot) = state
                     .screenshots
                     .iter()
-                    .find(|s| s.instance_id == cfg.id)
+                    .filter(|s| s.instance_id == cfg.id)
+                    .nth(state.home_screenshot_index)
                     .cloned()
                 {
                     if ui
@@ -1043,11 +957,7 @@ fn screenshots(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::Ui) {
             .filter(|shot| shot.instance_id == cfg.id)
             .cloned()
             .collect();
-        let available_shots = if instance_shots.is_empty() {
-            state.screenshots.clone()
-        } else {
-            instance_shots
-        };
+        let available_shots = instance_shots;
 
         if !available_shots.is_empty() {
             let idx = state
@@ -1065,7 +975,7 @@ fn screenshots(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::Ui) {
                 } else {
                     16.0 / 9.0
                 };
-                let target_h = (max_w / aspect).round().clamp(140.0, 320.0);
+                let target_h = (max_w / aspect).round().clamp(120.0, 220.0);
                 let (img_rect, img_resp) =
                     ui.allocate_exact_size(egui::vec2(max_w, target_h), egui::Sense::click());
                 let p = crate::ui::theme::palette(ui.ctx());

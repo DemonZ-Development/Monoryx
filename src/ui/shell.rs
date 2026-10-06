@@ -26,10 +26,11 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
     if any_playing {
         ctx.request_repaint_after(std::time::Duration::from_millis(300));
     } else {
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        ctx.request_repaint_after(std::time::Duration::from_millis(1500));
     }
 
     state.poll_events(ctx);
+    state.poll_instance_updates();
     state.sync_discord();
 
     if state.launcher_hidden {
@@ -43,6 +44,10 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
     let theme = crate::ui::theme::palette(ctx);
 
     crate::ui::palette::handle_shortcuts(state, ctx);
+
+    if state.page != Page::Onboarding {
+        crate::ui::pages::onboarding::release_background(ctx);
+    }
 
     if state.page == Page::Onboarding {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -140,7 +145,9 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
         )
         .show(ctx, |ui| {
             if crate::ui::theme::current_theme(ctx) == crate::config::ThemeKind::Halloween {
-                crate::ui::components::draw_halloween_sidebar_artwork(ui.painter(), ui.max_rect());
+                let mut artwork = ui.painter().clone();
+                artwork.set_opacity(0.45);
+                crate::ui::components::draw_halloween_sidebar_artwork(&artwork, ui.max_rect());
             }
             ui.add_space(6.0);
             if crate::ui::theme::current_theme(ctx) == crate::config::ThemeKind::Halloween {
@@ -164,52 +171,19 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
             ui.add_space(24.0);
             egui::ScrollArea::vertical()
                 .id_salt("sidebar-navigation")
-                .max_height((ui.available_height() - 105.0).max(160.0))
+                .max_height((ui.available_height() - 192.0).max(80.0))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.label(RichText::new("WORKSPACE").size(10.0).strong().color(MUTED));
                     ui.add_space(4.0);
 
-                    for page in Page::all() {
-                        if page == Page::Accounts {
-                            ui.add_space(16.0);
-                            if crate::ui::theme::current_theme(ctx)
-                                == crate::config::ThemeKind::Halloween
-                            {
-                                let (p_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 16.0),
-                                    egui::Sense::hover(),
-                                );
-                                let base =
-                                    egui::pos2(p_rect.left() + 32.0, p_rect.center().y + 2.0);
-                                crate::ui::components::draw_small_pumpkin(
-                                    ui.painter(),
-                                    base + egui::vec2(-14.0, 0.0),
-                                    11.0,
-                                    -0.12,
-                                    true,
-                                );
-                                crate::ui::components::draw_small_pumpkin(
-                                    ui.painter(),
-                                    base,
-                                    14.0,
-                                    0.08,
-                                    true,
-                                );
-                                crate::ui::components::draw_small_pumpkin(
-                                    ui.painter(),
-                                    base + egui::vec2(14.0, 1.0),
-                                    10.0,
-                                    -0.18,
-                                    true,
-                                );
-                                ui.add_space(2.0);
-                            }
-                            ui.label(RichText::new("MANAGE").size(10.0).strong().color(MUTED));
-                        }
+                    for page in Page::all()
+                        .into_iter()
+                        .filter(|page| !matches!(page, Page::Accounts | Page::Settings))
+                    {
                         let sel = state.page == page;
-                        let has_update_badge = page == Page::Settings
-                            && state.launcher_update.as_ref().is_some_and(|u| u.has_update);
+                        let has_update_badge =
+                            page == Page::Library && state.instance_update_count() > 0;
 
                         let resp = sidebar_item(ui, ctx, page, sel, has_update_badge);
                         if resp.clicked() {
@@ -220,6 +194,14 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                     ui.add_space(12.0);
                     status_card(state, ui, theme);
                 });
+            ui.add_space(8.0);
+            for page in [Page::Accounts, Page::Settings] {
+                let badge = page == Page::Settings
+                    && state.launcher_update.as_ref().is_some_and(|u| u.has_update);
+                if sidebar_item(ui, ctx, page, state.page == page, badge).clicked() {
+                    state.set_page(page);
+                }
+            }
             sidebar_footer(state, ui);
         });
 
@@ -257,19 +239,23 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                 state.reset_discover_scroll = false;
             }
 
-            scroll_area.show(ui, |ui| match state.page {
-                Page::Home => crate::ui::pages::home::show(state, ctx, ui),
-                Page::Instances => crate::ui::pages::instances::show(state, ctx, ui),
-                Page::Worlds => crate::ui::pages::worlds::show(state, ctx, ui),
-                Page::Discover => crate::ui::pages::discover::show(state, ctx, ui),
-                Page::Library => crate::ui::pages::library::show(state, ctx, ui),
-                Page::Screenshots => crate::ui::pages::screenshots::show(state, ctx, ui),
-                Page::Downloads => crate::ui::pages::downloads::show(state, ctx, ui),
-                Page::Nexeu => crate::ui::pages::nexeu::show(state, ctx, ui),
-                Page::Accounts => crate::ui::pages::accounts::show(state, ctx, ui),
-                Page::Settings => crate::ui::pages::settings::show(state, ctx, ui),
-                Page::Logs => crate::ui::pages::logs::show(state, ctx, ui),
-                Page::Onboarding => {}
+            let content_width = ui.available_width();
+            scroll_area.show(ui, |ui| {
+                ui.set_width(content_width);
+                match state.page {
+                    Page::Home => crate::ui::pages::home::show(state, ctx, ui),
+                    Page::Instances => crate::ui::pages::instances::show(state, ctx, ui),
+                    Page::Worlds => crate::ui::pages::worlds::show(state, ctx, ui),
+                    Page::Discover => crate::ui::pages::discover::show(state, ctx, ui),
+                    Page::Library => crate::ui::pages::library::show(state, ctx, ui),
+                    Page::Screenshots => crate::ui::pages::screenshots::show(state, ctx, ui),
+                    Page::Downloads => crate::ui::pages::downloads::show(state, ctx, ui),
+                    Page::Nexeu => crate::ui::pages::nexeu::show(state, ctx, ui),
+                    Page::Accounts => crate::ui::pages::accounts::show(state, ctx, ui),
+                    Page::Settings => crate::ui::pages::settings::show(state, ctx, ui),
+                    Page::Logs => crate::ui::pages::logs::show(state, ctx, ui),
+                    Page::Onboarding => {}
+                }
             });
         });
 
@@ -296,17 +282,39 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         || state.pending_content_delete.is_some()
         || state.crash_report.is_some()
         || state.screenshot_viewer.is_some()
-        || state.project_image_url.is_some();
+        || state.project_image_url.is_some()
+        || state.detail_slug.is_some()
+        || state.show_new_instance
+        || state.confirm_sign_out
+        || state.confirm_delete.is_some();
     if dismissible && crate::ui::components::dialog_backdrop(ctx) {
         state.edit_instance = None;
         state.error_dialog.clear();
         state.pending_content_delete = None;
         state.crash_report = None;
         state.screenshot_viewer = None;
+        state.confirm_sign_out = false;
+        state.screenshot_full_image = None;
+        state.show_new_instance = false;
+        state.confirm_delete = None;
+        crate::ui::pages::discover::close_detail(state);
         state.project_image_url = None;
         state.project_image = None;
         state.project_image_loading = false;
         state.project_image_error.clear();
+    }
+
+    if !dismissible {
+        ctx.animate_bool_with_time(egui::Id::new("dialog-shade-enter"), false, 0.0);
+        ctx.animate_bool_with_time(egui::Id::new("dialog-content-enter"), false, 0.0);
+        crate::ui::backdrop::paint(
+            ctx,
+            &ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Middle,
+                egui::Id::new("dialog-backdrop"),
+            )),
+            false,
+        );
     }
 
     if let Some(current) = state.screenshot_viewer.clone() {
@@ -317,12 +325,14 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
         let mut next = None;
         egui::Window::new("Screenshot")
+            .order(egui::Order::Foreground)
             .collapsible(false)
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .min_width(520.0)
             .max_width(ctx.available_rect().width() * 0.95)
             .show(ctx, |ui| {
+                crate::ui::components::dialog_content(ui);
                 ui.horizontal(|ui| {
                     if let Some(index) = index {
                         ui.label(format!("{} of {}", index + 1, state.screenshots.len()));
@@ -386,6 +396,7 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         if close {
             state.screenshot_viewer = None;
             state.screenshot_full_image = None;
+            state.screenshot_full_image = None;
         } else if let Some(path) = next {
             state.open_screenshot(&path);
         }
@@ -405,12 +416,14 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         let mut next_image = None;
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
         egui::Window::new("Project images")
+            .order(egui::Order::Foreground)
             .collapsible(false)
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .min_width(480.0)
             .max_width(ctx.available_rect().width() * 0.9)
             .show(ctx, |ui| {
+                crate::ui::components::dialog_content(ui);
                 ui.horizontal(|ui| {
                     if let Some(index) = current_index {
                         ui.label(format!("{} of {}", index + 1, gallery.len()));
@@ -462,12 +475,14 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
     }
     if let Some((instance_id, kind, file_name, title)) = state.pending_content_delete.clone() {
         egui::Window::new("Remove installed content?")
+            .order(egui::Order::Foreground)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .min_width(420.0)
             .max_width(420.0)
             .show(ctx, |ui| {
+                crate::ui::components::dialog_content(ui);
                 ui.add_space(6.0);
                 ui.label(RichText::new(format!("Remove {title} from this instance?")).color(TEXT));
                 ui.label(RichText::new(&file_name).size(12.0).color(TEXT2));
@@ -518,40 +533,53 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
                         .inner_margin(egui::Margin::same(10)),
                 )
                 .show(ctx, |ui| {
+                    crate::ui::components::dialog_content(ui);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&state.notice).color(TEXT));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Dismiss").clicked() {
                                 state.notice.clear();
+                                state.notice_at = None;
                             }
                         });
                     });
                 });
         } else {
             state.notice.clear();
+            state.notice_at = None;
         }
     }
 
     if !state.error_dialog.is_empty() {
         let msg = state.error_dialog.clone();
         egui::Window::new("Something went wrong")
+            .order(egui::Order::Foreground)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                crate::ui::components::dialog_content(ui);
                 ui.add(
                     egui::Label::new(RichText::new(&msg).color(TEXT))
                         .selectable(true)
                         .wrap(),
                 );
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if crate::ui::components::secondary_button(ui, "Copy error").clicked() {
                         ctx.copy_text(msg.clone());
                         state.notify("Error message copied to clipboard");
                     }
                     if crate::ui::components::primary_button(ui, "Close").clicked() {
                         state.error_dialog.clear();
+                    }
+                    if state.downloads_history.iter().any(|history| {
+                        history.state == "failed" && state.retry_actions.contains_key(&history.id)
+                    }) && crate::ui::components::secondary_button(ui, "Downloads & retry")
+                        .clicked()
+                    {
+                        state.error_dialog.clear();
+                        state.set_page(Page::Downloads);
                     }
                     if crate::ui::components::secondary_button(ui, "View Logs").clicked() {
                         state.error_dialog.clear();
@@ -564,6 +592,7 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
     if state.edit_instance.is_some() {
         let max_w = (ctx.screen_rect().width() - 40.0).clamp(360.0, 520.0);
         egui::Window::new("Edit Instance")
+            .order(egui::Order::Foreground)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -571,6 +600,7 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
             .min_width(max_w)
             .max_width(max_w)
             .show(ctx, |ui| {
+                crate::ui::components::dialog_content(ui);
                 ui.set_width(max_w);
                 show_edit_dialog(state, ui);
             });
@@ -580,14 +610,15 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         show_crash_dialog(state, ctx);
     }
 
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if !egui::Popup::is_any_open(ctx) && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         state.error_dialog.clear();
         state.show_new_instance = false;
-        state.detail_project = None;
+        crate::ui::pages::discover::close_detail(state);
         state.crash_report = None;
         state.edit_instance = None;
         state.pending_content_delete = None;
         state.screenshot_viewer = None;
+        state.screenshot_full_image = None;
         state.project_image_url = None;
         state.project_image = None;
         state.project_image_loading = false;
@@ -808,28 +839,31 @@ fn show_edit_performance(
     crate::ui::components::field_label(ui, "MEMORY ALLOCATION");
     let mut boost_val = cfg.boost_mode.unwrap_or(state.config.boost_mode);
     if ui
-        .checkbox(&mut boost_val, "Eco mode — reduce memory usage")
+        .checkbox(&mut boost_val, "Eco mode (lower game memory limit)")
         .changed()
     {
         cfg.boost_mode = Some(boost_val);
     }
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Minimum:").size(12.0).color(TEXT2));
-        ui.add(
-            egui::DragValue::new(&mut cfg.memory_min_mb)
-                .range(256..=131_072)
-                .speed(128)
-                .suffix(" MB"),
-        );
-        ui.add_space(16.0);
-        ui.label(RichText::new("Maximum:").size(12.0).color(TEXT2));
-        ui.add(
-            egui::DragValue::new(&mut cfg.memory_max_mb)
-                .range(256..=131_072)
-                .speed(128)
-                .suffix(" MB"),
-        );
+    ui.horizontal_wrapped(|ui| {
+        for (label, value) in [
+            ("Minimum", &mut cfg.memory_min_mb),
+            ("Maximum", &mut cfg.memory_max_mb),
+        ] {
+            ui.label(RichText::new(label).size(12.0).color(TEXT2));
+            let mut gb = *value as f64 / 1024.0;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut gb)
+                        .range(0.5..=128.0)
+                        .speed(0.25)
+                        .suffix(" GB"),
+                )
+                .changed()
+            {
+                *value = (gb * 1024.0).round() as u64;
+            }
+        }
     });
     ui.add_space(3.0);
     ui.label(
@@ -942,6 +976,8 @@ fn show_edit_launch(ui: &mut egui::Ui, cfg: &mut crate::instance::config::Instan
         if ui
             .add(
                 egui::TextEdit::singleline(&mut w)
+                    .margin(egui::vec2(10.0, 8.0))
+                    .min_size(egui::vec2(0.0, 34.0))
                     .desired_width(75.0)
                     .hint_text("Default"),
             )
@@ -954,6 +990,8 @@ fn show_edit_launch(ui: &mut egui::Ui, cfg: &mut crate::instance::config::Instan
         if ui
             .add(
                 egui::TextEdit::singleline(&mut h)
+                    .margin(egui::vec2(10.0, 8.0))
+                    .min_size(egui::vec2(0.0, 34.0))
                     .desired_width(75.0)
                     .hint_text("Default"),
             )
@@ -1018,7 +1056,6 @@ fn sidebar_item(
         ctx.request_repaint();
     }
     let p = crate::ui::theme::palette(ctx);
-    let current_theme = crate::ui::theme::current_theme(ctx);
     let fill = if selected {
         p.accent
     } else if fade > 0.01 {
@@ -1033,11 +1070,7 @@ fn sidebar_item(
     }
 
     let text_color = if selected {
-        if current_theme == crate::config::ThemeKind::Halloween {
-            Color32::WHITE
-        } else {
-            p.accent_text
-        }
+        p.accent_text
     } else {
         TEXT2.lerp_to_gamma(TEXT, fade)
     };
@@ -1075,6 +1108,7 @@ fn sidebar_item(
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    crate::ui::components::focus_ring(ui, &response, label);
     response.on_hover_text(page_tooltip(page))
 }
 
@@ -1123,8 +1157,21 @@ fn status_card(state: &mut AppState, ui: &mut egui::Ui, theme: crate::ui::theme:
         });
 }
 
+struct SidebarAccount {
+    username: String,
+    uuid: uuid::Uuid,
+    offline: bool,
+}
+
 fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
-    let account = state.config.active_account();
+    let account = state
+        .config
+        .active_account_ref()
+        .map(|account| SidebarAccount {
+            username: account.username().to_string(),
+            uuid: account.uuid(),
+            offline: account.is_offline(),
+        });
     let has_update = state.launcher_update.as_ref().is_some_and(|u| u.has_update);
     let version = env!("CARGO_PKG_VERSION").to_string();
     let theme = crate::ui::theme::palette(ui.ctx());
@@ -1155,18 +1202,18 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         let (avatar, _) =
                             ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                        if !acc.is_offline() {
+                        if !acc.offline {
                             crate::ui::components::draw_avatar(
                                 ui.painter(),
                                 avatar,
-                                acc.username(),
-                                &acc.uuid().to_string(),
+                                acc.username.as_str(),
+                                &acc.uuid.to_string(),
                             );
                         } else {
                             crate::ui::components::draw_cute_avatar(
                                 ui.painter(),
                                 avatar,
-                                acc.username(),
+                                acc.username.as_str(),
                                 false,
                             );
                         }
@@ -1181,7 +1228,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         ui.painter().with_clip_rect(name_rect).text(
                             name_rect.left_center(),
                             egui::Align2::LEFT_CENTER,
-                            crate::ui::components::elide(acc.username(), 11),
+                            crate::ui::components::elide(acc.username.as_str(), 11),
                             egui::FontId::new(type_scale::LABEL, egui::FontFamily::Proportional),
                             TEXT,
                         );
@@ -1192,13 +1239,13 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         ui.painter().text(
                             badge.right_center(),
                             egui::Align2::RIGHT_CENTER,
-                            if acc.is_offline() {
+                            if acc.offline {
                                 "Offline ▾"
                             } else {
                                 "Microsoft ▾"
                             },
                             egui::FontId::proportional(type_scale::MICRO),
-                            if acc.is_offline() {
+                            if acc.offline {
                                 MUTED
                             } else {
                                 Color32::from_rgb(100, 200, 255)
@@ -1213,15 +1260,12 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
             if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
+            crate::ui::components::focus_ring(ui, &resp, "Manage active account");
             if resp
                 .on_hover_text(format!(
                     "Active account: {} ({})\nClick to manage in Accounts",
-                    acc.username(),
-                    if acc.is_offline() {
-                        "Offline"
-                    } else {
-                        "Microsoft"
-                    }
+                    acc.username.as_str(),
+                    if acc.offline { "Offline" } else { "Microsoft" }
                 ))
                 .clicked()
             {
@@ -1279,23 +1323,16 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                     icon_color
                 },
             );
+            crate::ui::components::focus_ring(ui, &theme_click, "Choose theme");
             if theme_click
                 .on_hover_text(format!(
-                    "Theme: {} (click to cycle themes)",
+                    "Theme: {}. Open appearance settings.",
                     state.config.theme.label()
                 ))
                 .clicked()
             {
-                let next_theme = match state.config.theme {
-                    crate::config::ThemeKind::Monochrome => crate::config::ThemeKind::Gloss,
-                    crate::config::ThemeKind::Gloss => crate::config::ThemeKind::Halloween,
-                    crate::config::ThemeKind::Halloween => crate::config::ThemeKind::SoftPink,
-                    crate::config::ThemeKind::SoftPink => crate::config::ThemeKind::SoftBrown,
-                    crate::config::ThemeKind::SoftBrown => crate::config::ThemeKind::Monochrome,
-                };
-                state.config.theme = next_theme;
-                crate::ui::theme::apply_selected_theme(ui.ctx(), next_theme);
-                state.save_config();
+                crate::ui::pages::settings::show_appearance(ui.ctx());
+                state.set_page(Page::Settings);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if has_update
@@ -1334,11 +1371,13 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
         .fixed_pos(screen.min)
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
+            crate::ui::components::dialog_content(ui);
             ui.allocate_rect(screen, egui::Sense::click());
             ui.painter()
                 .rect_filled(screen, 0, Color32::from_black_alpha(150));
         });
     egui::Window::new("Let's get you back in game")
+        .order(egui::Order::Foreground)
         .id(egui::Id::new("friendly-crash-report"))
         .open(&mut open)
         .collapsible(false)
@@ -1348,6 +1387,7 @@ fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
         .vscroll(true)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
+            crate::ui::components::dialog_content(ui);
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(&info.instance_name).strong().color(TEXT2));

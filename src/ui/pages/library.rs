@@ -47,6 +47,53 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         });
         return;
     };
+    if let Some((id, version)) = state.loader_update_candidate.clone() {
+        if id == cfg.id {
+            card_frame(ui, |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} update: {} → {}",
+                        cfg.loader.display_name(),
+                        cfg.loader_version,
+                        version
+                    ))
+                    .strong()
+                    .color(TEXT),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "Supports Minecraft {}. Close the game before installing.",
+                        cfg.minecraft_version
+                    ))
+                    .size(11.5)
+                    .color(TEXT2),
+                );
+                let busy = state.playing.get(&cfg.id).copied().unwrap_or(false)
+                    || state
+                        .operations
+                        .values()
+                        .any(|operation| operation.instance_id.as_ref() == Some(&cfg.id));
+                ui.add_enabled_ui(!busy, |ui| {
+                    if content_primary_button(ui, "Install loader update").clicked() {
+                        crate::app::tasks::install_loader_update(state, cfg.id.clone(), version);
+                    }
+                });
+            });
+            ui.add_space(6.0);
+        }
+    }
+    if state.loader_update_instance.as_deref() == Some(&cfg.id)
+        && !state.loader_update_error.is_empty()
+    {
+        ui.label(
+            RichText::new(format!(
+                "Could not check loader updates: {}",
+                state.loader_update_error
+            ))
+            .size(11.5)
+            .color(TEXT2),
+        );
+    }
     ui.horizontal_wrapped(|ui| {
         for (k, label) in [
             (ContentKind::Mod, "Mods"),
@@ -69,7 +116,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             }
             if crate::ui::components::pill_tab_button(
                 ui,
-                "🌲 Hierarchy",
+                "Dependency tree",
                 state.library_view_hierarchy,
             )
             .clicked()
@@ -79,7 +126,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled_ui(!state.updates_loading, |ui| {
                 content_secondary_button(ui, "Check updates")
@@ -87,11 +134,6 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .inner
             .clicked()
         {
-            state.updates_loading = true;
-            state.updates_checked = false;
-            state.updates_summary.clear();
-            state.updates_error.clear();
-            state.updates_instance = state.selected_instance.clone();
             crate::app::tasks::check_updates(state);
         }
         if !state.updates.is_empty()
@@ -101,14 +143,11 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             crate::app::tasks::update_all_mods(state);
         }
 
-        if content_secondary_button(ui, "📦 Export Pack (.zip)")
-            .on_hover_text("One-click export full instance pack to exports/ folder")
-            .clicked()
-        {
-            state.export_pack(cfg.clone());
-        }
-
-        ui.menu_button("📋 Export List", |ui| {
+        ui.menu_button("Export", |ui| {
+            if ui.button("Instance pack (.zip)").clicked() {
+                state.export_pack(cfg.clone());
+                ui.close();
+            }
             if ui.button("Copy Markdown Table").clicked() {
                 let md =
                     crate::instance::export::export_mod_list_markdown(&cfg, &state.library_entries);
@@ -140,12 +179,18 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 let file = exports_dir.join(format!("{safe_name}-mods.txt"));
                 let txt =
                     crate::instance::export::export_mod_list_text(&cfg, &state.library_entries);
-                if std::fs::write(&file, txt).is_ok() {
-                    state.notify(format!(
-                        "Saved {}",
-                        file.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                    let _ = open::that_detached(&file);
+                match std::fs::write(&file, txt) {
+                    Ok(()) => {
+                        state.notify(format!(
+                            "Saved {}",
+                            file.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                        let _ = open::that_detached(&file);
+                    }
+                    Err(error) => state.fail(format!(
+                        "Could not save the mod list to {}: {error}",
+                        file.display()
+                    )),
                 }
                 ui.close();
             }
@@ -164,23 +209,69 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.colored_label(crate::ui::theme::DANGER, &state.updates_error);
     }
     ui.add_space(6.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2((ui.available_width() - 170.0).min(300.0), 34.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                crate::ui::components::compact_search_field(
+                    ui,
+                    "library-search",
+                    &mut state.library_query,
+                    80,
+                    "Search installed content…",
+                );
+            },
+        );
+        egui::ComboBox::from_id_salt("library-status")
+            .selected_text(
+                ["All content", "Enabled", "Disabled", "Updates available"]
+                    [state.library_status as usize],
+            )
+            .show_ui(ui, |ui| {
+                for (status, label) in ["All content", "Enabled", "Disabled", "Updates available"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    ui.selectable_value(&mut state.library_status, status as u8, label);
+                }
+            });
+    });
+    let query = state.library_query.trim().to_lowercase();
     let entries: Vec<_> = state
         .library_entries
         .iter()
-        .filter(|e| e.kind == state.library_filter)
+        .filter(|e| {
+            e.kind == state.library_filter
+                && (query.is_empty()
+                    || e.file_name.to_lowercase().contains(&query)
+                    || e.project_title
+                        .as_ref()
+                        .is_some_and(|title| title.to_lowercase().contains(&query)))
+                && match state.library_status {
+                    1 => e.enabled,
+                    2 => !e.enabled,
+                    3 => state
+                        .updates
+                        .iter()
+                        .any(|update| update.file_name == e.file_name),
+                    _ => true,
+                }
+        })
         .cloned()
         .collect();
     if entries.is_empty() {
         card_frame(ui, |ui| {
             empty_state(
                 ui,
-                "Nothing here yet",
-                "Install content from Discover or copy files manually.",
+                "No matching content",
+                "Try another search or filter, or install content from Discover.",
             );
         });
         return;
     }
     if state.library_view_hierarchy && state.library_filter == ContentKind::Mod {
+        ui.label(RichText::new("Shows which mods are required by other mods. Expand a mod to see its dependencies.").color(TEXT2));
         render_hierarchy_view(state, ui, &cfg);
         return;
     }
@@ -243,65 +334,32 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 .iter()
                 .any(|update| update.file_name == e.file_name && update.kind == e.kind);
             let width = ui.available_width();
-            if width >= 960.0 {
-                ui.horizontal(|ui| {
-                    let id_width = (width * 0.28).clamp(200.0, 320.0);
-                    let details_width = (width * 0.22).clamp(180.0, 240.0);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(id_width, 0.0),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            ui.set_min_width(id_width);
-                            entry_identity(ui, &e);
-                        },
-                    );
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(details_width, 0.0),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            ui.set_min_width(details_width);
-                            entry_details(ui, &e, has_update);
-                        },
-                    );
-                    let actions_width = ui.available_width();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(actions_width, 0.0),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            entry_actions(ui, state, &cfg.id, &e, true);
-                        },
-                    );
-                });
-            } else {
-                ui.horizontal(|ui| {
-                    let id_width = (width * 0.52).max(180.0);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(id_width, 0.0),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            ui.set_min_width(id_width);
-                            entry_identity(ui, &e);
-                        },
-                    );
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), 0.0),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| entry_details(ui, &e, has_update),
-                    );
-                });
-                ui.add_space(4.0);
-                if width >= 520.0 {
-                    let actions_width = ui.available_width();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(actions_width, 0.0),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            entry_actions(ui, state, &cfg.id, &e, true);
-                        },
-                    );
-                } else {
-                    ui.horizontal_wrapped(|ui| entry_actions(ui, state, &cfg.id, &e, false));
-                }
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2((width - 240.0).max(140.0), 0.0),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_width((width - 240.0).max(140.0));
+                        entry_identity(ui, &e);
+                        entry_details(ui, &e, has_update);
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 0.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| entry_actions(ui, state, &cfg.id, &e, true),
+                );
+            });
+            if state.row_is_busy(&e.file_name) {
+                crate::ui::components::activity_indicator(ui, "Downloading files…");
+                crate::ui::components::thin_progress(
+                    ui,
+                    state.row_activity.get(&e.file_name).and_then(|activity| {
+                        activity
+                            .total
+                            .map(|total| activity.downloaded as f32 / total.max(1) as f32)
+                    }),
+                );
             }
         });
         ui.add_space(3.0);
@@ -311,7 +369,8 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 fn entry_identity(ui: &mut egui::Ui, entry: &InstalledEntry) {
     ui.spacing_mut().item_spacing.y = 2.0;
     let title = entry.project_title.as_deref().unwrap_or(&entry.file_name);
-    ui.add(egui::Label::new(RichText::new(title).size(14.0).strong().color(TEXT)).truncate());
+    ui.add(egui::Label::new(RichText::new(title).size(14.0).strong().color(TEXT)).truncate())
+        .on_hover_text(title);
     let sub = match (title != entry.file_name, entry.size > 0) {
         (true, true) => Some(format!(
             "{} · {}",
@@ -322,8 +381,13 @@ fn entry_identity(ui: &mut egui::Ui, entry: &InstalledEntry) {
         (false, true) => Some(format_bytes(entry.size)),
         (false, false) => None,
     };
+    let sub = sub.map(|text| match entry.version_number.as_deref() {
+        Some(version) => format!("{text} · v{version}"),
+        None => text,
+    });
     if let Some(text) = sub {
-        ui.add(egui::Label::new(RichText::new(text).size(11.0).color(TEXT2)).truncate());
+        ui.add(egui::Label::new(RichText::new(&text).size(11.0).color(TEXT2)).truncate())
+            .on_hover_text(text);
     }
 }
 
@@ -345,29 +409,15 @@ fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
     } else {
         ("Disabled", MUTED)
     };
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new(source).size(10.5).strong().color(MUTED));
-        ui.label(RichText::new("·").size(10.5).color(MUTED));
-        ui.label(RichText::new(status).size(11.0).color(color));
+    ui.scope(|ui| {
+        ui.spacing_mut().interact_size.y = 16.0;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new(source).size(10.5).strong().color(MUTED));
+            ui.label(RichText::new("·").size(10.5).color(MUTED));
+            ui.label(RichText::new(status).size(11.0).color(color));
+        });
     });
-    let mut parts = Vec::new();
-    if let Some(version) = entry.version_number.as_deref() {
-        parts.push(format!("v{version}"));
-    }
-    if !entry.game_version.is_empty() {
-        let loader = if entry.loader.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", entry.loader)
-        };
-        parts.push(format!("MC {}{loader}", entry.game_version));
-    }
-    if !parts.is_empty() {
-        ui.add(
-            egui::Label::new(RichText::new(parts.join(" · ")).size(11.0).color(TEXT2)).truncate(),
-        );
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -384,37 +434,40 @@ fn entry_actions(
     state: &mut AppState,
     instance_id: &str,
     entry: &InstalledEntry,
-    right_aligned: bool,
+    _right_aligned: bool,
 ) {
     let update = state
         .updates
         .iter()
         .find(|update| update.file_name == entry.file_name && update.kind == entry.kind)
         .cloned();
-    let mut actions = Vec::with_capacity(5);
-    if update.is_some() {
-        actions.push(EntryAction::Update);
-    }
-    if entry.project_id.is_some() {
-        actions.push(EntryAction::Reinstall);
-    }
-    actions.extend([
-        EntryAction::Toggle,
-        EntryAction::OpenFolder,
-        EntryAction::Remove,
-    ]);
-
-    if !right_aligned {
-        for action in actions {
-            entry_action(ui, state, instance_id, entry, action, &update);
-        }
-        return;
-    }
-
     ui.spacing_mut().item_spacing.x = 6.0;
-    for action in actions.into_iter().rev() {
-        entry_action(ui, state, instance_id, entry, action, &update);
-    }
+    ui.menu_button("More", |ui| {
+        entry_action(
+            ui,
+            state,
+            instance_id,
+            entry,
+            EntryAction::Reinstall,
+            &update,
+        );
+        entry_action(
+            ui,
+            state,
+            instance_id,
+            entry,
+            EntryAction::OpenFolder,
+            &update,
+        );
+        entry_action(ui, state, instance_id, entry, EntryAction::Remove, &update);
+    });
+    let busy = state.row_is_busy(&entry.file_name);
+    ui.add_enabled_ui(!busy, |ui| {
+        entry_action(ui, state, instance_id, entry, EntryAction::Toggle, &update);
+        if update.is_some() {
+            entry_action(ui, state, instance_id, entry, EntryAction::Update, &update);
+        }
+    });
 }
 
 fn entry_action(
@@ -429,13 +482,7 @@ fn entry_action(
         EntryAction::Update => {
             if let Some(update) = &update {
                 let busy = state.row_is_busy(&entry.file_name);
-                if compact_action_button_with_feedback(
-                    ui,
-                    &format!("Update to {}", update.new_version),
-                    busy,
-                )
-                .clicked()
-                {
+                if compact_action_button_with_feedback(ui, "Update", busy).clicked() {
                     state.begin_row_activity(&entry.file_name, "Updating");
                     crate::app::tasks::update_one(state, update.clone());
                 }
@@ -531,7 +578,7 @@ fn render_hierarchy_view(
         card_frame(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("⚠ Missing Dependencies Detected")
+                    RichText::new("Missing dependencies")
                         .size(13.0)
                         .strong()
                         .color(WARNING),

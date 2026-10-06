@@ -194,6 +194,8 @@ pub enum DependencyType {
     Optional,
     Incompatible,
     Embedded,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

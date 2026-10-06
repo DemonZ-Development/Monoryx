@@ -130,6 +130,14 @@ impl ModLoader for NeoForgeLoader {
             if merged.libraries.iter().any(|l| &l.name == lib_name) {
                 continue;
             }
+            let parts: Vec<_> = lib_name.split(':').collect();
+            if parts.len() >= 3 {
+                merged.libraries.retain(|lib| {
+                    let other: Vec<_> = lib.name.split(':').collect();
+                    other.len() < 3
+                        || (other[0], other[1], other.get(3)) != (parts[0], parts[1], parts.get(3))
+                });
+            }
             merged.libraries.push(Library {
                 name: lib_name.clone(),
                 rules: None,
@@ -139,17 +147,8 @@ impl ModLoader for NeoForgeLoader {
                 url: Some(MAVEN_BASE.to_string()),
             });
         }
-        let jobs: Vec<DownloadJob> = merged
-            .libraries
-            .iter()
-            .filter_map(|l| {
-                crate::minecraft::libraries::artifact_location(l, MAVEN_BASE).map(|(_, url)| {
-                    let path = crate::minecraft::manifest::maven_coord_to_path(&l.name)
-                        .unwrap_or_else(|| format!("{}.jar", l.name.replace(':', "/")));
-                    DownloadJob::new(&l.name, url, paths.libraries_dir().join(&path))
-                })
-            })
-            .collect();
+        let jobs =
+            super::profile_library_jobs(&merged.libraries, &paths.libraries_dir(), MAVEN_BASE)?;
         dm.download_all(&jobs, None).await?;
         persist_profile(paths, &merged).await?;
         Ok(merged)

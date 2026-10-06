@@ -182,22 +182,40 @@ async fn resolve_inheritance(
         let Some(base_id) = v.inherits_from.clone() else {
             break;
         };
-        let base_key = format!("mojang-version-{base_id}");
-        let base: Option<VersionJson> = cache
-            .get(&base_key)
-            .and_then(|b| serde_json::from_slice(&b).ok());
-
+        let base = load_base_version(client, cache, &base_id).await;
         let Some(base) = base else {
             return Err(MonoryxError::VersionNotFound(format!(
-                "base version '{base_id}' for '{}' is not cached; install the vanilla version first",
+                "base version '{base_id}' for '{}' is unavailable; install the vanilla version first",
                 v.id
             )));
         };
         v = merge_versions(&base, &v);
-
-        let _ = client;
     }
     Ok(v)
+}
+
+async fn load_base_version(
+    client: &reqwest::Client,
+    cache: &crate::storage::cache::DiskCache,
+    base_id: &str,
+) -> Option<VersionJson> {
+    let key = format!("mojang-version-{base_id}");
+    if let Some(bytes) = cache.get(&key) {
+        if let Ok(parsed) = serde_json::from_slice::<VersionJson>(&bytes) {
+            return Some(parsed);
+        }
+    }
+    let manifest = crate::minecraft::manifest::fetch_manifest(client, cache)
+        .await
+        .ok()?;
+    let entry = manifest.versions.iter().find(|entry| entry.id == base_id)?;
+    let fetched: VersionJson = crate::utils::net::get_json_with_retry(client, &entry.url, None)
+        .await
+        .ok()?;
+    if let Ok(bytes) = serde_json::to_vec(&fetched) {
+        let _ = cache.put(&key, &bytes);
+    }
+    Some(fetched)
 }
 
 pub fn merge_versions(base: &VersionJson, child: &VersionJson) -> VersionJson {
@@ -258,7 +276,7 @@ pub fn merge_versions(base: &VersionJson, child: &VersionJson) -> VersionJson {
     if child.jar.is_some() {
         merged.jar = child.jar.clone();
     }
-    merged.inherits_from = None;
+    merged.inherits_from = base.inherits_from.clone();
     merged
 }
 

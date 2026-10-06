@@ -181,7 +181,7 @@ pub const TEXT: Color32 = Color32::from_rgb(243, 244, 247);
 
 pub const TEXT2: Color32 = Color32::from_rgb(156, 163, 175);
 
-pub const MUTED: Color32 = Color32::from_rgb(108, 115, 128);
+pub const MUTED: Color32 = Color32::from_rgb(156, 163, 175);
 
 pub const TEXT_DISABLED: Color32 = Color32::from_rgb(75, 80, 92);
 
@@ -346,11 +346,16 @@ pub fn format_last_played(raw: Option<&str>) -> String {
         } else {
             local_dt.format("%b %d, %Y").to_string()
         }
-    } else if trimmed.len() >= 10
-        && trimmed.chars().nth(4) == Some('-')
-        && trimmed.chars().nth(7) == Some('-')
-    {
-        trimmed[..10].to_string()
+    } else if let Some(head) = trimmed.get(..10) {
+        let bytes = trimmed.as_bytes();
+        if bytes[4] == b'-'
+            && bytes[7] == b'-'
+            && head.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+        {
+            head.to_string()
+        } else {
+            trimmed.to_string()
+        }
     } else {
         trimmed.to_string()
     }
@@ -387,116 +392,118 @@ pub fn format_percent(fraction: f32) -> String {
 }
 
 fn install_system_fallback_fonts(ctx: &egui::Context) {
-    static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if INSTALLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    let installed = egui::Id::new("system-fonts-installed");
+    if ctx.data_mut(|data| data.get_temp::<bool>(installed).unwrap_or(false)) {
         return;
     }
+    static FONTS: std::sync::OnceLock<egui::FontDefinitions> = std::sync::OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut fonts = egui::FontDefinitions::default();
+        let mut loaded_fonts = Vec::new();
 
-    let mut fonts = egui::FontDefinitions::default();
-    let mut loaded_fonts = Vec::new();
+        #[cfg(target_os = "windows")]
+        let candidates = [
+            r"C:\Windows\Fonts\malgun.ttf",
+            r"C:\Windows\Fonts\malgunsl.ttf",
+            r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\msgothic.ttc",
+            r"C:\Windows\Fonts\segoeui.ttf",
+        ];
 
-    #[cfg(target_os = "windows")]
-    let candidates = [
-        r"C:\Windows\Fonts\malgun.ttf",
-        r"C:\Windows\Fonts\malgunsl.ttf",
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msgothic.ttc",
-        r"C:\Windows\Fonts\segoeui.ttf",
-    ];
+        #[cfg(target_os = "macos")]
+        let candidates = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        ];
 
-    #[cfg(target_os = "macos")]
-    let candidates = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-    ];
+        #[cfg(target_os = "linux")]
+        let candidates = [
+            "Noto Sans CJK KR",
+            "Noto Sans CJK JP",
+            "Noto Sans CJK SC",
+            "Noto Sans",
+        ];
 
-    #[cfg(target_os = "linux")]
-    let candidates = [
-        "Noto Sans CJK KR",
-        "Noto Sans CJK JP",
-        "Noto Sans CJK SC",
-        "Noto Sans",
-    ];
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        for path in candidates {
+            let path = std::path::Path::new(path);
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    for path in candidates {
-        let path = std::path::Path::new(path);
+            if !path.exists() {
+                continue;
+            }
 
-        if !path.exists() {
-            continue;
+            let Ok(data) = std::fs::read(path) else {
+                continue;
+            };
+
+            let name = format!("system_fallback_{}", loaded_fonts.len());
+
+            fonts
+                .font_data
+                .insert(name.clone(), egui::FontData::from_owned(data).into());
+
+            loaded_fonts.push(name);
+            break;
         }
 
-        let Ok(data) = std::fs::read(path) else {
-            continue;
-        };
+        #[cfg(target_os = "linux")]
+        for family in candidates {
+            let Ok(output) = std::process::Command::new("fc-match")
+                .args(["-f", "%{file}", family])
+                .output()
+            else {
+                continue;
+            };
 
-        let name = format!("system_fallback_{}", loaded_fonts.len());
+            if !output.status.success() {
+                continue;
+            }
 
-        fonts
-            .font_data
-            .insert(name.clone(), egui::FontData::from_owned(data).into());
+            let path = String::from_utf8_lossy(&output.stdout);
 
-        loaded_fonts.push(name);
-    }
+            if path.is_empty() {
+                continue;
+            }
 
-    #[cfg(target_os = "linux")]
-    for family in candidates {
-        let Ok(output) = std::process::Command::new("fc-match")
-            .args(["-f", "%{file}", family])
-            .output()
-        else {
-            continue;
-        };
+            let path = std::path::Path::new(path.trim());
 
-        if !output.status.success() {
-            continue;
+            if !path.exists() {
+                continue;
+            }
+
+            let Ok(data) = std::fs::read(path) else {
+                continue;
+            };
+
+            let name = format!("system_fallback_{}", loaded_fonts.len());
+
+            fonts
+                .font_data
+                .insert(name.clone(), egui::FontData::from_owned(data).into());
+
+            loaded_fonts.push(name);
+            break;
         }
 
-        let path = String::from_utf8_lossy(&output.stdout);
+        for font_name in &loaded_fonts {
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Proportional)
+                .unwrap()
+                .push(font_name.clone());
 
-        if path.is_empty() {
-            continue;
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Monospace)
+                .unwrap()
+                .push(font_name.clone());
         }
 
-        let path = std::path::Path::new(path.trim());
-
-        if !path.exists() {
-            continue;
-        }
-
-        let Ok(data) = std::fs::read(path) else {
-            continue;
-        };
-
-        let name = format!("system_fallback_{}", loaded_fonts.len());
-
         fonts
-            .font_data
-            .insert(name.clone(), egui::FontData::from_owned(data).into());
-
-        loaded_fonts.push(name);
-    }
-
-    if loaded_fonts.is_empty() {
-        return;
-    }
-
-    for font_name in &loaded_fonts {
-        fonts
-            .families
-            .get_mut(&egui::FontFamily::Proportional)
-            .unwrap()
-            .push(font_name.clone());
-
-        fonts
-            .families
-            .get_mut(&egui::FontFamily::Monospace)
-            .unwrap()
-            .push(font_name.clone());
-    }
-
-    ctx.set_fonts(fonts);
+    });
+    ctx.set_fonts(fonts.clone());
+    ctx.data_mut(|data| data.insert_temp(installed, true));
 }
 
 #[cfg(test)]
@@ -527,6 +534,21 @@ mod tests {
         assert!(!formatted.contains("902901900"));
         assert!(!formatted.contains("+00:00"));
         assert!(formatted.len() < 24);
+    }
+
+    #[test]
+    fn format_last_played_survives_multibyte_date_shaped_values() {
+        for raw in [
+            "日日日日-ab-01",
+            "日本語日-01-01",
+            "éééé-ab-01",
+            "𝕄𝕄𝕄𝕄-ab-01",
+            "2020-05-15",
+        ] {
+            let formatted = format_last_played(Some(raw));
+            assert!(!formatted.is_empty(), "{raw} produced empty output");
+        }
+        assert_eq!(format_last_played(Some("2020-05-15")), "2020-05-15");
     }
 
     #[test]

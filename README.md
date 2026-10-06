@@ -19,7 +19,7 @@
 
 ## Overview
 
-MONORYX is a desktop launcher for Minecraft: Java Edition. It runs as a native Rust binary using `egui` and `eframe`. The executable is 20 MB and idles at roughly 30 MB of memory.
+MONORYX is a desktop launcher for Minecraft: Java Edition. It runs as a native Rust binary using `egui` and `eframe`. Image caches and decoding are limited, page images are released when you leave, and animations pause when they are no longer visible.
 
 - **Separate instance folders**: Each profile keeps its own mods, saves, configs, and screenshots in an isolated directory. It leaves your `.minecraft` folder untouched.
 - **Modrinth and CurseForge support**: Search projects, resolve required dependencies, and install `.mrpack` modpacks or individual mods from the UI.

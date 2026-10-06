@@ -27,7 +27,7 @@ pub fn card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .corner_radius(corner)
         .inner_margin(egui::Margin::same(metrics::CARD_MARGIN))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
             add(ui);
         });
     gloss_highlight(ui, frame.response.rect);
@@ -111,30 +111,47 @@ pub fn wizard_frame(
     ui: &mut egui::Ui,
     step: usize,
     _panel_height: f32,
-    add: impl FnOnce(&mut egui::Ui),
+    content_key: u64,
+    mut add: impl FnMut(&mut egui::Ui, bool),
 ) {
     let p = crate::ui::theme::palette(ui.ctx());
 
     let cache_id = egui::Id::new(("wizard-height", step));
+    let body_cache = egui::Id::new(("wizard-body-height", step, content_key));
 
     ui.add_space(14.0);
     ui.vertical_centered(|ui| {
         let corner = CornerRadius::same(16);
+        let mut measured = 0.0_f32;
         let frame = egui::Frame::new()
             .fill(p.elevated)
             .stroke(Stroke::new(1.0_f32, p.border))
             .corner_radius(corner)
-            .inner_margin(egui::Margin::same(28))
+            .inner_margin(egui::Margin::same(22))
             .show(ui, |ui| {
                 ui.set_width(metrics::WIZARD_CARD_W.min(ui.available_width()));
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        add,
-                    );
-                });
+                let cap = (ui.available_height() - 62.0).max(80.0);
+                let reserved = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<f32>(body_cache).unwrap_or(cap))
+                    .clamp(0.0, cap);
+                egui::ScrollArea::vertical()
+                    .id_salt(("wizard-body", step))
+                    .max_height(reserved)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            add(ui, false);
+                        });
+                        measured = ui.min_rect().height();
+                    });
+                ui.add_space(12.0);
+                add(ui, true);
             });
+        if measured > 0.0 {
+            ui.ctx().data_mut(|d| d.insert_temp(body_cache, measured));
+        }
         if crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween {
             draw_spiderweb(ui.painter(), frame.response.rect);
         }
@@ -153,7 +170,7 @@ pub fn provider_card(ui: &mut egui::Ui, name: &str, detail: &str, status: &str) 
         .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let (tile, _) =
                     ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
@@ -194,7 +211,7 @@ pub fn hero_card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .corner_radius(corner)
         .inner_margin(egui::Margin::same(20))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
             add(ui);
         });
     gloss_highlight(ui, frame.response.rect);
@@ -1192,7 +1209,7 @@ pub fn hover_card_frame(
         .corner_radius(corner)
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
             add(ui);
         });
     gloss_highlight(ui, frame_resp.response.rect);
@@ -1226,7 +1243,7 @@ pub fn compact_hover_card_frame(
         .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(14, 8))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
             add(ui);
         });
     gloss_highlight(ui, frame_resp.response.rect);
@@ -1320,6 +1337,7 @@ pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2)
         }
         ui.add(
             egui::Button::new(RichText::new(text).size(type_scale::BODY))
+                .wrap_mode(egui::TextWrapMode::Extend)
                 .min_size(size)
                 .fill(normal)
                 .corner_radius(corner),
@@ -1444,6 +1462,7 @@ pub fn pill_tab_button(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::
         };
         ui.add(
             egui::Button::new(btn_text)
+                .wrap_mode(egui::TextWrapMode::Extend)
                 .fill(fill)
                 .stroke(stroke)
                 .corner_radius(corner)
@@ -1936,6 +1955,9 @@ pub fn thin_progress(ui: &mut egui::Ui, frac: Option<f32>) {
     let p = crate::ui::theme::palette(ui.ctx());
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
     ui.painter().rect_filled(rect, 3, p.elevated2);
     match frac {
         Some(f) => {
@@ -1959,7 +1981,8 @@ pub fn thin_progress(ui: &mut egui::Ui, frac: Option<f32>) {
             let r =
                 egui::Rect::from_min_size(egui::pos2(x, rect.min.y), egui::vec2(w, rect.height()));
             ui.painter().rect_filled(r, 3, p.accent);
-            ui.ctx().request_repaint();
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
         }
     }
 }
@@ -2231,6 +2254,7 @@ pub fn loader_pills(
                 egui::FontId::proportional(type_scale::BODY),
                 color,
             );
+            focus_ring(ui, &response, label);
             if response.clicked() {
                 picked = Some(id.to_string());
             }
@@ -2248,12 +2272,22 @@ pub fn field_label(ui: &mut egui::Ui, text: &str) {
 #[must_use]
 pub fn dialog_backdrop(ctx: &egui::Context) -> bool {
     let mut clicked = false;
+    ctx.memory_mut(|memory| {
+        memory.set_modal_layer(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("dialog-backdrop"),
+        ))
+    });
     egui::Area::new(egui::Id::new("dialog-backdrop"))
-        .order(egui::Order::Background)
+        .order(egui::Order::Middle)
         .fixed_pos(egui::Pos2::ZERO)
         .interactable(true)
         .show(ctx, |ui| {
             let rect = ui.ctx().screen_rect();
+            crate::ui::backdrop::paint(ctx, ui.painter(), true);
+            let fade = ctx.animate_bool_with_time(egui::Id::new("dialog-shade-enter"), true, 0.14);
+            ui.painter()
+                .rect_filled(rect, 0, Color32::from_black_alpha((110.0 * fade) as u8));
             let response = ui.interact(rect, ui.id().with("hit"), egui::Sense::click());
             if response.clicked() {
                 clicked = true;
@@ -2275,9 +2309,11 @@ pub fn limited_text_edit(
             .id(egui::Id::new(id))
             .hint_text(hint)
             .char_limit(max)
-            .desired_width(ui.available_width()),
+            .desired_width(ui.available_width())
+            .margin(egui::vec2(10.0, 8.0))
+            .min_size(egui::vec2(0.0, 34.0)),
     );
-    if used > 0 {
+    if used >= max.saturating_mul(4) / 5 {
         let near_limit = used as f64 / max as f64 > 0.9;
         let colour = if used >= max {
             DANGER
@@ -2308,6 +2344,55 @@ pub fn limited_text_edit_with_hint(
     let response = limited_text_edit(ui, id, value, max, hint);
     ui.label(RichText::new(below).size(11.0).color(MUTED));
     response
+}
+
+pub fn focus_ring(ui: &egui::Ui, response: &egui::Response, label: &str) {
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect.shrink(3.0),
+            metrics::CONTROL_RADIUS,
+            Stroke::new(2.0_f32, crate::ui::theme::palette(ui.ctx()).bg),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.0),
+            metrics::CONTROL_RADIUS,
+            Stroke::new(2.0_f32, crate::ui::theme::palette(ui.ctx()).accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+pub fn activity_indicator(ui: &mut egui::Ui, label: &str) {
+    ui.horizontal_wrapped(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+        if ui.is_rect_visible(rect) {
+            let angle = ui.input(|input| input.time) as f32 * 4.0;
+            let color = crate::ui::theme::palette(ui.ctx()).accent;
+            for index in 0..8 {
+                let theta = angle + index as f32 * std::f32::consts::TAU / 8.0;
+                let position = rect.center() + egui::vec2(theta.cos(), theta.sin()) * 6.0;
+                ui.painter().circle_filled(
+                    position,
+                    1.6,
+                    color.gamma_multiply((index + 1) as f32 / 8.0),
+                );
+            }
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
+        }
+        ui.label(RichText::new(label).strong().color(TEXT));
+    });
+}
+
+pub fn dialog_content(ui: &mut egui::Ui) {
+    let enter = ui
+        .ctx()
+        .animate_bool_with_time(egui::Id::new("dialog-content-enter"), true, 0.14);
+    ui.set_opacity(0.65 + enter * 0.35);
 }
 
 #[cfg(test)]
@@ -2498,7 +2583,7 @@ mod tests {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let panel_height = ui.available_height();
-                    wizard_frame(ui, 0, panel_height, |ui| {
+                    wizard_frame(ui, 0, panel_height, 0, |ui, _| {
                         ui.label("content");
                     });
                 });

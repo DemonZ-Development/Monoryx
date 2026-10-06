@@ -21,18 +21,39 @@ pub fn create_client() -> Result<reqwest::Client> {
     Ok(client)
 }
 
+pub const MAX_TEXT_BODY_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_JSON_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+pub async fn read_capped_text(response: reqwest::Response, limit: usize) -> Result<String> {
+    let body = response.bytes().await?;
+    if body.len() > limit {
+        return Err(MonoryxError::Download(format!(
+            "Response body exceeded the {limit} byte limit"
+        )));
+    }
+    String::from_utf8(body.to_vec())
+        .map_err(|_| MonoryxError::Download("Response body was not valid UTF-8".to_string()))
+}
+
 pub async fn get_json_with_retry<T: serde::de::DeserializeOwned>(
     client: &reqwest::Client,
     url: &str,
     extra_ua: Option<&str>,
 ) -> Result<T> {
     let response = get_with_retry(client, url, extra_ua).await?;
-    Ok(response.json::<T>().await?)
+    if let Some(len) = response.content_length() {
+        if len > MAX_JSON_BODY_BYTES as u64 {
+            return Err(MonoryxError::Download(format!(
+                "Refusing a {len} byte metadata response from {url}"
+            )));
+        }
+    }
+    Ok(serde_json::from_slice(&response.bytes().await?)?)
 }
 
 pub async fn get_text_with_retry(client: &reqwest::Client, url: &str) -> Result<String> {
     let response = get_with_retry(client, url, None).await?;
-    Ok(response.text().await?)
+    read_capped_text(response, MAX_TEXT_BODY_BYTES).await
 }
 
 async fn get_with_retry(

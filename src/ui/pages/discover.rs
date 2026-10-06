@@ -37,7 +37,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         crate::ui::pages::instances::open_new_dialog(state);
                         state.set_page(Page::Instances);
                     }
-                } else if ui.link("Repair files").clicked() {
+                } else if ui.link("Download game files").clicked() {
                     if let Some(cfg) = current.clone() {
                         crate::app::tasks::repair_instance(state, cfg.id);
                     }
@@ -87,17 +87,15 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         });
         if let Some(reason) = &blocked {
             ui.label(
-                RichText::new(format!(
-                    "{reason} You can still browse and queue downloads."
-                ))
-                .size(11.0)
-                .color(MUTED),
+                RichText::new(format!("{reason} You can still browse projects."))
+                    .size(11.0)
+                    .color(MUTED),
             );
         }
         ui.add_space(8.0);
     }
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for tab in DiscoverTab::all() {
             let sel = state.discover_tab == tab;
             let label = tab.label();
@@ -119,7 +117,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     if state.discover_tab == DiscoverTab::Mods || state.discover_tab == DiscoverTab::Modpacks {
         let available = state.installable_loaders();
-        if !available.is_empty() {
+        if available.len() > 1 {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Mod Loader:").size(12.0).color(TEXT2));
                 if let Some(loader) =
@@ -137,24 +135,38 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     }
 
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Source:").size(12.0).color(TEXT2));
-        for src in [
-            crate::app::state::DiscoverSource::Modrinth,
-            crate::app::state::DiscoverSource::CurseForge,
-        ] {
-            let active = state.discover_source == src;
-            if crate::ui::components::tab_button(ui, src.label(), active).clicked() && !active {
-                state.discover_source = src;
-                state.search.offset = 0;
-                state.run_search();
-            }
+    ui.horizontal_wrapped(|ui| {
+        let mut source = state.discover_source;
+        egui::ComboBox::from_id_salt("discover-source")
+            .selected_text(source.label())
+            .show_ui(ui, |ui| {
+                for value in [
+                    crate::app::state::DiscoverSource::Modrinth,
+                    crate::app::state::DiscoverSource::CurseForge,
+                ] {
+                    ui.selectable_value(&mut source, value, value.label());
+                }
+            });
+        if source != state.discover_source {
+            state.discover_source = source;
+            state.search.offset = 0;
+            state.run_search();
         }
-        if state.discover_source == crate::app::state::DiscoverSource::CurseForge
+        if let Some(instance) = state.selected() {
+            badge(
+                ui,
+                &format!(
+                    "Minecraft {} · {}",
+                    instance.minecraft_version,
+                    instance.loader.display_name()
+                ),
+            );
+        }
+        if source == crate::app::state::DiscoverSource::CurseForge
             && !state.config.curseforge.is_configured()
         {
             crate::ui::components::badge_warning(ui, "API key required");
-            if ui.link("Configure in Settings").clicked() {
+            if ui.link("Open Settings").clicked() {
                 state.set_page(Page::Settings);
             }
         }
@@ -170,29 +182,34 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let (_resp, enter) = crate::ui::components::search_field(
-                    ui,
-                    "discover-search",
-                    &mut state.search.query,
-                    crate::ui::components::limits::SEARCH,
-                    search_placeholder,
+            ui.horizontal(|ui| {
+                let search_width = (ui.available_width() - 116.0).max(160.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(search_width, 36.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        let (response, enter) = crate::ui::components::compact_search_field(
+                            ui,
+                            "discover-search",
+                            &mut state.search.query,
+                            crate::ui::components::limits::SEARCH,
+                            search_placeholder,
+                        );
+                        if response.changed() {
+                            state.search_debounce = Some(std::time::Instant::now());
+                        }
+                        if enter {
+                            state.search_debounce = None;
+                            state.search.offset = 0;
+                            state.run_search();
+                        }
+                    },
                 );
-                if _resp.changed() {
-                    state.search_debounce = Some(std::time::Instant::now());
-                }
-                if enter {
+                if content_primary_button(ui, "Search").clicked() {
                     state.search_debounce = None;
+                    state.search.offset = 0;
                     state.run_search();
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if content_primary_button(ui, "Search").clicked() {
-                        state.search_debounce = None;
-                        state.search.offset = 0;
-                        state.run_search();
-                    }
-                });
             });
 
             ui.add_space(4.0);
@@ -220,6 +237,8 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                             ui.label(RichText::new("MC Version:").size(12.0).color(TEXT2));
                             ui.add(
                                 egui::TextEdit::singleline(&mut state.search.game_version)
+                                    .margin(egui::vec2(10.0, 8.0))
+                                    .min_size(egui::vec2(0.0, 34.0))
                                     .desired_width(75.0)
                                     .hint_text("All")
                                     .char_limit(crate::ui::components::limits::ADDRESS),
@@ -536,6 +555,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         }
         state.search_results = hits;
     }
+    show_project_dialog(state, ui.ctx());
 }
 
 fn format_downloads(d: u64) -> String {
@@ -552,52 +572,10 @@ fn show_hit_card(
     state: &mut AppState,
     ui: &mut egui::Ui,
     hit: &crate::modrinth::models::SearchResult,
-    expanded: bool,
+    _expanded: bool,
 ) {
     hover_card_frame(ui, format!("discover_hit_{}", hit.slug), |ui| {
-        if expanded {
-            if state
-                .detail_project
-                .as_ref()
-                .is_some_and(|project| project.slug == hit.slug)
-            {
-                show_detail(state, ui);
-            } else {
-                ui.horizontal(|ui| {
-                    show_thumb(state, ui, hit.icon_url.as_deref().unwrap_or(""), 52.0);
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(&hit.title).size(17.0).strong().color(TEXT));
-                        ui.label(RichText::new("Project details").size(11.5).color(TEXT2));
-                    });
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), 52.0),
-                        egui::Layout::right_to_left(egui::Align::Min),
-                        |ui| {
-                            if content_secondary_button(ui, "Close").clicked() {
-                                close_detail(state);
-                            }
-                        },
-                    );
-                });
-                if state.detail_loading {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new("Loading details...").color(TEXT2));
-                    });
-                }
-                if !state.detail_error.is_empty() {
-                    ui.colored_label(DANGER, &state.detail_error);
-                    if content_secondary_button(ui, "Retry").clicked() {
-                        state.detail_loading = true;
-                        state.detail_versions_loading = true;
-                        state.detail_error.clear();
-                        crate::app::tasks::open_project_page(state, hit.slug.clone());
-                    }
-                }
-            }
-        } else {
-            show_hit_summary(state, ui, hit);
-        }
+        show_hit_summary(state, ui, hit);
     });
 }
 
@@ -644,7 +622,24 @@ fn show_hit_summary(
             open_hit_details(state, hit);
         }
         if hit.project_type == "modpack" {
-            if content_primary_button(ui, "Install Pack").clicked() {
+            let busy = state.operations.contains_key(&format!("pack:{}", hit.slug));
+            if busy {
+                crate::ui::components::activity_indicator(ui, "Installing…");
+            }
+            if ui
+                .add_enabled_ui(!busy, |ui| {
+                    content_primary_button(
+                        ui,
+                        if busy {
+                            "Installing…"
+                        } else {
+                            "Install pack"
+                        },
+                    )
+                })
+                .inner
+                .clicked()
+            {
                 state.global_status = format!("Installing modpack {}...", hit.title);
                 crate::app::tasks::install_modpack(state, hit.slug.clone(), hit.title.clone());
             }
@@ -669,14 +664,28 @@ fn show_hit_summary(
                 .cloned();
 
             let blocker = state.install_blocker();
-            let install = content_primary_button(
-                ui,
-                if installed.is_some() {
-                    "Reinstall"
-                } else {
-                    "Install"
-                },
-            );
+            let busy = state.selected_instance.as_ref().is_some_and(|instance| {
+                state
+                    .operations
+                    .contains_key(&format!("content:{instance}:{}", hit.slug))
+            });
+            if busy {
+                crate::ui::components::activity_indicator(ui, "Installing…");
+            }
+            let install = ui
+                .add_enabled_ui(blocker.is_none() && !busy, |ui| {
+                    content_primary_button(
+                        ui,
+                        if busy {
+                            "Installing…"
+                        } else if installed.is_some() {
+                            "Reinstall"
+                        } else {
+                            "Install"
+                        },
+                    )
+                })
+                .inner;
             let install = if let Some(reason) = &blocker {
                 install.on_hover_text(format!(
                     "{reason}\nBrowse the project anyway to see versions and details."
@@ -720,7 +729,7 @@ fn open_hit_details(state: &mut AppState, hit: &crate::modrinth::models::SearchR
     crate::app::tasks::open_project_page(state, hit.slug.clone());
 }
 
-fn close_detail(state: &mut AppState) {
+pub(crate) fn close_detail(state: &mut AppState) {
     state.project_image_url = None;
     state.project_image = None;
     state.detail_slug = None;
@@ -799,58 +808,23 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
         if !state.detail_versions.is_empty() {
             ui.add_space(8.0);
             let selected_inst = state.selected();
-            let inst_loader = selected_inst.as_ref().and_then(|i| {
-                if i.loader == crate::instance::config::LoaderKind::Vanilla {
-                    None
-                } else {
-                    Some(i.loader.as_str().to_lowercase())
-                }
-            });
-
-            let mut filtered_versions: Vec<_> = if let Some(loader) = &inst_loader {
-                let matching: Vec<_> = state
-                    .detail_versions
-                    .iter()
-                    .filter(|v| {
-                        v.loaders.iter().any(|l| {
-                            let l_lower = l.to_lowercase();
-                            l_lower == *loader
-                                || (loader == "quilt" && l_lower == "fabric")
-                                || (loader == "fabric" && l_lower == "quilt")
-                        })
-                    })
-                    .collect();
-                if !matching.is_empty() {
-                    matching
-                } else {
-                    state.detail_versions.iter().collect()
-                }
-            } else {
-                state.detail_versions.iter().collect()
-            };
-
-            if let Some(inst) = &selected_inst {
-                let mc = &inst.minecraft_version;
-                filtered_versions.sort_by_key(|v| {
-                    if v.game_versions.iter().any(|gv| gv == mc) {
-                        0
+            let filtered_versions: Vec<_> = state.detail_versions.iter().filter(|version| {
+                selected_inst.as_ref().is_none_or(|instance| {
+                    if state.discover_tab == DiscoverTab::Mods {
+                        crate::modrinth::models::is_compatible(version, &instance.minecraft_version, instance.loader.as_str())
                     } else {
-                        1
+                        version.game_versions.is_empty() || version.game_versions.contains(&instance.minecraft_version)
                     }
-                });
+                })
+            }).collect();
+            let compatible_ids: Vec<_> = filtered_versions.iter().map(|version| version.id.as_str()).collect();
+            if !state.detail_version_pick.is_empty() && !compatible_ids.contains(&state.detail_version_pick.as_str()) {
+                state.detail_version_pick.clear();
             }
-
-            let heading = if let Some(inst) = &selected_inst {
-                if inst.loader != crate::instance::config::LoaderKind::Vanilla {
-                    format!("Compatible Versions ({})", inst.loader.display_name())
-                } else {
-                    "Compatible Versions".to_string()
-                }
-            } else {
-                "Compatible Versions".to_string()
-            };
-            ui.label(RichText::new(heading).strong().color(TEXT));
-
+            ui.label(RichText::new(if selected_inst.is_some() { "Compatible versions" } else { "Versions" }).strong().color(TEXT));
+            if filtered_versions.is_empty() {
+                ui.label(RichText::new("No compatible release for this instance. Choose a different Minecraft version or loader.").color(TEXT2));
+            }
             let selected_label = if state.detail_version_pick.is_empty() {
                 "(newest compatible)".to_string()
             } else if let Some(v) = filtered_versions
@@ -965,21 +939,23 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
         }
 
         let readiness_issue = state.install_blocker();
-        let can_install = compatibility_issue.is_none() && readiness_issue.is_none();
+        let busy = if p.project_type == "modpack" { state.operations.contains_key(&format!("pack:{}", p.slug)) } else { state.selected_instance.as_ref().is_some_and(|instance| state.operations.contains_key(&format!("content:{instance}:{}", p.slug))) };
+        if busy { crate::ui::components::activity_indicator(ui, "Installing files and dependencies…"); }
+        let can_install = compatibility_issue.is_none() && readiness_issue.is_none() && !busy;
         if let Some(reason) = &readiness_issue {
             ui.label(RichText::new(reason).color(MUTED));
         }
         let control_width = ((ui.available_width() - 8.0) / 2.0).clamp(150.0, 250.0);
         ui.horizontal(|ui| {
             if p.project_type == "modpack" {
-                if detail_button(ui, "Install as new instance", true, true, control_width).clicked()
+                if detail_button(ui, if busy { "Installing…" } else { "Install as new instance" }, true, !busy, control_width).clicked()
                 {
                     state.global_status = format!("Installing modpack {}...", p.title);
                     crate::app::tasks::install_modpack(state, p.slug.clone(), p.title.clone());
                 }
             } else if detail_button(
                 ui,
-                install_label,
+                if busy { "Installing…" } else { install_label },
                 true,
                 !state.detail_versions_loading && can_install,
                 control_width,
@@ -1102,6 +1078,47 @@ pub(crate) fn discover_search_placeholder(
     match source {
         crate::app::state::DiscoverSource::CurseForge => "Search CurseForge…",
         crate::app::state::DiscoverSource::Modrinth => "Search Modrinth…",
+    }
+}
+
+fn show_project_dialog(state: &mut AppState, ctx: &egui::Context) {
+    let Some(slug) = state.detail_slug.clone() else {
+        return;
+    };
+    let mut open = true;
+    egui::Window::new("Project details")
+        .id(egui::Id::new("project-details-dialog"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width((ctx.screen_rect().width() - 96.0).min(680.0))
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height((ctx.screen_rect().height() - 130.0).max(180.0))
+                .show(ui, |ui| {
+                    if state.detail_project.is_some() {
+                        show_detail(state, ui);
+                    } else if state.detail_loading {
+                        crate::ui::components::activity_indicator(ui, "Loading project details…");
+                    }
+                    if !state.detail_error.is_empty() {
+                        ui.colored_label(DANGER, &state.detail_error);
+                        if content_secondary_button(ui, "Retry").clicked() {
+                            state.detail_loading = true;
+                            state.detail_versions_loading = true;
+                            state.detail_error.clear();
+                            crate::app::tasks::open_project_page(state, slug);
+                        }
+                    }
+                });
+        });
+    if !open
+        || (!egui::Popup::is_any_open(ctx)
+            && ctx.input(|input| input.key_pressed(egui::Key::Escape)))
+    {
+        close_detail(state);
     }
 }
 

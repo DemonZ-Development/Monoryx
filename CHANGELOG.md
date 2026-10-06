@@ -1,6 +1,43 @@
+# MONORYX 1.5.0 (Unreleased)
+
+## Interface and setup
+
+- Reworked Home around Play, Mods & packs, Worlds & backups, and Instance settings. Instance maintenance actions are grouped under More.
+- Added five themes, clearer keyboard focus, and improved text contrast. Accounts and Settings stay visible at the bottom of the sidebar.
+- Fixed clipped controls at smaller window sizes. Setup keeps Back and Continue visible while longer content scrolls.
+- Project details open in a centered dialog with a blurred, dimmed background. Dialogs and cards use short transitions.
+- Added Library search, enabled/disabled/update filters, and a dependency tree. Export actions share one menu.
+- Simplified Settings, showed game memory in GB, and moved Java tuning, startup archives, and connection options into advanced sections.
+
+## Downloads and installation
+
+- Created instances appear immediately, with Downloads showing preparation before the first file transfer starts.
+- Added animated progress for game files, mods, updates, and modpacks. Repeated clicks no longer start the same install twice.
+- Failed installations offer Retry in Downloads. Each install tracks its own result, so one failure does not finish other active downloads.
+- Discover explains when game files still need downloading and disables content installation until the target instance is ready.
+- Version choices show releases compatible with the selected Minecraft version and loader.
+- Check the selected instance's packages and loader in the background on startup and every 30 minutes. Home and Library show compatible updates; users choose when to install them.
+
+## Worlds, diagnostics, and integrations
+
+- Added world browsing, compressed backups, restore-as-copy, and file previews.
+- Added screenshot browsing and a full-size viewer. Home shows screenshots from the selected instance.
+- Improved crash explanations and log sharing, Discord activity controls, and Nexeu server tools.
+- Updated launcher checks to use the official release API and verify Windows update downloads.
+
+## Resource use
+
+- Limited image decoding and thumbnail queues, discarded image results after leaving their page, and freed full-size images when their viewer closes.
+- Cached system font data across theme changes and loaded one system fallback instead of several overlapping font files.
+- Removed per-download repaint threads and reduced idle repainting. Loading animations run while visible; the dialog blur uses two small GPU textures that are released on close.
+
+---
+
 # MONORYX 1.4.1
 
 CJK font support, asynchronous player skin avatar rendering, and stability improvements.
+
+This patch shipped while 1.5.0 was in development, so the community fixes in [PR #3](https://github.com/DemonZ-Development/Monoryx/pull/3) could reach users sooner. These fixes are also included in 1.5.0.
 
 > See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
 

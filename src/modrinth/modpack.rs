@@ -89,9 +89,15 @@ pub async fn install_mrpack(
             MonoryxError::Archive("invalid .mrpack: missing modrinth.index.json".to_string())
         })?;
         use std::io::Read as _;
-        entry
+        let mut limited = (&mut entry).take(MAX_INDEX_BYTES + 1);
+        limited
             .read_to_string(&mut index_str)
             .map_err(|e| MonoryxError::Archive(e.to_string()))?;
+        if index_str.len() as u64 > MAX_INDEX_BYTES {
+            return Err(MonoryxError::Archive(
+                "modrinth.index.json is too large".to_string(),
+            ));
+        }
     }
     let index: MrpackIndex = serde_json::from_str(&index_str)?;
     if index.format_version != 1 {
@@ -200,6 +206,7 @@ pub async fn install_mrpack(
 
 const MAX_OVERRIDE_FILES: usize = 10_000;
 const MAX_OVERRIDE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const MAX_INDEX_BYTES: u64 = 8 * 1024 * 1024;
 
 fn extract_overrides(mrpack_path: &Path, game: &Path) -> Result<usize> {
     use std::io::Read as _;

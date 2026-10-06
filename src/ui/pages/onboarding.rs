@@ -8,11 +8,11 @@ const STEPS: usize = 3;
 const INTRO_FEATURES: [(&str, &str); 3] = [
     (
         "Isolated instances",
-        "Each profile keeps its own mods, worlds and settings. Nothing leaks between them.",
+        "Keep each Minecraft version, its mods, worlds and settings together.",
     ),
     (
         "One-click mods",
-        "Browse Modrinth and packs install with their dependencies already resolved.",
+        "Find mods on Modrinth or CurseForge. Required dependencies are installed with them.",
     ),
     (
         "Offline ready",
@@ -240,10 +240,6 @@ fn paint_background(ui: &mut egui::Ui, rect: egui::Rect) {
 }
 
 pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
-    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-    #[cfg(target_os = "windows")]
-    crate::utils::system::ensure_window_positioned(true, false);
-
     let step = (state.onboarding_step as usize).min(STEPS - 1);
     let panel_height = ui.available_height();
     let enter = ctx.animate_bool_with_time(egui::Id::new("onboarding-enter"), true, 0.18);
@@ -270,10 +266,17 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     wordmark(ui);
     step_rail(ui, STEPS, step);
 
-    wizard_frame(ui, step, panel_height, |ui| match step {
-        0 => intro(state, ui),
-        1 => username(state, ui),
-        _ => defaults(state, ui),
+    let content_key = onboarding_content_key(state, step);
+    wizard_frame(ui, step, panel_height, content_key, |ui, footer| {
+        if footer {
+            onboarding_footer(state, ui, step);
+        } else {
+            match step {
+                0 => intro(ui),
+                1 => username(state, ui),
+                _ => defaults(state, ui),
+            }
+        }
     });
 
     if step == 0 && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -355,11 +358,15 @@ fn heading(ui: &mut egui::Ui, title: &str, subtitle: &str) {
                 egui::Color32::from_rgb(182, 189, 202)
             }),
     );
-    ui.add_space(18.0);
+    ui.add_space(12.0);
 }
 
-fn intro(state: &mut AppState, ui: &mut egui::Ui) {
-    heading(ui, "Clean. Fast. Yours.", "What you get on day one.");
+fn intro(ui: &mut egui::Ui) {
+    heading(
+        ui,
+        "Welcome to MONORYX",
+        "Set up your account and game defaults.",
+    );
     for (title, detail) in INTRO_FEATURES {
         ui.vertical(|ui| {
             ui.label(
@@ -379,16 +386,6 @@ fn intro(state: &mut AppState, ui: &mut egui::Ui) {
         });
         ui.add_space(10.0);
     }
-    ui.add_space(6.0);
-
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let next =
-            crate::ui::components::button(ui, "Continue", crate::ui::components::Tone::Primary)
-                .on_hover_text("Press Enter to continue");
-        if next.clicked() {
-            state.onboarding_step = 1;
-        }
-    });
 }
 
 fn username(state: &mut AppState, ui: &mut egui::Ui) {
@@ -448,18 +445,7 @@ fn microsoft_flow(state: &mut AppState, ui: &mut egui::Ui) {
             return;
         }
         ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let (back, next) =
-                button_row(ui, "Back", "Continue", crate::ui::components::Tone::Primary);
-            if back.clicked() {
-                state.cancel_microsoft_login();
-                state.onboarding_step = 0;
-            }
-            if next.clicked() {
-                state.config.use_microsoft_auth = true;
-                state.onboarding_step = 2;
-            }
-        });
+
         return;
     }
 
@@ -562,27 +548,31 @@ fn microsoft_flow(state: &mut AppState, ui: &mut egui::Ui) {
     }
 
     ui.add_space(18.0);
-    ui.horizontal(|ui| {
-        let (back, next) = button_row(ui, "Back", "Continue", crate::ui::components::Tone::Primary);
-        if back.clicked() {
-            state.cancel_microsoft_login();
-            state.onboarding_step = 0;
+}
+
+fn onboarding_content_key(state: &AppState, step: usize) -> u64 {
+    let mut key = (step as u64) << 8;
+    if state.onboarding_use_microsoft {
+        key |= 1 << 6;
+        if state.ms_login_loading {
+            key |= 1 << 5;
         }
-        if next.clicked() {
-            if state.config.microsoft_profile.is_some() {
-                state.config.use_microsoft_auth = true;
-                state.onboarding_step = 2;
-            } else {
-                state.onboarding_error =
-                    "Please complete Microsoft sign-in to continue.".to_string();
-            }
+        if state.ms_device_code.is_some() {
+            key |= 1 << 4;
         }
-    });
+        if state.ms_login_error.is_some() {
+            key |= 1 << 3;
+        }
+    }
+    if !state.onboarding_error.is_empty() {
+        key |= 1 << 2;
+    }
+    key
 }
 
 fn offline_flow(state: &mut AppState, ui: &mut egui::Ui) {
     crate::ui::components::field_label(ui, "Username");
-    let response = crate::ui::components::limited_text_edit(
+    crate::ui::components::limited_text_edit(
         ui,
         "onboarding-username",
         &mut state.onboarding_user,
@@ -597,33 +587,24 @@ fn offline_flow(state: &mut AppState, ui: &mut egui::Ui) {
         ui.label(RichText::new(&state.onboarding_error).color(DANGER));
     }
     ui.add_space(18.0);
-    ui.horizontal(|ui| {
-        let (back, next) = button_row(ui, "Back", "Continue", crate::ui::components::Tone::Primary);
-        if back.clicked() {
-            state.cancel_microsoft_login();
-            state.onboarding_step = 0;
-        }
-        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if next.clicked() || enter {
-            match crate::account::offline::OfflineProfile::new(state.onboarding_user.trim()) {
-                Ok(profile) => {
-                    state.config.profile = Some(profile);
-                    state.config.use_microsoft_auth = false;
-                    state.onboarding_error.clear();
-                    state.onboarding_step = 2;
-                }
-                Err(error) => state.onboarding_error = error.user_message(),
-            }
-        }
-    });
 }
 
 pub fn complete_onboarding(state: &mut AppState, ctx: &egui::Context) -> bool {
     if !state.onboarding_mem_auto {
         match state.onboarding_mem_max.trim().parse::<u64>() {
-            Ok(value) if value >= 512 => state.config.memory.max_mb = value,
+            Ok(value) if value >= 512 => {
+                if let Err(error) = crate::utils::system::validate_memory(
+                    state.config.memory.min_mb.min(value),
+                    value,
+                ) {
+                    state.onboarding_error = error;
+                    return false;
+                }
+                state.config.memory.min_mb = state.config.memory.min_mb.min(value);
+                state.config.memory.max_mb = value;
+            }
             _ => {
-                state.onboarding_error = "Max memory must be a number of at least 512.".to_string();
+                state.onboarding_error = "Choose at least 0.5 GB of game memory.".to_string();
                 return false;
             }
         }
@@ -668,29 +649,34 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
     if state.onboarding_mem_auto {
         ui.label(
             RichText::new(format!(
-                "{} MB recommended for this system",
-                crate::utils::system::default_max_memory_mb()
+                "{:.1} GB recommended for this system",
+                crate::utils::system::default_max_memory_mb() as f64 / 1024.0
             ))
             .size(type_scale::CAPTION)
             .color(Color32::from_rgb(182, 189, 202)),
         );
     } else {
         ui.add_space(4.0);
-        crate::ui::components::field_label(ui, "Max memory (MB)");
-        crate::ui::components::limited_text_edit(
-            ui,
-            "onboarding-mem-max",
-            &mut state.onboarding_mem_max,
-            7,
-            "3072",
-        );
+        crate::ui::components::field_label(ui, "Game memory (GB)");
+        let mut memory = state.onboarding_mem_max.parse::<u64>().unwrap_or(3072) as f64 / 1024.0;
+        if ui
+            .add(
+                egui::DragValue::new(&mut memory)
+                    .range(0.5..=64.0)
+                    .speed(0.25)
+                    .suffix(" GB"),
+            )
+            .changed()
+        {
+            state.onboarding_mem_max = ((memory * 1024.0).round() as u64).to_string();
+        }
     }
 
     ui.add_space(16.0);
 
     ui.label(RichText::new("Java runtime").strong().color(TEXT));
     ui.label(
-        RichText::new("Automatic — Temurin")
+        RichText::new("Automatic (Temurin)")
             .size(type_scale::CAPTION)
             .color(Color32::from_rgb(182, 189, 202)),
     );
@@ -713,7 +699,7 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
             });
     });
     ui.label(
-        RichText::new("Windows only. Prefers the dedicated GPU.")
+        RichText::new("Windows only. System default lets Windows choose the GPU.")
             .size(type_scale::CAPTION)
             .color(Color32::from_rgb(182, 189, 202)),
     );
@@ -722,20 +708,60 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.label(RichText::new(&state.onboarding_error).color(DANGER));
     }
+}
 
-    ui.add_space(20.0);
+fn onboarding_footer(state: &mut AppState, ui: &mut egui::Ui, step: usize) {
+    if step == 0 {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::ui::components::primary_button(ui, "Continue").clicked() {
+                state.onboarding_step = 1;
+            }
+        });
+        return;
+    }
     ui.horizontal(|ui| {
         let (back, next) = button_row(
             ui,
             "Back",
-            "Open MONORYX",
+            if step == 2 {
+                "Open MONORYX"
+            } else {
+                "Continue"
+            },
             crate::ui::components::Tone::Primary,
         );
         if back.clicked() {
-            state.onboarding_step = 1;
+            state.cancel_microsoft_login();
+            state.onboarding_step = (step - 1) as u32;
         }
         if next.clicked() {
-            let _ = complete_onboarding(state, ui.ctx());
+            match step {
+                0 => state.onboarding_step = 1,
+                1 if state.onboarding_use_microsoft => {
+                    if state.config.microsoft_profile.is_some() {
+                        state.config.use_microsoft_auth = true;
+                        state.onboarding_step = 2;
+                    } else {
+                        state.onboarding_error =
+                            "Finish signing in, or choose Play Offline.".into();
+                    }
+                }
+                1 => {
+                    match crate::account::offline::OfflineProfile::new(state.onboarding_user.trim())
+                    {
+                        Ok(profile) => {
+                            state.config.profile = Some(profile);
+                            state.config.use_microsoft_auth = false;
+                            state.onboarding_error.clear();
+                            state.onboarding_step = 2;
+                        }
+                        Err(error) => state.onboarding_error = error.user_message(),
+                    }
+                }
+                _ => {
+                    let _ = complete_onboarding(state, ui.ctx());
+                }
+            }
         }
     });
 }
@@ -902,7 +928,7 @@ mod tests {
         assert_eq!(h.click("Continue"), 1);
         assert_eq!(
             h.state.onboarding_error,
-            "Please complete Microsoft sign-in to continue."
+            "Finish signing in, or choose Play Offline."
         );
     }
 
@@ -929,9 +955,9 @@ mod tests {
         let mut h = Harness::new(2, "Steve");
         h.state.onboarding_mem_auto = false;
         h.state.onboarding_mem_max = "256".to_string();
-        h.click("Open MONORYX");
+        assert!(!complete_onboarding(&mut h.state, &h.ctx));
         assert!(!h.state.config.completed_onboarding);
-        assert!(h.state.onboarding_error.contains("at least 512"));
+        assert!(h.state.onboarding_error.contains("0.5 GB"));
 
         h.state.onboarding_mem_max = "4096".to_string();
         h.click("Open MONORYX");

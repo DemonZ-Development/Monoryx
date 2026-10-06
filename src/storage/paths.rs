@@ -55,6 +55,11 @@ impl MonoryxPaths {
     pub fn images_dir(&self) -> PathBuf {
         self.root.join("cache").join("images")
     }
+
+    #[must_use]
+    pub fn modpack_staging_dir(&self) -> PathBuf {
+        self.root.join("staging").join("modpacks")
+    }
     #[must_use]
     pub fn minecraft_dir(&self) -> PathBuf {
         self.root.join("minecraft")
@@ -102,6 +107,7 @@ impl MonoryxPaths {
             self.java_dir(),
             self.instances_dir(),
             self.logs_dir(),
+            self.modpack_staging_dir(),
         ] {
             std::fs::create_dir_all(d)?;
         }
