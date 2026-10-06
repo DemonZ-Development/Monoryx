@@ -693,7 +693,9 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
                 );
                 ctx.data_mut(|data| {
                     let mut textures = data
-                        .get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new("avatar_textures"))
+                        .get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new(
+                            "avatar_textures",
+                        ))
                         .unwrap_or_default();
                     textures.insert(uuid.to_string(), texture);
                     data.insert_persisted(egui::Id::new("avatar_textures"), textures);
@@ -767,7 +769,9 @@ async fn fetch_player_skin_head(clean_uuid: &str) -> Option<egui::ColorImage> {
         .get("value")?
         .as_str()?;
 
-    let decoded = base64::engine::general_purpose::STANDARD.decode(value).ok()?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .ok()?;
     let textures: Value = serde_json::from_slice(&decoded).ok()?;
     let skin_url = textures["textures"]["SKIN"]["url"].as_str()?;
 
@@ -799,10 +803,7 @@ async fn fetch_player_skin_head(clean_uuid: &str) -> Option<egui::ColorImage> {
     }
 
     let raw = face.into_raw();
-    Some(egui::ColorImage::from_rgba_unmultiplied(
-        [8, 8],
-        &raw,
-    ))
+    Some(egui::ColorImage::from_rgba_unmultiplied([8, 8], &raw))
 }
 
 pub fn draw_instance_thumbnail(
