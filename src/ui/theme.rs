@@ -238,6 +238,8 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
 
     ctx.set_visuals(visuals);
 
+    install_system_fallback_fonts(ctx);
+
     let mut style = (*ctx.style()).clone();
     style.animation_time = 0.12;
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
@@ -369,6 +371,119 @@ pub fn format_eta(downloaded: u64, total: u64, speed_bps: f64) -> String {
 #[must_use]
 pub fn format_percent(fraction: f32) -> String {
     format!("{:.0}%", (fraction.clamp(0.0, 1.0) * 100.0).round())
+}
+
+fn install_system_fallback_fonts(ctx: &egui::Context) {
+    static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if INSTALLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
+    let mut fonts = egui::FontDefinitions::default();
+    let mut loaded_fonts = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    let candidates = [
+        r"C:\Windows\Fonts\malgun.ttf",
+        r"C:\Windows\Fonts\malgunsl.ttf",
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\msgothic.ttc",
+        r"C:\Windows\Fonts\segoeui.ttf",
+    ];
+
+    #[cfg(target_os = "macos")]
+    let candidates = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    ];
+
+    #[cfg(target_os = "linux")]
+    let candidates = [
+        "Noto Sans CJK KR",
+        "Noto Sans CJK JP",
+        "Noto Sans CJK SC",
+        "Noto Sans",
+    ];
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    for path in candidates {
+        let path = std::path::Path::new(path);
+
+        if !path.exists() {
+            continue;
+        }
+
+        let Ok(data) = std::fs::read(path) else {
+            continue;
+        };
+
+        let name = format!("system_fallback_{}", loaded_fonts.len());
+
+        fonts
+            .font_data
+            .insert(name.clone(), egui::FontData::from_owned(data).into());
+
+        loaded_fonts.push(name);
+    }
+
+    #[cfg(target_os = "linux")]
+    for family in candidates {
+        let Ok(output) = std::process::Command::new("fc-match")
+            .args(["-f", "%{file}", family])
+            .output()
+        else {
+            continue;
+        };
+
+        if !output.status.success() {
+            continue;
+        }
+
+        let path = String::from_utf8_lossy(&output.stdout);
+
+        if path.is_empty() {
+            continue;
+        }
+
+        let path = std::path::Path::new(path.trim());
+
+        if !path.exists() {
+            continue;
+        }
+
+        let Ok(data) = std::fs::read(path) else {
+            continue;
+        };
+
+        let name = format!("system_fallback_{}", loaded_fonts.len());
+
+        fonts
+            .font_data
+            .insert(name.clone(), egui::FontData::from_owned(data).into());
+
+        loaded_fonts.push(name);
+    }
+
+    if loaded_fonts.is_empty() {
+        return;
+    }
+
+    for font_name in &loaded_fonts {
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .push(font_name.clone());
+
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap()
+            .push(font_name.clone());
+    }
+
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(test)]
