@@ -294,11 +294,10 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         let (avatar_rect, _) =
                             ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
-                        crate::ui::components::draw_cute_avatar(
+                        crate::ui::components::draw_avatar(
                             ui.painter(),
                             avatar_rect,
-                            &ms.username,
-                            true,
+                            &ms.uuid().to_string(),
                         );
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
