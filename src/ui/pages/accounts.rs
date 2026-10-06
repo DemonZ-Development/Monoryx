@@ -36,14 +36,15 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     crate::ui::components::draw_avatar(
                         ui.painter(),
                         avatar_rect,
+                        account.username(),
                         &account.uuid().to_string(),
-                    )
+                    );
                 } else {
                     crate::ui::components::draw_cute_avatar(
                         ui.painter(),
                         avatar_rect,
                         account.username(),
-                        !account.is_offline(),
+                        false,
                     );
                 }
 
@@ -297,7 +298,8 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         crate::ui::components::draw_avatar(
                             ui.painter(),
                             avatar_rect,
-                            &ms.uuid().to_string(),
+                            &ms.username,
+                            &ms.uuid.to_string(),
                         );
                         ui.add_space(8.0);
                         ui.vertical(|ui| {

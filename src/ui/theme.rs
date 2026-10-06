@@ -374,6 +374,11 @@ pub fn format_percent(fraction: f32) -> String {
 }
 
 fn install_system_fallback_fonts(ctx: &egui::Context) {
+    static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if INSTALLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
     let mut fonts = egui::FontDefinitions::default();
     let mut loaded_fonts = Vec::new();
 
@@ -383,6 +388,7 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
         r"C:\Windows\Fonts\malgunsl.ttf",
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\msgothic.ttc",
+        r"C:\Windows\Fonts\segoeui.ttf",
     ];
 
     #[cfg(target_os = "macos")]

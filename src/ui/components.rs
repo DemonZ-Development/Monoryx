@@ -5,6 +5,7 @@ use base64::Engine;
 use egui::{Color32, CornerRadius, RichText, Stroke};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 pub fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.add_space(2.0);
@@ -676,14 +677,37 @@ pub fn draw_cute_avatar(
     }
 }
 
-pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, uuid: &str) {
+static AVATAR_DECODED: Mutex<Option<HashMap<String, egui::ColorImage>>> = Mutex::new(None);
+static AVATAR_PENDING: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+
+pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uuid: &str) {
     let ctx = painter.ctx();
+
+    if let Ok(mut lock) = AVATAR_DECODED.lock() {
+        if let Some(map) = lock.as_mut() {
+            if let Some(cimg) = map.remove(uuid) {
+                let texture = ctx.load_texture(
+                    format!("avatar_{uuid}"),
+                    cimg,
+                    egui::TextureOptions::NEAREST,
+                );
+                ctx.data_mut(|data| {
+                    let mut textures = data
+                        .get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new("avatar_textures"))
+                        .unwrap_or_default();
+                    textures.insert(uuid.to_string(), texture);
+                    data.insert_persisted(egui::Id::new("avatar_textures"), textures);
+                });
+            }
+        }
+    }
 
     let texture = ctx.data_mut(|data| {
         data.get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new("avatar_textures"))
+            .and_then(|textures| textures.get(uuid).cloned())
     });
 
-    if let Some(texture) = texture.as_ref().and_then(|textures| textures.get(uuid)) {
+    if let Some(texture) = texture {
         painter.image(
             texture.id(),
             rect,
@@ -693,100 +717,92 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, uuid: &str) {
         return;
     }
 
-    let Ok(response) = reqwest::blocking::get(format!(
-        "https://sessionserver.mojang.com/session/minecraft/profile/{uuid}"
-    )) else {
-        return;
-    };
+    draw_cute_avatar(painter, rect, username, true);
 
-    let Ok(profile) = response.json::<Value>() else {
-        return;
-    };
-
-    let Some(value) = profile["properties"]
-        .as_array()
-        .and_then(|properties| {
-            properties
-                .iter()
-                .find(|property| property["name"].as_str() == Some("textures"))
-        })
-        .and_then(|property| property["value"].as_str())
-    else {
-        return;
-    };
-
-    let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(value) else {
-        return;
-    };
-
-    let Ok(textures) = serde_json::from_slice::<Value>(&decoded) else {
-        return;
-    };
-
-    let Some(skin_url) = textures["textures"]["SKIN"]["url"].as_str() else {
-        return;
-    };
-
-    let Ok(response) = reqwest::blocking::get(skin_url) else {
-        return;
-    };
-
-    let Ok(bytes) = response.bytes() else {
-        return;
-    };
-
-    let Ok(skin) = image::load_from_memory(&bytes) else {
-        return;
-    };
-
-    let skin = skin.to_rgba8();
-
-    if skin.width() < 48 || skin.height() < 16 {
+    let clean_uuid = uuid.replace('-', "");
+    if clean_uuid.len() != 32 {
         return;
     }
 
-    let mut face = image::RgbaImage::new(8, 8);
+    let should_fetch = if let Ok(mut lock) = AVATAR_PENDING.lock() {
+        let set = lock.get_or_insert_with(std::collections::HashSet::new);
+        set.insert(uuid.to_string())
+    } else {
+        false
+    };
 
+    if should_fetch {
+        let ctx = ctx.clone();
+        let target_uuid = uuid.to_string();
+        tokio::spawn(async move {
+            let result = fetch_player_skin_head(&clean_uuid).await;
+            if let Some(cimg) = result {
+                if let Ok(mut lock) = AVATAR_DECODED.lock() {
+                    let map = lock.get_or_insert_with(HashMap::new);
+                    map.insert(target_uuid, cimg);
+                }
+                ctx.request_repaint();
+            }
+        });
+    }
+}
+
+async fn fetch_player_skin_head(clean_uuid: &str) -> Option<egui::ColorImage> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+        .ok()?;
+
+    let url = format!("https://sessionserver.mojang.com/session/minecraft/profile/{clean_uuid}");
+    let response = client.get(&url).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let profile: Value = response.json().await.ok()?;
+    let value = profile["properties"]
+        .as_array()?
+        .iter()
+        .find(|property| property["name"].as_str() == Some("textures"))?
+        .get("value")?
+        .as_str()?;
+
+    let decoded = base64::engine::general_purpose::STANDARD.decode(value).ok()?;
+    let textures: Value = serde_json::from_slice(&decoded).ok()?;
+    let skin_url = textures["textures"]["SKIN"]["url"].as_str()?;
+
+    let response = client.get(skin_url).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let bytes = response.bytes().await.ok()?;
+    let skin = image::load_from_memory(&bytes).ok()?.to_rgba8();
+
+    if skin.width() < 48 || skin.height() < 16 {
+        return None;
+    }
+
+    let mut face = image::RgbaImage::new(8, 8);
     for y in 0..8 {
         for x in 0..8 {
             face.put_pixel(x, y, *skin.get_pixel(8 + x, 8 + y));
         }
     }
-
     for y in 0..8 {
         for x in 0..8 {
             let pixel = skin.get_pixel(40 + x, 8 + y);
-
             if pixel.0[3] > 0 {
                 face.put_pixel(x, y, *pixel);
             }
         }
     }
 
-    let size = [face.width() as usize, face.height() as usize];
-
-    let texture = ctx.load_texture(
-        format!("avatar_{uuid}"),
-        egui::ColorImage::from_rgba_unmultiplied(size, &face),
-        egui::TextureOptions::NEAREST,
-    );
-
-    ctx.data_mut(|data| {
-        let mut textures = data
-            .get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new("avatar_textures"))
-            .unwrap_or_default();
-
-        textures.insert(uuid.to_string(), texture.clone());
-
-        data.insert_persisted(egui::Id::new("avatar_textures"), textures);
-    });
-
-    painter.image(
-        texture.id(),
-        rect,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        Color32::WHITE,
-    );
+    let raw = face.into_raw();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [8, 8],
+        &raw,
+    ))
 }
 
 pub fn draw_instance_thumbnail(
