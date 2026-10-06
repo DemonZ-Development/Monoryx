@@ -1,10 +1,10 @@
 use crate::ui::theme::{
     metrics, type_scale, BORDER, DANGER, ELEVATED2, MUTED, OK, TEXT, TEXT2, WARNING,
 };
-use egui::{Color32, CornerRadius, RichText, Stroke};
-use std::collections::HashMap;
 use base64::Engine;
+use egui::{Color32, CornerRadius, RichText, Stroke};
 use serde_json::Value;
+use std::collections::HashMap;
 
 pub fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.add_space(2.0);
@@ -680,9 +680,7 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, uuid: &str) {
     let ctx = painter.ctx();
 
     let texture = ctx.data_mut(|data| {
-        data.get_persisted::<HashMap<String, egui::TextureHandle>>(
-            egui::Id::new("avatar_textures"),
-        )
+        data.get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new("avatar_textures"))
     });
 
     if let Some(texture) = texture.as_ref().and_then(|textures| textures.get(uuid)) {
@@ -695,9 +693,9 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, uuid: &str) {
         return;
     }
 
-    let Ok(response) =
-        reqwest::blocking::get(format!("https://sessionserver.mojang.com/session/minecraft/profile/{uuid}"))
-    else {
+    let Ok(response) = reqwest::blocking::get(format!(
+        "https://sessionserver.mojang.com/session/minecraft/profile/{uuid}"
+    )) else {
         return;
     };
 
@@ -775,9 +773,7 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, uuid: &str) {
 
     ctx.data_mut(|data| {
         let mut textures = data
-            .get_persisted::<HashMap<String, egui::TextureHandle>>(
-                egui::Id::new("avatar_textures"),
-            )
+            .get_persisted::<HashMap<String, egui::TextureHandle>>(egui::Id::new("avatar_textures"))
             .unwrap_or_default();
 
         textures.insert(uuid.to_string(), texture.clone());

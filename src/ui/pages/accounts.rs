@@ -36,9 +36,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     crate::ui::components::draw_avatar(
                         ui.painter(),
                         avatar_rect,
-                        &account.uuid().to_string()
+                        &account.uuid().to_string(),
                     )
-                } else {    
+                } else {
                     crate::ui::components::draw_cute_avatar(
                         ui.painter(),
                         avatar_rect,
