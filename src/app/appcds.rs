@@ -51,14 +51,6 @@ pub fn content_stamp(game_dir: &std::path::Path) -> String {
     crate::utils::hash::sha1_bytes(parts.join("\n").as_bytes())
 }
 
-pub fn stored_classpath_stamp(
-    instances: &crate::instance::manager::InstanceManager,
-    id: &str,
-) -> Option<String> {
-    let stored = std::fs::read_to_string(stamp_path(instances, id)).ok()?;
-    stored.lines().nth(1).map(std::string::ToString::to_string)
-}
-
 #[must_use]
 pub fn classpath_stamp(cp_entries: &[std::path::PathBuf]) -> String {
     let joined = cp_entries
@@ -222,7 +214,7 @@ mod stamp_tests {
         let b = std::path::PathBuf::from("/libs/b.jar");
         assert_ne!(
             classpath_stamp(&[a.clone(), b.clone()]),
-            classpath_stamp(&[b, a.clone()])
+            classpath_stamp(&[b, a])
         );
     }
 

@@ -160,12 +160,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     });
     ui.add_space(8.0);
-    let search_placeholder =
-        if state.discover_source == crate::app::state::DiscoverSource::CurseForge {
-            "Search CurseForge for mods, modpacks, resource packs…"
-        } else {
-            "Search Modrinth for mods, modpacks, resource packs…"
-        };
+    let search_placeholder = discover_search_placeholder(state.discover_source);
     egui::Frame::new()
         .fill(crate::ui::theme::palette(ui.ctx()).elevated)
         .stroke(Stroke::new(
@@ -505,6 +500,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     .clicked()
                 {
                     state.search.offset = state.search.offset.saturating_sub(24);
+                    state.reset_discover_scroll = true;
                     state.run_search();
                 }
 
@@ -532,6 +528,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     .clicked()
                 {
                     state.search.offset += 24;
+                    state.reset_discover_scroll = true;
                     state.run_search();
                 }
             });
@@ -688,7 +685,14 @@ fn show_hit_summary(
                 install
             };
             if install.clicked() {
-                open_hit_details(state, hit);
+                state.global_status = format!("Installing {}...", hit.title);
+                crate::app::tasks::install_mod(
+                    state,
+                    hit.slug.clone(),
+                    hit.slug.clone(),
+                    hit.title.clone(),
+                    None,
+                );
             }
             if let Some(installed) = installed {
                 if crate::ui::components::danger_button(ui, "Remove").clicked() {
@@ -764,11 +768,26 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
         ui.label(RichText::new(&p.description).size(12.0).color(TEXT));
         ui.horizontal_wrapped(|ui| {
             if let Some(license) = &p.license {
-                badge(ui, &license.name);
+                let name = license.name.trim();
+                let id = license.id.trim();
+                let label = if !name.is_empty() {
+                    name
+                } else if !id.is_empty() {
+                    id
+                } else {
+                    ""
+                };
+                if !label.is_empty() {
+                    badge(ui, label);
+                }
             }
-            badge(ui, &p.project_type);
+            if !p.project_type.trim().is_empty() {
+                badge(ui, p.project_type.trim());
+            }
             for category in p.categories.iter().take(4) {
-                badge(ui, category);
+                if !category.trim().is_empty() {
+                    badge(ui, category.trim());
+                }
             }
         });
         if state.detail_versions_loading && state.search.project_type != "modpack" {
@@ -1008,7 +1027,14 @@ fn show_detail(state: &mut AppState, ui: &mut egui::Ui) {
                                 .sense(egui::Sense::click()),
                         )
                     } else {
-                        ui.add_sized([120.0, 76.0], egui::Button::new("View image"))
+                        let (rect, resp) =
+                            ui.allocate_exact_size(egui::vec2(120.0, 76.0), egui::Sense::click());
+                        ui.painter().rect_filled(
+                            rect,
+                            6,
+                            crate::ui::theme::palette(ui.ctx()).elevated2,
+                        );
+                        resp
                     };
                     if response.clicked() {
                         state.open_project_image(&image.url);
@@ -1067,5 +1093,32 @@ fn show_thumb(state: &mut AppState, ui: &mut egui::Ui, url: &str, size: f32) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
         ui.painter()
             .rect_filled(rect, 8, crate::ui::theme::palette(ui.ctx()).elevated2);
+    }
+}
+
+pub(crate) fn discover_search_placeholder(
+    source: crate::app::state::DiscoverSource,
+) -> &'static str {
+    match source {
+        crate::app::state::DiscoverSource::CurseForge => "Search CurseForge…",
+        crate::app::state::DiscoverSource::Modrinth => "Search Modrinth…",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::DiscoverSource;
+
+    #[test]
+    fn discover_placeholder_adapts_to_selected_source() {
+        assert_eq!(
+            discover_search_placeholder(DiscoverSource::Modrinth),
+            "Search Modrinth…"
+        );
+        assert_eq!(
+            discover_search_placeholder(DiscoverSource::CurseForge),
+            "Search CurseForge…"
+        );
     }
 }

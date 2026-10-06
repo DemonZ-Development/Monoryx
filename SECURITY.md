@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-MONORYX is pre-1.0. Security fixes are applied to the latest `main` and the latest release.
+Security fixes are applied to the latest `main` and the latest release.
 
 | Version | Supported |
 | ------- | --------- |
@@ -29,6 +29,6 @@ You will receive an acknowledgment. Fixes are prioritized by severity, especiall
 
 ## Scope Notes
 
-- MONORYX supports offline profiles only. Reports claiming offline mode "bypasses" Microsoft authentication are out of scope: offline mode never claims to grant access to authenticated services.
+- MONORYX supports Microsoft sign-in and offline profiles. Authentication, token handling, and credential storage are in scope. Offline profiles do not grant access to authenticated services.
 - Minecraft game files are fetched from official Mojang sources. Do not report the existence of offline mode itself as a vulnerability.
 - Dependencies are pinned via `Cargo.lock`. Please include `cargo audit` or `cargo deny` output when reporting supply-chain concerns.

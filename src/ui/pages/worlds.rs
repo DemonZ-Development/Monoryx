@@ -93,7 +93,7 @@ fn empty_panel(ui: &mut egui::Ui, backup: bool, title: &str, detail: &str) {
                 r,
                 5,
                 p.elevated2,
-                Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.4)),
+                Stroke::new(1.0_f32, p.border),
                 egui::StrokeKind::Inside,
             );
         }
@@ -109,7 +109,7 @@ fn empty_panel(ui: &mut egui::Ui, backup: bool, title: &str, detail: &str) {
             icon,
             5,
             p.elevated2,
-            Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.4)),
+            Stroke::new(1.0_f32, p.border),
             egui::StrokeKind::Inside,
         );
         let center = icon.center();
@@ -319,7 +319,7 @@ fn world_row(
             } else {
                 p.elevated
             },
-            Stroke::new(1.0_f32, if selected { p.accent } else { p.border }),
+            Stroke::new(1.0_f32, p.border),
             egui::StrokeKind::Inside,
         );
         let image_rect = egui::Rect::from_min_size(

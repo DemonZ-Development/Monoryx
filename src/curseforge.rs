@@ -258,6 +258,14 @@ impl CurseForgeClient {
         !self.api_key.is_empty()
     }
 
+    pub(crate) fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    pub(crate) fn server_url(&self) -> &str {
+        &self.server_url
+    }
+
     #[must_use]
     pub fn effective_url(&self, path_and_query: &str) -> String {
         if self.server_url != DEFAULT_SERVICE_URL {
@@ -770,7 +778,26 @@ pub fn to_project_version(file: &CfFile) -> crate::modrinth::models::ProjectVers
             size: file.file_length,
             file_type: None,
         }],
-        dependencies: Vec::new(),
+        dependencies: file
+            .dependencies
+            .iter()
+            .filter_map(|dep| {
+                use crate::modrinth::models::{DependencyType, VersionDependency};
+                let dependency_type = match dep.relation_type {
+                    Some(1 | 6) => DependencyType::Embedded,
+                    Some(2) => DependencyType::Optional,
+                    Some(3) => DependencyType::Required,
+                    Some(5) => DependencyType::Incompatible,
+                    _ => return None,
+                };
+                Some(VersionDependency {
+                    project_id: Some(slug_for(dep.mod_id)),
+                    version_id: None,
+                    file_name: None,
+                    dependency_type,
+                })
+            })
+            .collect(),
         game_versions: effective_versions,
         loaders,
     }
@@ -792,6 +819,33 @@ fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dependencies_keep_provider_and_relation_type() {
+        use crate::modrinth::models::DependencyType;
+        let mut input = file(vec![]);
+        input.dependencies = [1, 2, 3, 4, 5, 6]
+            .into_iter()
+            .map(|relation| FileDependency {
+                mod_id: 42,
+                relation_type: Some(relation),
+            })
+            .collect();
+        let version = to_project_version(&input);
+        assert_eq!(version.dependencies.len(), 5);
+        assert!(version
+            .dependencies
+            .iter()
+            .all(|dep| dep.project_id.as_deref() == Some("curseforge-42")));
+        assert!(version
+            .dependencies
+            .iter()
+            .any(|dep| dep.dependency_type == DependencyType::Required));
+        assert!(version
+            .dependencies
+            .iter()
+            .any(|dep| dep.dependency_type == DependencyType::Incompatible));
+    }
 
     fn file(hashes: Vec<Hash>) -> CfFile {
         CfFile {

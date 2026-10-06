@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const APPLICATION_ID: &str = "1553781209744674916";
-const LAUNCHER_URL: &str = "https://github.com/DemonZ-Development/Monoryx";
+const LAUNCHER_URL: &str = crate::utils::links::PROJECT_URL;
 const DEVELOPER_URL: &str = "https://demonz.org/";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

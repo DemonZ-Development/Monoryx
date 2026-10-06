@@ -20,11 +20,6 @@ impl OfflineProfile {
             created_at: chrono::Utc::now().to_rfc3339(),
         })
     }
-
-    #[must_use]
-    pub fn uuid_undashed(&self) -> String {
-        self.uuid.as_simple().to_string()
-    }
 }
 
 pub fn offline_uuid(username: &str) -> uuid::Uuid {

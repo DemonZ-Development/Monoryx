@@ -22,13 +22,13 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.4.0" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.0" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.4.0" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.0" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
           Copy-Item target\release\monoryx-updater.exe dist\
@@ -53,14 +53,14 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
       - name: Build release binary
         run: cargo build --release
       - name: Package Linux assets
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.4.0"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.5.0"; fi
           mkdir -p dist/package
           cp target/release/monoryx dist/package/
           chmod +x dist/package/monoryx
@@ -99,7 +99,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.4.0"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.5.0"; fi
           chmod +x installer/macos/package-macos.sh
           installer/macos/package-macos.sh "$VERSION" target/universal dist
           mkdir -p dist/arch
@@ -136,7 +136,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.4.0"; fi
+          if [ -z "$TAG" ]; then TAG="v1.5.0"; fi
           awk -v version="${TAG#v}" '
             $0 == "# MONORYX " version { keep=1 }
             keep && /^# MONORYX / && $0 != "# MONORYX " version { exit }

@@ -95,9 +95,8 @@ impl InstanceManager {
     }
 
     pub fn duplicate(&self, id: &str, new_name: String) -> Result<InstanceConfig> {
-        let src = self.get(id)?;
+        let mut copy = self.get(id)?;
         crate::utils::validation::validate_instance_name(&new_name)?;
-        let mut copy = src.clone();
         copy.id = uuid::Uuid::new_v4().to_string();
         copy.name = new_name.trim().to_string();
         copy.created_at = chrono::Utc::now().to_rfc3339();
@@ -132,6 +131,12 @@ impl InstanceManager {
         let mut cfg = self.get(id)?;
         cfg.last_played_at = Some(chrono::Utc::now().to_rfc3339());
         cfg.total_plays += 1;
+        self.save(&cfg)
+    }
+
+    pub fn add_play_time(&self, id: &str, secs: u64) -> Result<()> {
+        let mut cfg = self.get(id)?;
+        cfg.play_time_secs = cfg.play_time_secs.saturating_add(secs);
         self.save(&cfg)
     }
 

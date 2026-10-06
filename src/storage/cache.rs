@@ -60,17 +60,8 @@ impl DiskCache {
         crate::utils::fs::atomic_write(&p, bytes)
     }
 
-    pub fn last_modified(&self, key: &str) -> Option<SystemTime> {
-        std::fs::metadata(self.path_for(key)).ok()?.modified().ok()
-    }
-
     pub fn path(&self, key: &str) -> PathBuf {
         self.path_for(key)
-    }
-
-    #[must_use]
-    pub fn is_fresh(&self, key: &str, ttl: Duration) -> bool {
-        self.get_with_ttl(key, ttl).is_some()
     }
 
     pub fn clear(&self) -> Result<()> {

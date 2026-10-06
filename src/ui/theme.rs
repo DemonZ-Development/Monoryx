@@ -5,9 +5,7 @@ pub mod metrics {
 
     pub const BUTTON_H: f32 = 36.0;
     pub const BUTTON_W: f32 = 100.0;
-    pub const SIDEBAR_ITEM_H: f32 = 34.0;
     pub const WIZARD_CARD_W: f32 = 460.0;
-    pub const ONBOARDING_WINDOW: [f32; 2] = [880.0, 660.0];
     pub const SIDEBAR_MIN: f32 = 200.0;
     pub const SIDEBAR_MAX: f32 = 236.0;
 
@@ -55,11 +53,6 @@ pub fn heading(text: impl Into<String>) -> RichText {
 #[must_use]
 pub fn body(text: impl Into<String>) -> RichText {
     RichText::new(text).size(type_scale::BODY).color(TEXT)
-}
-
-#[must_use]
-pub fn body_secondary(text: impl Into<String>) -> RichText {
-    RichText::new(text).size(type_scale::BODY).color(TEXT2)
 }
 
 #[must_use]
@@ -124,6 +117,16 @@ pub fn palette_for(theme: ThemeKind) -> Palette {
             accent_hover: Color32::from_rgb(255, 210, 231),
             accent_text: Color32::from_rgb(47, 22, 39),
         },
+        ThemeKind::Halloween => Palette {
+            bg: Color32::from_rgb(12, 13, 17),
+            elevated: Color32::from_rgb(19, 21, 28),
+            elevated2: Color32::from_rgb(27, 29, 39),
+            border: Color32::from_rgb(42, 38, 48),
+            hover: Color32::from_rgb(38, 36, 52),
+            accent: Color32::from_rgb(255, 120, 20),
+            accent_hover: Color32::from_rgb(255, 148, 48),
+            accent_text: Color32::from_rgb(18, 12, 10),
+        },
         ThemeKind::SoftBrown => Palette {
             bg: Color32::from_rgb(29, 23, 19),
             elevated: Color32::from_rgb(43, 33, 27),
@@ -137,6 +140,21 @@ pub fn palette_for(theme: ThemeKind) -> Palette {
     }
 }
 
+pub fn format_playtime(secs: u64) -> String {
+    if secs == 0 {
+        return "0m".to_string();
+    }
+    let mins = (secs / 60) % 60;
+    let hours = secs / 3600;
+    if hours == 0 {
+        format!("{mins}m")
+    } else if mins == 0 {
+        format!("{hours}h")
+    } else {
+        format!("{hours}h {mins}m")
+    }
+}
+
 pub fn palette(ctx: &egui::Context) -> Palette {
     palette_for(current_theme(ctx))
 }
@@ -146,43 +164,37 @@ pub fn current_theme(ctx: &egui::Context) -> ThemeKind {
         .unwrap_or_default()
 }
 
-pub const BG: Color32 = Color32::from_rgb(11, 12, 14);
-pub const ELEVATED: Color32 = Color32::from_rgb(18, 19, 22);
-pub const ELEVATED2: Color32 = Color32::from_rgb(32, 34, 40);
-pub const BORDER: Color32 = Color32::from_rgb(53, 56, 65);
-pub const BORDER_ACCENT: Color32 = Color32::from_rgb(60, 63, 72);
-pub const HOVER: Color32 = Color32::from_rgb(44, 47, 55);
+pub const BG: Color32 = Color32::from_rgb(13, 14, 16);
+pub const ELEVATED: Color32 = Color32::from_rgb(20, 22, 26);
+pub const ELEVATED2: Color32 = Color32::from_rgb(28, 31, 38);
+pub const BORDER: Color32 = Color32::from_rgb(38, 41, 50);
+pub const HOVER: Color32 = Color32::from_rgb(36, 40, 49);
 
-pub const ACCENT: Color32 = Color32::from_rgb(255, 255, 255);
-pub const ACCENT_HOVER: Color32 = Color32::from_rgb(238, 238, 242);
-pub const ACCENT_MUTED: Color32 = Color32::from_rgb(45, 47, 54);
+pub const ACCENT: Color32 = Color32::from_rgb(238, 240, 244);
+pub const ACCENT_HOVER: Color32 = Color32::from_rgb(252, 253, 255);
 
 pub const ECO_MODE: Color32 = Color32::from_rgb(205, 210, 218);
 pub const ECO_MODE_HOVER: Color32 = Color32::from_rgb(235, 238, 245);
 pub const ECO_MODE_BG: Color32 = Color32::from_rgb(23, 24, 29);
 
-pub const BOOST: Color32 = ECO_MODE;
-pub const BOOST_HOVER: Color32 = ECO_MODE_HOVER;
-pub const BOOST_BG: Color32 = ECO_MODE_BG;
+pub const TEXT: Color32 = Color32::from_rgb(243, 244, 247);
 
-pub const TEXT: Color32 = Color32::from_rgb(245, 245, 247);
+pub const TEXT2: Color32 = Color32::from_rgb(156, 163, 175);
 
-pub const TEXT2: Color32 = Color32::from_rgb(170, 176, 188);
+pub const MUTED: Color32 = Color32::from_rgb(108, 115, 128);
 
-pub const MUTED: Color32 = Color32::from_rgb(122, 129, 144);
-
-pub const TEXT_DISABLED: Color32 = Color32::from_rgb(96, 102, 115);
+pub const TEXT_DISABLED: Color32 = Color32::from_rgb(75, 80, 92);
 
 pub const SELECTED: Color32 = ACCENT;
-pub const SELECTED_FG: Color32 = Color32::from_rgb(0, 0, 0);
+pub const SELECTED_FG: Color32 = Color32::from_rgb(15, 16, 20);
 
-pub const DANGER: Color32 = Color32::from_rgb(224, 90, 90);
-pub const OK: Color32 = Color32::from_rgb(175, 180, 190);
-pub const WARNING: Color32 = Color32::from_rgb(225, 175, 70);
-pub const INFO: Color32 = Color32::from_rgb(205, 210, 218);
+pub const DANGER: Color32 = Color32::from_rgb(235, 87, 87);
+pub const OK: Color32 = Color32::from_rgb(160, 168, 180);
+pub const WARNING: Color32 = Color32::from_rgb(234, 179, 8);
+pub const INFO: Color32 = Color32::from_rgb(195, 202, 214);
 
 pub fn apply_theme(ctx: &egui::Context) {
-    apply_selected_theme(ctx, ThemeKind::Monochrome);
+    apply_selected_theme(ctx, ThemeKind::Halloween);
 }
 
 pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
@@ -206,16 +218,15 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
 
     visuals.widgets.hovered.bg_fill = p.hover;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
-    visuals.widgets.hovered.bg_stroke =
-        Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.35));
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.border);
 
-    visuals.widgets.active.bg_fill = p.hover.lerp_to_gamma(p.accent, 0.12);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, TEXT);
+    visuals.widgets.active.bg_fill = p.hover.lerp_to_gamma(p.accent, 0.08);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
 
-    visuals.widgets.active.bg_stroke = Stroke::new(1.5_f32, p.accent);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, p.border);
 
-    visuals.selection.bg_fill = p.elevated2.lerp_to_gamma(p.accent, 0.18);
-    visuals.selection.stroke = Stroke::new(1.0_f32, p.accent);
+    visuals.selection.bg_fill = p.elevated2.lerp_to_gamma(p.accent, 0.22);
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::WHITE);
 
     visuals.widgets.inactive.weak_bg_fill = p.elevated2;
     visuals.widgets.hovered.weak_bg_fill = p.hover;
@@ -225,16 +236,18 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
 
     visuals.widgets.open.bg_fill = p.elevated2;
     visuals.widgets.open.weak_bg_fill = p.elevated2;
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, p.border);
 
+    let control_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
     visuals.window_stroke = Stroke::new(1.0_f32, p.border);
     visuals.window_corner_radius = CornerRadius::same(12);
-    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
-    visuals.widgets.inactive.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
-    visuals.widgets.hovered.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
-    visuals.widgets.active.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
-    visuals.widgets.open.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
+    visuals.menu_corner_radius = CornerRadius::same(8);
+    visuals.widgets.noninteractive.corner_radius = control_radius;
+    visuals.widgets.inactive.corner_radius = control_radius;
+    visuals.widgets.hovered.corner_radius = control_radius;
+    visuals.widgets.active.corner_radius = control_radius;
+    visuals.widgets.open.corner_radius = control_radius;
 
     ctx.set_visuals(visuals);
 
@@ -577,5 +590,47 @@ mod tests {
                 },
             );
         }
+    }
+
+    #[test]
+    fn format_playtime_scales() {
+        assert_eq!(format_playtime(0), "0m");
+        assert_eq!(format_playtime(45), "0m");
+        assert_eq!(format_playtime(60), "1m");
+        assert_eq!(format_playtime(3599), "59m");
+        assert_eq!(format_playtime(3600), "1h");
+        assert_eq!(format_playtime(3660), "1h 1m");
+        assert_eq!(format_playtime(48 * 3600 + 12 * 60), "48h 12m");
+    }
+
+    #[test]
+    fn halloween_palette_accent_distinct() {
+        let p = palette_for(ThemeKind::Halloween);
+        assert_eq!(p.accent, Color32::from_rgb(255, 120, 20));
+        assert!(p.accent.r() > p.bg.r());
+    }
+
+    #[test]
+    fn selection_visuals_have_high_legibility() {
+        let ctx = egui::Context::default();
+        apply_theme(&ctx);
+        let visuals = ctx.style().visuals.clone();
+        assert_eq!(visuals.selection.stroke.color, Color32::WHITE);
+        assert_eq!(visuals.widgets.hovered.fg_stroke.color, Color32::WHITE);
+        assert_eq!(visuals.widgets.active.fg_stroke.color, Color32::WHITE);
+        assert_eq!(visuals.widgets.open.fg_stroke.color, Color32::WHITE);
+        assert_eq!(visuals.menu_corner_radius, CornerRadius::same(8));
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let dummy_resp = ui.allocate_response(egui::vec2(10.0, 10.0), egui::Sense::click());
+                let sel_vis = ui.style().interact_selectable(&dummy_resp, true);
+                assert_eq!(sel_vis.text_color(), Color32::WHITE);
+                assert_eq!(sel_vis.bg_fill, visuals.selection.bg_fill);
+
+                let unsel_vis = ui.style().interact_selectable(&dummy_resp, false);
+                assert_eq!(unsel_vis.text_color(), TEXT);
+            });
+        });
     }
 }

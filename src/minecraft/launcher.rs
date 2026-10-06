@@ -73,21 +73,6 @@ pub struct LaunchPlan {
     pub appcds_note: Option<String>,
 }
 
-#[must_use]
-pub fn describe_plan(plan: &LaunchPlan) -> String {
-    let mut parts = vec![plan.java_exe.display().to_string()];
-    let mut prev = String::new();
-    for a in &plan.args {
-        if prev == "--accessToken" {
-            parts.push("<redacted>".to_string());
-        } else {
-            parts.push(a.clone());
-        }
-        prev = a.clone();
-    }
-    parts.join(" ")
-}
-
 pub fn build_launch_plan(ctx: &LaunchContext) -> Result<LaunchPlan> {
     let sep = if cfg!(target_os = "windows") {
         ";"

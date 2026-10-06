@@ -42,6 +42,14 @@ fn review_home_worlds_crash_and_discord_layouts() {
         ),
         ("crash", Page::Home, 1280, 800, ThemeKind::Gloss, true),
         (
+            "home-halloween",
+            Page::Home,
+            1024,
+            576,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
             "discord",
             Page::Settings,
             1280,
@@ -50,63 +58,141 @@ fn review_home_worlds_crash_and_discord_layouts() {
             false,
         ),
     ] {
+        let is_halloween = label == "home-halloween";
         let ctx = egui::Context::default();
         let temp = tempfile::tempdir().unwrap();
         let paths = crate::storage::paths::MonoryxPaths::new(temp.path().into());
         let manager = crate::instance::InstanceManager::new(paths.clone());
-        let first = manager
-            .create(
-                "Survival with friends".into(),
-                "1.21.1".into(),
-                crate::instance::LoaderKind::Fabric,
-                "0.16.14".into(),
-            )
-            .unwrap();
-        manager
-            .create(
-                "Creative builds".into(),
-                "1.21.1".into(),
-                crate::instance::LoaderKind::Vanilla,
-                String::new(),
-            )
-            .unwrap();
+        let first = if is_halloween {
+            let mut inst = manager
+                .create(
+                    "THE BEST LAUNCHERRR".into(),
+                    "1.20.1".into(),
+                    crate::instance::LoaderKind::Fabric,
+                    "0.15.11".into(),
+                )
+                .unwrap();
+            inst.memory_max_mb = 4000;
+            inst.last_played_at = Some("Fri at 10:18 PM".into());
+            manager.save(&inst).unwrap();
+            inst
+        } else {
+            let inst = manager
+                .create(
+                    "Survival with friends".into(),
+                    "1.21.1".into(),
+                    crate::instance::LoaderKind::Fabric,
+                    "0.16.14".into(),
+                )
+                .unwrap();
+            manager
+                .create(
+                    "Creative builds".into(),
+                    "1.21.1".into(),
+                    crate::instance::LoaderKind::Vanilla,
+                    String::new(),
+                )
+                .unwrap();
+            inst
+        };
         let cc = eframe::CreationContext::_new_kittest(ctx.clone());
         let mut state = AppState::new_for_preview(&cc, paths);
         state.page = page;
-        state.config.profile =
-            Some(crate::account::offline::OfflineProfile::new("PreviewPlayer").unwrap());
+        state.config.profile = if is_halloween {
+            Some(crate::account::offline::OfflineProfile::new("Cyrusbye720").unwrap())
+        } else {
+            Some(crate::account::offline::OfflineProfile::new("PreviewPlayer").unwrap())
+        };
         state.config.theme = theme;
         state.selected_instance = Some(first.id.clone());
-        state.mod_counts.insert(first.id.clone(), 12);
-        let shot_path = temp.path().join("fixture.png");
-        let pixels = (0..480 * 270)
-            .map(|index| {
-                let y = index / 480;
-                if y < 130 {
-                    egui::Color32::from_rgb(96, 139, 170)
-                } else {
-                    egui::Color32::from_rgb(51, 90, 63)
-                }
-            })
-            .collect();
-        state.screenshot_thumbnails.insert(
-            shot_path.clone(),
-            ctx.load_texture(
-                "review-landscape",
-                egui::ColorImage::new([480, 270], pixels),
-                egui::TextureOptions::LINEAR,
-            ),
-        );
         state
-            .screenshots
-            .push(crate::app::screenshots::ScreenshotEntry {
-                path: shot_path,
-                instance_id: first.id.clone(),
-                instance_name: first.name.clone(),
-                modified: std::time::SystemTime::UNIX_EPOCH
-                    + std::time::Duration::from_secs(1_789_000_000),
-                bytes: 1024,
-            });
+            .mod_counts
+            .insert(first.id.clone(), if is_halloween { 4 } else { 12 });
+        if is_halloween {
+            let shot_files = [
+                ("shot_main.png", "target/ref_crops/shot_main.png"),
+                ("shot_1.png", "target/ref_crops/shot_instance.png"),
+                ("shot_2.png", "target/ref_crops/shot_2.png"),
+                ("shot_3.png", "target/ref_crops/shot_3.png"),
+                ("shot_4.png", "target/ref_crops/shot_4.png"),
+            ];
+            for (idx, (fname, crop_path_str)) in shot_files.iter().enumerate() {
+                let p = temp.path().join(fname);
+                let texture = if std::path::Path::new(crop_path_str).exists() {
+                    let img = image::open(crop_path_str).unwrap().to_rgba8();
+                    let (w, h) = img.dimensions();
+                    ctx.load_texture(
+                        format!("halloween-shot-{idx}"),
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [w as usize, h as usize],
+                            &img.into_raw(),
+                        ),
+                        egui::TextureOptions::LINEAR,
+                    )
+                } else {
+                    let pixels = vec![egui::Color32::from_rgb(180, 80, 20); 120 * 80];
+                    ctx.load_texture(
+                        format!("halloween-shot-{idx}"),
+                        egui::ColorImage::new([120, 80], pixels),
+                        egui::TextureOptions::LINEAR,
+                    )
+                };
+                state.screenshot_thumbnails.insert(p.clone(), texture);
+                state
+                    .screenshots
+                    .push(crate::app::screenshots::ScreenshotEntry {
+                        path: p,
+                        instance_id: first.id.clone(),
+                        instance_name: first.name.clone(),
+                        modified: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_790_261_100),
+                        bytes: 2048,
+                    });
+            }
+            for overflow_idx in 5..15 {
+                let p = temp.path().join(format!("overflow_{overflow_idx}.png"));
+                state
+                    .screenshots
+                    .push(crate::app::screenshots::ScreenshotEntry {
+                        path: p,
+                        instance_id: first.id.clone(),
+                        instance_name: first.name.clone(),
+                        modified: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_790_261_100),
+                        bytes: 1024,
+                    });
+            }
+        } else {
+            let shot_path = temp.path().join("fixture.png");
+            let pixels = (0..480 * 270)
+                .map(|index| {
+                    let y = index / 480;
+                    if y < 130 {
+                        egui::Color32::from_rgb(96, 139, 170)
+                    } else {
+                        egui::Color32::from_rgb(51, 90, 63)
+                    }
+                })
+                .collect();
+            state.screenshot_thumbnails.insert(
+                shot_path.clone(),
+                ctx.load_texture(
+                    "review-landscape",
+                    egui::ColorImage::new([480, 270], pixels),
+                    egui::TextureOptions::LINEAR,
+                ),
+            );
+            state
+                .screenshots
+                .push(crate::app::screenshots::ScreenshotEntry {
+                    path: shot_path,
+                    instance_id: first.id.clone(),
+                    instance_name: first.name.clone(),
+                    modified: std::time::SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(1_789_000_000),
+                    bytes: 1024,
+                });
+        }
         state.worlds.instance_id = Some(first.id.clone());
         state.worlds.selected_world = Some("Cozy home".into());
         let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_789_000_000);
@@ -208,13 +294,13 @@ fn raster(
     width: u32,
     height: u32,
 ) -> image::RgbaImage {
-    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([11, 12, 14, 255]));
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([13, 14, 16, 255]));
     for clipped in ctx.tessellate(output.shapes, 1.0) {
         let egui::epaint::Primitive::Mesh(mesh) = clipped.primitive else {
             continue;
         };
         let texture = &textures[&mesh.texture_id];
-        for indices in mesh.indices.chunks_exact(3) {
+        for indices in mesh.indices.as_chunks::<3>().0 {
             let v = [
                 mesh.vertices[indices[0] as usize],
                 mesh.vertices[indices[1] as usize],

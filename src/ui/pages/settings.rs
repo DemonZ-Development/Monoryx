@@ -1,7 +1,7 @@
 use crate::app::state::AppState;
 use crate::config::{CloseAction, GpuPreference, ThemeKind};
 use crate::ui::components::{
-    badge_accent, badge_boost, card_frame, field_label, page_header, tab_button,
+    badge, badge_accent, badge_boost, card_frame, field_label, page_header, tab_button,
 };
 use crate::ui::theme::{DANGER, INFO, MUTED, OK, TEXT, TEXT2, WARNING};
 use egui::{CornerRadius, RichText, Stroke};
@@ -65,7 +65,7 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
                     .strong()
                     .color(TEXT),
             );
-            badge_accent(ui, &format!("v{}", env!("CARGO_PKG_VERSION")));
+            badge(ui, &format!("v{}", env!("CARGO_PKG_VERSION")));
         });
 
         ui.label(
@@ -124,13 +124,14 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
         if let Some(update) = state.launcher_update.clone() {
             ui.add_space(8.0);
             if update.has_update {
+                let banner_corner = CornerRadius::same(8);
                 egui::Frame::new()
                     .fill(crate::ui::theme::palette(ui.ctx()).elevated2)
                     .stroke(Stroke::new(
                         1.0_f32,
                         crate::ui::theme::palette(ui.ctx()).border,
                     ))
-                    .corner_radius(CornerRadius::same(8))
+                    .corner_radius(banner_corner)
                     .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -199,7 +200,7 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
                                     let _ = open::that(_dl);
                                 }
                             }
-                            if crate::ui::components::secondary_button(ui, "View on GitHub")
+                            if crate::ui::components::secondary_button(ui, "Official Website")
                                 .clicked()
                             {
                                 let _ = open::that(&update.html_url);
@@ -528,10 +529,9 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
         if crate::ui::components::secondary_button(ui, "Replay Onboarding Tour").clicked() {
             state.replay_onboarding();
             crate::ui::pages::onboarding::reset_background(ctx);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                crate::ui::theme::metrics::ONBOARDING_WINDOW[0],
-                crate::ui::theme::metrics::ONBOARDING_WINDOW[1],
-            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            #[cfg(target_os = "windows")]
+            crate::utils::system::ensure_window_positioned(true, false);
         }
     });
 }
@@ -543,6 +543,7 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
         ui.label(RichText::new("Choose a launcher color palette.").color(TEXT2));
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
+            let btn_corner = CornerRadius::same(8);
             for theme in ThemeKind::all() {
                 let p = crate::ui::theme::palette_for(theme);
                 let selected = state.config.theme == theme;
@@ -553,6 +554,7 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
                             if selected { 2.0_f32 } else { 1.0_f32 },
                             p.accent,
                         ))
+                        .corner_radius(btn_corner)
                         .min_size(egui::vec2(120.0, 46.0));
                 if ui.add(button).clicked() {
                     state.config.theme = theme;
@@ -1106,6 +1108,55 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
             });
 
         ui.add_space(8.0);
+        card_frame(ui, |ui| {
+            ui.label(
+                RichText::new("Java & GC Performance Presets")
+                    .size(14.0)
+                    .strong()
+                    .color(TEXT),
+            );
+            ui.label(
+                RichText::new(
+                    "Choose an optimized garbage collection preset for smoother framerates and lower stutter.",
+                )
+                .size(11.5)
+                .color(TEXT2),
+            );
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                for preset in crate::config::JvmPreset::all() {
+                    let is_active = state.config.jvm_preset == preset;
+                    if crate::ui::components::pill_tab_button(ui, preset.label(), is_active)
+                        .clicked()
+                    {
+                        state.config.jvm_preset = preset;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(state.config.jvm_preset.hint())
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            if state.config.jvm_preset != crate::config::JvmPreset::None {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if crate::ui::components::secondary_button(
+                        ui,
+                        "Copy preset flags to default JVM args",
+                    )
+                    .clicked()
+                    {
+                        state.config.default_jvm_args = state.config.jvm_preset.flags().to_string();
+                        state.settings_jvm = state.config.default_jvm_args.clone();
+                        state.notify("Copied preset flags to default JVM args");
+                    }
+                });
+            }
+        });
+
+        ui.add_space(8.0);
         gpu_status(ui, ctx, state);
 
         ui.add_space(10.0);
@@ -1113,30 +1164,6 @@ fn runtime_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui
             save_settings(state, "Java & GPU settings saved".to_string());
         }
     });
-}
-
-pub(super) fn gpu_preference_selector(ui: &mut egui::Ui, preference: &mut GpuPreference) {
-    field_label(ui, "GPU preference");
-    ui.add_enabled_ui(cfg!(target_os = "windows"), |ui| {
-        egui::ComboBox::from_id_salt("gpu-preference")
-            .selected_text(preference.as_str())
-            .show_ui(ui, |ui| {
-                for value in [
-                    GpuPreference::System,
-                    GpuPreference::HighPerformance,
-                    GpuPreference::PowerSaving,
-                ] {
-                    ui.selectable_value(preference, value, value.as_str());
-                }
-            });
-    });
-    ui.label(
-        RichText::new(
-            "Windows only. Applies on launch to the selected Java executable. High Performance targets dedicated GPUs.",
-        )
-        .size(11.5)
-        .color(MUTED),
-    );
 }
 
 fn gpu_status(ui: &mut egui::Ui, ctx: &egui::Context, state: &mut AppState) {
@@ -1458,7 +1485,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let paths = MonoryxPaths::new(temp.path().into());
         let ctx = egui::Context::default();
-        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let cc = eframe::CreationContext::_new_kittest(ctx);
         let mut state = AppState::new_for_preview(&cc, paths);
         state.config.completed_onboarding = true;
         state.page = crate::app::events::Page::Settings;
@@ -1479,7 +1506,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let paths = MonoryxPaths::new(temp.path().into());
         let ctx = egui::Context::default();
-        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let cc = eframe::CreationContext::_new_kittest(ctx);
         let mut state = AppState::new_for_preview(&cc, paths);
 
         state.config.curseforge.api_key = "custom_key".to_string();

@@ -6,6 +6,7 @@ use egui::RichText;
 struct Command {
     label: String,
     hint: String,
+    slash: &'static str,
     group: &'static str,
     run: Box<dyn Fn(&mut AppState)>,
 }
@@ -20,21 +21,22 @@ fn act(f: impl Fn(&mut AppState) + 'static) -> Box<dyn Fn(&mut AppState)> {
 
 fn commands(state: &AppState) -> Vec<Command> {
     let mut list: Vec<Command> = [
-        (Page::Home, "Go to Home", "Ctrl+1"),
-        (Page::Instances, "Go to Instances", "Ctrl+2"),
-        (Page::Worlds, "Go to Worlds & Files", "Ctrl+3"),
-        (Page::Discover, "Go to Discover", "Ctrl+4"),
-        (Page::Library, "Go to Library", "Ctrl+5"),
-        (Page::Screenshots, "Go to Screenshots", "F2"),
-        (Page::Downloads, "Go to Downloads", "Ctrl+7"),
-        (Page::Accounts, "Go to Accounts", "Ctrl+8"),
-        (Page::Settings, "Go to Settings", "Ctrl+9"),
-        (Page::Logs, "Go to Logs", ""),
+        (Page::Home, "Go to Home", "Ctrl+1", "/home"),
+        (Page::Instances, "Go to Instances", "Ctrl+2", "/instances"),
+        (Page::Worlds, "Go to Worlds & Files", "Ctrl+3", "/worlds"),
+        (Page::Discover, "Go to Discover", "Ctrl+4", "/discover"),
+        (Page::Library, "Go to Library", "Ctrl+5", "/library"),
+        (Page::Screenshots, "Go to Screenshots", "F2", "/screenshots"),
+        (Page::Downloads, "Go to Downloads", "Ctrl+7", "/downloads"),
+        (Page::Accounts, "Go to Accounts", "Ctrl+8", "/accounts"),
+        (Page::Settings, "Go to Settings", "Ctrl+9", "/settings"),
+        (Page::Logs, "Go to Logs", "", "/logs"),
     ]
     .into_iter()
-    .map(|(page, label, hint)| Command {
+    .map(|(page, label, hint, slash)| Command {
         label: label.to_string(),
         hint: hint.to_string(),
+        slash,
         group: "Navigate",
         run: go(page),
     })
@@ -44,6 +46,7 @@ fn commands(state: &AppState) -> Vec<Command> {
     list.push(Command {
         label: "New instance".into(),
         hint: String::new(),
+        slash: "/new",
         group: "Actions",
         run: act(|state: &mut AppState| {
             crate::ui::pages::instances::open_new_dialog(state);
@@ -53,19 +56,48 @@ fn commands(state: &AppState) -> Vec<Command> {
     list.push(Command {
         label: "Open screenshot gallery".into(),
         hint: "F2".into(),
+        slash: "/gallery",
         group: "Actions",
         run: go(Page::Screenshots),
     });
     list.push(Command {
-        label: "Toggle Eco mode".into(),
-        hint: String::new(),
+        label: "Toggle Eco mode (Boost)".into(),
+        hint: "/boost".into(),
+        slash: "/boost",
         group: "Actions",
         run: act(|state: &mut AppState| state.toggle_boost()),
     });
+    list.push(Command {
+        label: "Boost mode: toggle".into(),
+        hint: "/boost".into(),
+        slash: "/boost",
+        group: "Actions",
+        run: act(|state: &mut AppState| state.toggle_boost()),
+    });
+    for theme in crate::config::ThemeKind::all() {
+        let (hint, slash): (&'static str, &'static str) = match theme {
+            crate::config::ThemeKind::Monochrome => ("", "/monochrome"),
+            crate::config::ThemeKind::Gloss => ("", "/gloss"),
+            crate::config::ThemeKind::Halloween => ("🎃", "/halloween"),
+            crate::config::ThemeKind::SoftPink => ("", "/softpink"),
+            crate::config::ThemeKind::SoftBrown => ("", "/softbrown"),
+        };
+        list.push(Command {
+            label: format!("Theme: {}", theme.label()),
+            hint: hint.to_string(),
+            slash,
+            group: "Themes",
+            run: act(move |state: &mut AppState| {
+                state.config.theme = theme;
+                state.save_config();
+            }),
+        });
+    }
     if has_instance {
         list.push(Command {
             label: "Repair game files".into(),
             hint: String::new(),
+            slash: "/repair",
             group: "Actions",
             run: act(|state: &mut AppState| {
                 if let Some(cfg) = state.selected() {
@@ -76,6 +108,7 @@ fn commands(state: &AppState) -> Vec<Command> {
         list.push(Command {
             label: "Edit selected instance".into(),
             hint: String::new(),
+            slash: "/edit",
             group: "Actions",
             run: act(|state: &mut AppState| {
                 state.edit_instance = state.selected();
@@ -84,6 +117,7 @@ fn commands(state: &AppState) -> Vec<Command> {
         list.push(Command {
             label: "Open game folder".into(),
             hint: String::new(),
+            slash: "/folder",
             group: "Actions",
             run: act(|state: &mut AppState| {
                 if let Some(cfg) = state.selected() {
@@ -98,6 +132,7 @@ fn commands(state: &AppState) -> Vec<Command> {
         list.push(Command {
             label: format!("Select instance: {}", cfg.name),
             hint: cfg.minecraft_version.clone(),
+            slash: "",
             group: "Instances",
             run: act(move |state: &mut AppState| {
                 state.selected_instance = Some(id.clone());
@@ -167,6 +202,45 @@ pub fn rank(query: &str, label: &str) -> Option<usize> {
     }
 }
 
+#[must_use]
+pub fn rank_command(query: &str, label: &str, slash: &str) -> Option<usize> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    if let Some(sub) = trimmed.strip_prefix('/') {
+        if sub.is_empty() {
+            return if !slash.is_empty() { Some(30) } else { None };
+        }
+        let lower_query = trimmed.to_ascii_lowercase();
+        if !slash.is_empty() {
+            let lower_slash = slash.to_ascii_lowercase();
+            if lower_slash == lower_query {
+                return Some(120);
+            }
+            if lower_slash.starts_with(&lower_query) {
+                return Some(
+                    90 + (10usize.saturating_sub(slash.len().saturating_sub(trimmed.len()))),
+                );
+            }
+        }
+        return rank(sub, label);
+    }
+
+    let mut score = rank(trimmed, label);
+    if !slash.is_empty() {
+        let slash_stem = slash.trim_start_matches('/');
+        if slash_stem
+            .to_ascii_lowercase()
+            .starts_with(&trimmed.to_ascii_lowercase())
+        {
+            let slash_score = 75;
+            score = Some(score.map_or(slash_score, |s| s.max(slash_score)));
+        }
+    }
+    score
+}
+
 pub fn handle_shortcuts(state: &mut AppState, ctx: &egui::Context) {
     if state.page == Page::Onboarding {
         return;
@@ -180,6 +254,10 @@ pub fn handle_shortcuts(state: &mut AppState, ctx: &egui::Context) {
         }
     }
     if !ctrl {
+        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Slash)) {
+            state.command_palette_open = true;
+            state.command_palette_query = "/".to_string();
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::F2)) {
             state.set_page(Page::Screenshots);
         }
@@ -237,7 +315,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context) {
             let score = if state.command_palette_query.trim().is_empty() {
                 Some(0)
             } else {
-                rank(&state.command_palette_query, &command.label)
+                rank_command(&state.command_palette_query, &command.label, command.slash)
             };
             score.map(|score| (score, command))
         })
@@ -327,12 +405,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context) {
     } else if submit {
         if let Some(command) = ranked.first() {
             (command.1.run)(state);
+            if state.config.theme != crate::ui::theme::current_theme(ctx) {
+                crate::ui::theme::apply_selected_theme(ctx, state.config.theme);
+            }
         }
         state.command_palette_open = false;
         state.command_palette_query.clear();
     } else if let Some(index) = chosen {
         if let Some(command) = ranked.get(index) {
             (command.1.run)(state);
+            if state.config.theme != crate::ui::theme::current_theme(ctx) {
+                crate::ui::theme::apply_selected_theme(ctx, state.config.theme);
+            }
         }
         state.command_palette_open = false;
         state.command_palette_query.clear();
@@ -378,5 +462,14 @@ mod tests {
     #[test]
     fn hints_and_labels_are_not_confused_for_matching() {
         assert!(rank("ctrl", "Go to Home").is_none());
+    }
+
+    #[test]
+    fn slash_boost_command_matches() {
+        assert!(rank_command("/boost", "Toggle Eco mode (Boost)", "/boost").is_some());
+        assert!(rank_command("/boost", "Boost mode: toggle", "/boost").is_some());
+        assert!(rank_command("boost", "Toggle Eco mode (Boost)", "/boost").is_some());
+        assert!(rank_command("/", "Toggle Eco mode (Boost)", "/boost").is_some());
+        assert!(rank_command("/halloween", "Theme: Halloween", "/halloween").is_some());
     }
 }

@@ -1,5 +1,46 @@
 use crate::error::{MonoryxError, Result};
+use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+
+pub fn path_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let mut ancestor = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    let mut suffix = Vec::new();
+    let mut key = loop {
+        if let Ok(canonical) = ancestor.canonicalize() {
+            break canonical;
+        }
+        let Some(name) = ancestor.file_name().map(|name| name.to_os_string()) else {
+            break ancestor;
+        };
+        suffix.push(name);
+        if !ancestor.pop() {
+            break ancestor;
+        }
+    };
+    for name in suffix.into_iter().rev() {
+        key.push(name);
+    }
+    #[cfg(windows)]
+    let key = PathBuf::from(key.to_string_lossy().to_lowercase());
+    let mut locks = LOCKS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
 
 pub fn ensure_dir(path: &Path) -> Result<()> {
     std::fs::create_dir_all(path)?;
@@ -7,13 +48,19 @@ pub fn ensure_dir(path: &Path) -> Result<()> {
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        ensure_dir(parent)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    ensure_dir(parent)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_all()) {
+        tracing::warn!("File was replaced, but its directory could not be synced: {error}");
     }
-    let tmp = path.with_extension("tmp-monoryx-part");
-    std::fs::write(&tmp, bytes)?;
-
-    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 

@@ -1,9 +1,9 @@
 use crate::content::{ContentKind, ContentStore};
-use crate::downloads::{DownloadJob, DownloadManager};
+use crate::downloads::DownloadManager;
 use crate::error::{MonoryxError, Result};
 use crate::instance::manager::InstanceManager;
 use crate::modrinth::api::ModrinthClient;
-use crate::modrinth::models::{is_compatible, pick_best_version, primary_file, ProjectVersion};
+use crate::modrinth::models::{is_compatible, pick_best_version, ProjectVersion};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -337,156 +337,46 @@ pub async fn update_project(
     minecraft_version: &str,
     loader: &str,
 ) -> Result<String> {
-    let versions = if crate::curseforge::is_curseforge_slug(&info.project_id) {
-        if let (Some(cf_id), Some(cf_client)) =
-            (crate::curseforge::id_from_slug(&info.project_id), cf)
-        {
-            cf_client
-                .files(cf_id, None, None)
-                .await?
-                .iter()
-                .map(crate::curseforge::to_project_version)
-                .collect()
-        } else {
-            Vec::new()
-        }
-    } else {
-        mr.project_versions(&info.project_id, None, None).await?
-    };
-    let ver = versions
-        .iter()
-        .find(|v| v.id == info.new_version_id)
-        .cloned()
-        .or_else(|| {
-            best_compatible_version(&versions, info.kind, minecraft_version, loader).cloned()
-        })
-        .ok_or_else(|| MonoryxError::Modrinth("update version vanished".to_string()))?;
-    let file = primary_file(&ver)
-        .ok_or_else(|| MonoryxError::Modrinth("update has no downloadable files".to_string()))?;
     let store = ContentStore::for_instance(&manager.instance_dir(instance_id));
     let previous = store
-        .load()
+        .load_result()?
         .entries
         .into_iter()
-        .find(|entry| entry.kind == info.kind && entry.file_name == info.file_name);
-    let dir = match info.kind {
-        ContentKind::Mod => manager.mods_dir(instance_id),
-        ContentKind::Resourcepack => manager.resourcepacks_dir(instance_id),
-        ContentKind::Shader => manager.shaderpacks_dir(instance_id),
-    };
-    std::fs::create_dir_all(&dir)?;
-    let dest = dir.join(crate::utils::fs::safe_file_name(&file.filename)?);
-    let mut job = DownloadJob::new(&file.filename, &file.url, dest.clone()).with_size(file.size);
-    if let Some(h) = file.sha512() {
-        job = job.with_sha512(h.to_string());
-    } else if let Some(h) = file.sha1() {
-        job = job.with_sha1(h.to_string());
-    }
-    dm.download(&job, None).await?;
-    let was_enabled = previous.as_ref().is_none_or(|entry| entry.enabled);
-    if !was_enabled {
-        let disabled = manager.disabled_dir(instance_id).join(info.kind.subdir());
-        std::fs::create_dir_all(&disabled)?;
-        let target = disabled.join(format!("{}.disabled", file.filename));
-        if target.exists() {
-            std::fs::remove_file(&target)?;
-        }
-        std::fs::rename(&dest, target)?;
-    }
-    if file.filename != info.file_name {
-        crate::utils::fs::safe_file_name(&info.file_name)?;
-        let old = dir.join(&info.file_name);
-        let old_disabled = manager
-            .disabled_dir(instance_id)
-            .join(info.kind.subdir())
-            .join(format!("{}.disabled", info.file_name));
-        let legacy_disabled = manager
-            .disabled_dir(instance_id)
-            .join(format!("{}.disabled", info.file_name));
-        for p in [&old, &old_disabled, &legacy_disabled] {
-            if p.exists() && crate::utils::fs::is_within_root(&manager.instance_dir(instance_id), p)
-            {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-    }
-    store.remove(info.kind, &info.file_name)?;
-    store.upsert(crate::content::InstalledEntry {
-        file_name: file.filename.clone(),
-        kind: info.kind,
-        project_id: Some(info.project_id.clone()),
+        .find(|entry| {
+            entry.kind == info.kind
+                && entry.file_name == info.file_name
+                && entry.project_id.as_deref() == Some(&info.project_id)
+        })
+        .ok_or_else(|| {
+            MonoryxError::Instance(
+                "Installed content changed since the update scan; check for updates again".into(),
+            )
+        })?;
+    let request = crate::modrinth::install::InstallRequest {
+        project_id: info.project_id.clone(),
         project_slug: previous
-            .as_ref()
-            .and_then(|entry| entry.project_slug.clone()),
-        project_title: Some(info.title.clone()),
-        version_id: Some(ver.id.clone()),
-        version_number: Some(ver.version_number.clone()),
-        file_hash_sha512: file.sha512().map(str::to_string),
-        file_hash_sha1: file.sha1().map(str::to_string),
-        size: file.size,
-        enabled: was_enabled,
-        installed_at: chrono::Utc::now().to_rfc3339(),
+            .project_slug
+            .unwrap_or_else(|| info.project_id.clone()),
+        project_title: info.title.clone(),
+        kind: info.kind,
+        minecraft_version: minecraft_version.to_string(),
         loader: loader.to_string(),
-        game_version: minecraft_version.to_string(),
-    })?;
-    Ok(file.filename.clone())
+        version_id: Some(info.new_version_id.clone()),
+        curseforge_api_key: cf.map(|client| client.api_key().to_string()),
+        curseforge_endpoint: cf.map(|client| client.server_url().to_string()),
+    };
+    let outcome =
+        crate::modrinth::install::install_project(dm, mr, manager, instance_id, request, None)
+            .await?;
+    for warning in outcome.warnings {
+        tracing::warn!("Content update: {warning}");
+    }
+    outcome
+        .installed_files
+        .last()
+        .cloned()
+        .ok_or_else(|| MonoryxError::Modrinth("Update installed no files".into()))
 }
-
-#[allow(clippy::too_many_arguments)]
-pub async fn update_all(
-    dm: &DownloadManager,
-    mr: &ModrinthClient,
-    cf: Option<&crate::curseforge::CurseForgeClient>,
-    manager: &InstanceManager,
-    instance_id: &str,
-    minecraft_version: &str,
-    loader: &str,
-    progress: Option<HashMap<String, String>>,
-) -> Result<Vec<String>> {
-    let updates = check_updates(mr, cf, manager, instance_id, minecraft_version, loader)
-        .await?
-        .updates;
-    let mut done = Vec::new();
-    let mut failed: Vec<(String, String)> = Vec::new();
-    for u in updates {
-        let _ = &progress;
-        match update_project(
-            dm,
-            mr,
-            cf,
-            manager,
-            instance_id,
-            &u,
-            minecraft_version,
-            loader,
-        )
-        .await
-        {
-            Ok(f) => done.push(f),
-            Err(e) => failed.push((u.title.clone(), e.to_string())),
-        }
-    }
-    if !failed.is_empty() && done.is_empty() {
-        let (title, reason) = &failed[0];
-        return Err(MonoryxError::Download(format!(
-            "could not update {title}: {reason}"
-        )));
-    }
-    if !failed.is_empty() {
-        tracing::warn!(
-            "{} of {} updates failed: {}",
-            failed.len(),
-            failed.len() + done.len(),
-            failed
-                .iter()
-                .map(|(t, r)| format!("{t} ({r})"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    Ok(done)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

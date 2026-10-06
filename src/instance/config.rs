@@ -167,11 +167,6 @@ impl InstanceConfig {
         }
         Ok(())
     }
-
-    #[must_use]
-    pub fn game_dir_name(&self) -> &'static str {
-        "game"
-    }
 }
 
 #[cfg(test)]

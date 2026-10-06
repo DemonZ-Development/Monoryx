@@ -1,13 +1,35 @@
 #[must_use]
 pub fn total_memory_mb() -> u64 {
-    let mut sys = sysinfo::System::new();
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+            return status.ullTotalPhys / 1024 / 1024;
+        }
+    }
+    let mut sys = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_memory(sysinfo::MemoryRefreshKind::everything()),
+    );
     sys.refresh_memory();
     sys.total_memory() / 1024 / 1024
 }
 
 #[must_use]
 pub fn available_memory_mb() -> u64 {
-    let mut sys = sysinfo::System::new();
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+            return status.ullAvailPhys / 1024 / 1024;
+        }
+    }
+    let mut sys = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_memory(sysinfo::MemoryRefreshKind::everything()),
+    );
     sys.refresh_memory();
     sys.available_memory() / 1024 / 1024
 }

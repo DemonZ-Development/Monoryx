@@ -18,17 +18,13 @@ pub fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.add_space(14.0);
 }
 
-pub fn section_header(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(title).size(19.0).strong().color(TEXT));
-}
-
 pub fn card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(metrics::CARD_RADIUS);
     let frame = egui::Frame::new()
         .fill(p.elevated)
         .stroke(Stroke::new(1.0_f32, p.border))
-        .corner_radius(CornerRadius::same(metrics::CARD_RADIUS))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::same(metrics::CARD_MARGIN))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -114,26 +110,20 @@ pub fn step_rail(ui: &mut egui::Ui, total: usize, active: usize) {
 pub fn wizard_frame(
     ui: &mut egui::Ui,
     step: usize,
-    panel_height: f32,
+    _panel_height: f32,
     add: impl FnOnce(&mut egui::Ui),
 ) {
     let p = crate::ui::theme::palette(ui.ctx());
 
     let cache_id = egui::Id::new(("wizard-height", step));
-    let known = ui
-        .ctx()
-        .data(|d| d.get_temp::<f32>(cache_id).unwrap_or(0.0));
 
-    let consumed = panel_height - ui.available_height();
-    let block = consumed + known;
-    if known > 0.0 && block < panel_height {
-        ui.add_space(((panel_height - block) / 2.0).max(0.0));
-    }
+    ui.add_space(14.0);
     ui.vertical_centered(|ui| {
+        let corner = CornerRadius::same(16);
         let frame = egui::Frame::new()
             .fill(p.elevated)
             .stroke(Stroke::new(1.0_f32, p.border))
-            .corner_radius(CornerRadius::same(16))
+            .corner_radius(corner)
             .inner_margin(egui::Margin::same(28))
             .show(ui, |ui| {
                 ui.set_width(metrics::WIZARD_CARD_W.min(ui.available_width()));
@@ -145,6 +135,9 @@ pub fn wizard_frame(
                     );
                 });
             });
+        if crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween {
+            draw_spiderweb(ui.painter(), frame.response.rect);
+        }
         let height = frame.response.rect.height();
         ui.ctx().data_mut(|d| d.insert_temp(cache_id, height));
     });
@@ -152,17 +145,19 @@ pub fn wizard_frame(
 
 pub fn provider_card(ui: &mut egui::Ui, name: &str, detail: &str, status: &str) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(8);
+    let tile_corner = CornerRadius::same(6);
     egui::Frame::new()
         .fill(p.elevated2)
         .stroke(Stroke::new(1.0_f32, p.border))
-        .corner_radius(CornerRadius::same(8))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
                 let (tile, _) =
                     ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                ui.painter().rect_filled(tile, 6, p.hover);
+                ui.painter().rect_filled(tile, tile_corner, p.hover);
                 ui.painter().text(
                     tile.center(),
                     egui::Align2::CENTER_CENTER,
@@ -192,16 +187,18 @@ pub fn provider_card(ui: &mut egui::Ui, name: &str, detail: &str, status: &str) 
 }
 pub fn hero_card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(14);
     let frame = egui::Frame::new()
         .fill(p.elevated)
         .stroke(Stroke::new(1.0_f32, p.border))
-        .corner_radius(CornerRadius::same(14))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::same(20))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             add(ui);
         });
     gloss_highlight(ui, frame.response.rect);
+    halloween_accent(ui, frame.response.rect);
 }
 
 fn gloss_highlight(ui: &egui::Ui, rect: egui::Rect) {
@@ -216,12 +213,817 @@ fn gloss_highlight(ui: &egui::Ui, rect: egui::Rect) {
     }
 }
 
+fn halloween_accent(ui: &egui::Ui, rect: egui::Rect) {
+    if crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween {
+        draw_spiderweb(ui.painter(), rect);
+        draw_small_pumpkin(
+            ui.painter(),
+            rect.left_top() + egui::vec2(16.0, 4.0),
+            22.0,
+            -0.20,
+            true,
+        );
+        draw_small_pumpkin(
+            ui.painter(),
+            rect.right_bottom() + egui::vec2(-12.0, -8.0),
+            20.0,
+            0.18,
+            true,
+        );
+        draw_small_pumpkin(
+            ui.painter(),
+            rect.right_bottom() + egui::vec2(6.0, -1.0),
+            15.0,
+            -0.14,
+            true,
+        );
+    }
+}
+
+pub fn draw_spiderweb(painter: &egui::Painter, rect: egui::Rect) {
+    if rect.width() < 120.0 || rect.height() < 80.0 {
+        return;
+    }
+    let origin = rect.right_top();
+    let web_color = Color32::from_rgba_unmultiplied(255, 145, 50, 42);
+    let stroke = Stroke::new(1.0_f32, web_color);
+
+    let angles: [f32; 5] = [0.0, 0.38, 0.785, 1.18, 1.57];
+    let lengths: [f32; 5] = [54.0, 50.0, 56.0, 50.0, 54.0];
+    let mut spokes = Vec::with_capacity(5);
+    for (angle, len) in angles.iter().zip(lengths.iter()) {
+        let pt = origin + egui::vec2(-len * angle.cos(), len * angle.sin());
+        painter.line_segment([origin, pt], stroke);
+        spokes.push(pt);
+    }
+
+    for frac in [0.35_f32, 0.65_f32, 0.95_f32] {
+        for i in 0..(spokes.len() - 1) {
+            let p1 = origin.lerp(spokes[i], frac);
+            let p2 = origin.lerp(spokes[i + 1], frac);
+            painter.line_segment([p1, p2], stroke);
+        }
+    }
+}
+
+pub fn draw_bat_scaled(painter: &egui::Painter, center: egui::Pos2, scale: f32, color: Color32) {
+    let s = scale.max(0.15);
+    let left_wing = vec![
+        center,
+        center + egui::vec2(-4.0 * s, -2.5 * s),
+        center + egui::vec2(-10.0 * s, -3.5 * s),
+        center + egui::vec2(-15.0 * s, -2.5 * s),
+        center + egui::vec2(-11.0 * s, 1.0 * s),
+        center + egui::vec2(-6.0 * s, 2.0 * s),
+    ];
+    let right_wing = vec![
+        center,
+        center + egui::vec2(4.0 * s, -2.5 * s),
+        center + egui::vec2(10.0 * s, -3.5 * s),
+        center + egui::vec2(15.0 * s, -2.5 * s),
+        center + egui::vec2(11.0 * s, 1.0 * s),
+        center + egui::vec2(6.0 * s, 2.0 * s),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        left_wing,
+        color,
+        Stroke::NONE,
+    ));
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        right_wing,
+        color,
+        Stroke::NONE,
+    ));
+    painter.circle_filled(center + egui::vec2(-2.0 * s, -3.2 * s), 1.3 * s, color);
+    painter.circle_filled(center + egui::vec2(2.0 * s, -3.2 * s), 1.3 * s, color);
+    painter.circle_filled(center, 3.2 * s, color);
+}
+
+pub fn draw_glowing_bat(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
+    draw_bat_scaled(painter, center, 1.0, color);
+}
+
+pub fn draw_pine_tree(
+    painter: &egui::Painter,
+    base: egui::Pos2,
+    height: f32,
+    width: f32,
+    color: Color32,
+) {
+    let half_w = width * 0.5;
+    let trunk_w = (width * 0.18).clamp(1.5, 4.0);
+    let trunk_top_y = base.y - height * 0.22;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(base.x - trunk_w * 0.5, trunk_top_y),
+            egui::pos2(base.x + trunk_w * 0.5, base.y),
+        ),
+        CornerRadius::ZERO,
+        color,
+    );
+
+    let tier1 = vec![
+        egui::pos2(base.x - half_w, base.y - height * 0.18),
+        egui::pos2(base.x + half_w, base.y - height * 0.18),
+        egui::pos2(base.x, base.y - height * 0.55),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        tier1,
+        color,
+        Stroke::NONE,
+    ));
+
+    let tier2 = vec![
+        egui::pos2(base.x - half_w * 0.78, base.y - height * 0.44),
+        egui::pos2(base.x + half_w * 0.78, base.y - height * 0.44),
+        egui::pos2(base.x, base.y - height * 0.8),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        tier2,
+        color,
+        Stroke::NONE,
+    ));
+
+    let tier3 = vec![
+        egui::pos2(base.x - half_w * 0.55, base.y - height * 0.68),
+        egui::pos2(base.x + half_w * 0.55, base.y - height * 0.68),
+        egui::pos2(base.x, base.y - height),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        tier3,
+        color,
+        Stroke::NONE,
+    ));
+
+    painter.line_segment(
+        [
+            egui::pos2(base.x, base.y - height),
+            egui::pos2(base.x, base.y - height - 3.0),
+        ],
+        Stroke::new(1.0_f32, color),
+    );
+}
+
+pub fn draw_dead_tree(painter: &egui::Painter, base: egui::Pos2, height: f32, color: Color32) {
+    let stroke = Stroke::new(1.5_f32, color);
+    let thin_stroke = Stroke::new(1.0_f32, color);
+    let top = base + egui::vec2(2.0, -height);
+    let mid = base + egui::vec2(-2.0, -height * 0.55);
+    painter.line_segment([base, mid], Stroke::new(2.2_f32, color));
+    painter.line_segment([mid, top], stroke);
+
+    let b1 = mid + egui::vec2(-8.0, -height * 0.2);
+    painter.line_segment([mid, b1], stroke);
+    painter.line_segment([b1, b1 + egui::vec2(-4.0, -6.0)], thin_stroke);
+    painter.line_segment([b1, b1 + egui::vec2(-1.0, -8.0)], thin_stroke);
+
+    let b2 = base + egui::vec2(5.0, -height * 0.42);
+    painter.line_segment([base + egui::vec2(0.0, -height * 0.35), b2], stroke);
+    painter.line_segment([b2, b2 + egui::vec2(6.0, -7.0)], thin_stroke);
+    painter.line_segment([b2, b2 + egui::vec2(3.0, -10.0)], thin_stroke);
+
+    painter.line_segment([top, top + egui::vec2(-3.0, -6.0)], thin_stroke);
+    painter.line_segment([top, top + egui::vec2(4.0, -5.0)], thin_stroke);
+}
+
+pub fn draw_external_link_icon(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    size: f32,
+    color: Color32,
+) {
+    let half = size * 0.5;
+    let left = center.x - half;
+    let right = center.x + half;
+    let top = center.y - half;
+    let bot = center.y + half;
+    let stroke = Stroke::new(1.2_f32, color);
+
+    let box_pts = [
+        egui::pos2(center.x - 0.5, top),
+        egui::pos2(left, top),
+        egui::pos2(left, bot),
+        egui::pos2(right, bot),
+        egui::pos2(right, center.y + 0.5),
+    ];
+    for w in box_pts.windows(2) {
+        painter.line_segment([w[0], w[1]], stroke);
+    }
+
+    let arrow_start = egui::pos2(center.x - 1.0, center.y + 1.0);
+    let arrow_end = egui::pos2(right, top);
+    painter.line_segment([arrow_start, arrow_end], stroke);
+    painter.line_segment([egui::pos2(right - 3.5, top), arrow_end], stroke);
+    painter.line_segment([egui::pos2(right, top + 3.5), arrow_end], stroke);
+}
+
+pub fn draw_small_pumpkin(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    size: f32,
+    angle: f32,
+    has_face: bool,
+) {
+    let rot = |v: egui::Vec2| -> egui::Vec2 {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        egui::vec2(v.x * cos - v.y * sin, v.x * sin + v.y * cos)
+    };
+
+    let half_w = size * 0.5;
+    let half_h = size * 0.42;
+    let stem_h = (size * 0.35).clamp(2.5, 6.0);
+    let stem_w = (size * 0.18).clamp(1.4, 3.0);
+    let stem_top = center + rot(egui::vec2(0.8, -half_h - stem_h));
+    let stem_base = center + rot(egui::vec2(-0.4, -half_h + 0.6));
+
+    painter.line_segment(
+        [stem_base, stem_top],
+        Stroke::new(stem_w, Color32::from_rgb(62, 85, 38)),
+    );
+
+    let side_color = Color32::from_rgb(215, 92, 18);
+    let mid_color = Color32::from_rgb(248, 124, 26);
+
+    let left_center = center + rot(egui::vec2(-half_w * 0.42, 0.0));
+    let right_center = center + rot(egui::vec2(half_w * 0.42, 0.0));
+
+    painter.circle_filled(left_center, half_h * 0.90, side_color);
+    painter.circle_filled(right_center, half_h * 0.90, side_color);
+    painter.circle_filled(center, half_h * 0.98, mid_color);
+
+    let rib_stroke = Stroke::new(0.8_f32, Color32::from_rgb(180, 72, 12));
+    painter.line_segment(
+        [
+            center + rot(egui::vec2(-half_w * 0.22, -half_h * 0.70)),
+            center + rot(egui::vec2(-half_w * 0.22, half_h * 0.70)),
+        ],
+        rib_stroke,
+    );
+    painter.line_segment(
+        [
+            center + rot(egui::vec2(half_w * 0.22, -half_h * 0.70)),
+            center + rot(egui::vec2(half_w * 0.22, half_h * 0.70)),
+        ],
+        rib_stroke,
+    );
+
+    if has_face {
+        let eye_color = Color32::from_rgb(28, 14, 10);
+        let eye_size = (size * 0.16).clamp(1.2, 3.0);
+        let eye_y = -half_h * 0.16;
+
+        let left_eye = vec![
+            center + rot(egui::vec2(-half_w * 0.32, eye_y)),
+            center + rot(egui::vec2(-half_w * 0.12, eye_y)),
+            center + rot(egui::vec2(-half_w * 0.22, eye_y - eye_size)),
+        ];
+        painter.add(egui::epaint::PathShape::convex_polygon(
+            left_eye,
+            eye_color,
+            Stroke::NONE,
+        ));
+
+        let right_eye = vec![
+            center + rot(egui::vec2(half_w * 0.12, eye_y)),
+            center + rot(egui::vec2(half_w * 0.32, eye_y)),
+            center + rot(egui::vec2(half_w * 0.22, eye_y - eye_size)),
+        ];
+        painter.add(egui::epaint::PathShape::convex_polygon(
+            right_eye,
+            eye_color,
+            Stroke::NONE,
+        ));
+
+        let mouth_y = half_h * 0.32;
+        let mouth_pts = [
+            center + rot(egui::vec2(-half_w * 0.30, mouth_y)),
+            center + rot(egui::vec2(-half_w * 0.10, mouth_y + eye_size * 0.6)),
+            center + rot(egui::vec2(half_w * 0.10, mouth_y + eye_size * 0.6)),
+            center + rot(egui::vec2(half_w * 0.30, mouth_y)),
+        ];
+        for w in mouth_pts.windows(2) {
+            painter.line_segment([w[0], w[1]], Stroke::new(eye_size * 0.9, eye_color));
+        }
+    }
+}
+
+pub fn draw_halloween_shell_artwork(painter: &egui::Painter, rect: egui::Rect) {
+    if rect.width() < 300.0 || rect.height() < 200.0 {
+        return;
+    }
+    let anchor_x = rect.right();
+    let anchor_y = rect.top();
+
+    let mountain_pts = vec![
+        egui::pos2(anchor_x - 440.0, anchor_y + 92.0),
+        egui::pos2(anchor_x - 360.0, anchor_y + 66.0),
+        egui::pos2(anchor_x - 290.0, anchor_y + 56.0),
+        egui::pos2(anchor_x - 230.0, anchor_y + 64.0),
+        egui::pos2(anchor_x - 170.0, anchor_y + 58.0),
+        egui::pos2(anchor_x - 110.0, anchor_y + 74.0),
+        egui::pos2(anchor_x - 110.0, anchor_y + 110.0),
+        egui::pos2(anchor_x - 440.0, anchor_y + 110.0),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        mountain_pts,
+        Color32::from_rgb(20, 15, 24),
+        Stroke::NONE,
+    ));
+
+    let mountain_trees: &[(f32, f32, f32, f32)] = &[
+        (-380.0, 72.0, 16.0, 7.5),
+        (-350.0, 68.0, 18.0, 8.0),
+        (-320.0, 62.0, 20.0, 8.5),
+        (-290.0, 58.0, 22.0, 9.0),
+        (-265.0, 61.0, 19.0, 8.0),
+        (-240.0, 63.0, 21.0, 9.0),
+        (-215.0, 64.0, 18.0, 8.0),
+        (-190.0, 62.0, 20.0, 8.5),
+        (-165.0, 64.0, 17.0, 7.5),
+    ];
+    for &(dx, dy, h, w) in mountain_trees {
+        draw_pine_tree(
+            painter,
+            egui::pos2(anchor_x + dx, anchor_y + dy),
+            h,
+            w,
+            Color32::from_rgb(16, 12, 18),
+        );
+    }
+
+    let moon_center = egui::pos2(anchor_x - 105.0, anchor_y + 36.0);
+    painter.circle_filled(moon_center, 23.0, Color32::from_rgb(224, 106, 26));
+
+    painter.circle_filled(
+        moon_center + egui::vec2(-6.5, -3.5),
+        4.5,
+        Color32::from_rgba_unmultiplied(190, 82, 18, 85),
+    );
+    painter.circle_filled(
+        moon_center + egui::vec2(-2.0, 5.5),
+        5.5,
+        Color32::from_rgba_unmultiplied(190, 82, 18, 75),
+    );
+    painter.circle_filled(
+        moon_center + egui::vec2(6.5, -4.5),
+        3.5,
+        Color32::from_rgba_unmultiplied(190, 82, 18, 80),
+    );
+
+    let hill_pts = vec![
+        egui::pos2(anchor_x - 260.0, anchor_y + 98.0),
+        egui::pos2(anchor_x - 190.0, anchor_y + 90.0),
+        egui::pos2(anchor_x - 120.0, anchor_y + 82.0),
+        egui::pos2(anchor_x - 45.0, anchor_y + 78.0),
+        egui::pos2(anchor_x, anchor_y + 84.0),
+        egui::pos2(anchor_x, anchor_y + 150.0),
+        egui::pos2(anchor_x - 260.0, anchor_y + 150.0),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        hill_pts,
+        Color32::from_rgb(12, 10, 14),
+        Stroke::NONE,
+    ));
+
+    let hill_trees: &[(f32, f32, f32, f32)] = &[
+        (-240.0, 94.0, 18.0, 8.0),
+        (-215.0, 90.0, 21.0, 9.0),
+        (-190.0, 87.0, 19.0, 8.5),
+        (-165.0, 84.0, 23.0, 9.5),
+        (-140.0, 81.0, 20.0, 8.5),
+    ];
+    for &(dx, dy, h, w) in hill_trees {
+        draw_pine_tree(
+            painter,
+            egui::pos2(anchor_x + dx, anchor_y + dy),
+            h,
+            w,
+            Color32::from_rgb(14, 11, 16),
+        );
+    }
+
+    let castle_color = Color32::from_rgb(9, 7, 11);
+    let window_color = Color32::from_rgb(255, 155, 30);
+
+    let tower_center_x = anchor_x - 52.0;
+    let tower_base_y = anchor_y + 78.0;
+    let tower_roof_base_y = anchor_y + 32.0;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(tower_center_x - 10.0, tower_roof_base_y),
+            egui::pos2(tower_center_x + 10.0, tower_base_y),
+        ),
+        CornerRadius::ZERO,
+        castle_color,
+    );
+    let spire_pts = vec![
+        egui::pos2(tower_center_x - 11.5, tower_roof_base_y),
+        egui::pos2(tower_center_x + 11.5, tower_roof_base_y),
+        egui::pos2(tower_center_x, anchor_y + 8.0),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        spire_pts,
+        castle_color,
+        Stroke::NONE,
+    ));
+    painter.line_segment(
+        [
+            egui::pos2(tower_center_x, anchor_y + 8.0),
+            egui::pos2(tower_center_x, anchor_y + 2.0),
+        ],
+        Stroke::new(1.0_f32, castle_color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(tower_center_x - 2.5, anchor_y + 5.0),
+            egui::pos2(tower_center_x + 2.5, anchor_y + 5.0),
+        ],
+        Stroke::new(1.0_f32, castle_color),
+    );
+
+    let win1_center = egui::pos2(tower_center_x, anchor_y + 42.0);
+    let win1_rect = egui::Rect::from_center_size(win1_center, egui::vec2(4.8, 7.5));
+    painter.rect_filled(win1_rect, CornerRadius::same(1), window_color);
+    painter.line_segment(
+        [
+            egui::pos2(win1_rect.left(), win1_rect.center().y),
+            egui::pos2(win1_rect.right(), win1_rect.center().y),
+        ],
+        Stroke::new(0.8_f32, castle_color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(win1_rect.center().x, win1_rect.top()),
+            egui::pos2(win1_rect.center().x, win1_rect.bottom()),
+        ],
+        Stroke::new(0.8_f32, castle_color),
+    );
+
+    let win2_center = egui::pos2(tower_center_x, anchor_y + 58.0);
+    let win2_rect = egui::Rect::from_center_size(win2_center, egui::vec2(4.5, 6.5));
+    painter.rect_filled(win2_rect, CornerRadius::same(1), window_color);
+
+    let left_tower_x = anchor_x - 76.0;
+    let left_roof_base_y = anchor_y + 42.0;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(left_tower_x - 8.0, left_roof_base_y),
+            egui::pos2(left_tower_x + 8.0, tower_base_y),
+        ),
+        CornerRadius::ZERO,
+        castle_color,
+    );
+    let left_spire = vec![
+        egui::pos2(left_tower_x - 9.5, left_roof_base_y),
+        egui::pos2(left_tower_x + 9.5, left_roof_base_y),
+        egui::pos2(left_tower_x, anchor_y + 18.0),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        left_spire,
+        castle_color,
+        Stroke::NONE,
+    ));
+    painter.line_segment(
+        [
+            egui::pos2(left_tower_x, anchor_y + 18.0),
+            egui::pos2(left_tower_x, anchor_y + 12.0),
+        ],
+        Stroke::new(1.0_f32, castle_color),
+    );
+    let win_left_center = egui::pos2(left_tower_x, anchor_y + 50.0);
+    painter.rect_filled(
+        egui::Rect::from_center_size(win_left_center, egui::vec2(4.0, 6.5)),
+        CornerRadius::same(1),
+        window_color,
+    );
+
+    let far_left_x = anchor_x - 95.0;
+    let far_left_roof_y = anchor_y + 52.0;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(far_left_x - 6.0, far_left_roof_y),
+            egui::pos2(far_left_x + 6.0, tower_base_y),
+        ),
+        CornerRadius::ZERO,
+        castle_color,
+    );
+    let far_left_spire = vec![
+        egui::pos2(far_left_x - 7.5, far_left_roof_y),
+        egui::pos2(far_left_x + 7.5, far_left_roof_y),
+        egui::pos2(far_left_x, anchor_y + 32.0),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        far_left_spire,
+        castle_color,
+        Stroke::NONE,
+    ));
+
+    let wall_y = anchor_y + 56.0;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(left_tower_x + 8.0, wall_y),
+            egui::pos2(tower_center_x - 10.0, tower_base_y),
+        ),
+        CornerRadius::ZERO,
+        castle_color,
+    );
+    for cx in [left_tower_x + 10.0, left_tower_x + 15.0] {
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(cx, wall_y - 3.0), egui::vec2(2.5, 3.0)),
+            CornerRadius::ZERO,
+            castle_color,
+        );
+    }
+
+    let right_wing_x = anchor_x - 34.0;
+    let right_wall_y = anchor_y + 58.0;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(tower_center_x + 10.0, right_wall_y),
+            egui::pos2(right_wing_x + 6.0, tower_base_y),
+        ),
+        CornerRadius::ZERO,
+        castle_color,
+    );
+    for cx in [tower_center_x + 12.0, tower_center_x + 17.0] {
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(cx, right_wall_y - 3.0), egui::vec2(2.5, 3.0)),
+            CornerRadius::ZERO,
+            castle_color,
+        );
+    }
+    let win_right_center = egui::pos2(right_wing_x, anchor_y + 66.0);
+    painter.rect_filled(
+        egui::Rect::from_center_size(win_right_center, egui::vec2(3.5, 5.5)),
+        CornerRadius::same(1),
+        window_color,
+    );
+
+    draw_dead_tree(
+        painter,
+        egui::pos2(anchor_x - 20.0, anchor_y + 78.0),
+        54.0,
+        castle_color,
+    );
+
+    let bat_color = Color32::from_rgb(16, 12, 18);
+    draw_bat_scaled(
+        painter,
+        egui::pos2(anchor_x - 148.0, anchor_y + 26.0),
+        0.72,
+        bat_color,
+    );
+    draw_bat_scaled(
+        painter,
+        egui::pos2(anchor_x - 124.0, anchor_y + 44.0),
+        0.52,
+        bat_color,
+    );
+    draw_bat_scaled(
+        painter,
+        egui::pos2(anchor_x - 180.0, anchor_y + 36.0),
+        0.42,
+        bat_color,
+    );
+    draw_bat_scaled(
+        painter,
+        egui::pos2(anchor_x - 245.0, anchor_y + 50.0),
+        0.36,
+        bat_color,
+    );
+}
+
+pub fn draw_halloween_sidebar_artwork(painter: &egui::Painter, rect: egui::Rect) {
+    if rect.height() < 240.0 {
+        return;
+    }
+    let bot = rect.bottom();
+    let left = rect.left();
+    let right = rect.right();
+    let w = rect.width();
+
+    let back_tree_color = Color32::from_rgb(18, 14, 22);
+    let back_trees: &[(f32, f32, f32, f32)] = &[
+        (0.88, 130.0, 180.0, 32.0),
+        (0.72, 110.0, 150.0, 28.0),
+        (0.50, 100.0, 120.0, 24.0),
+        (0.30, 95.0, 100.0, 22.0),
+        (0.12, 90.0, 80.0, 18.0),
+    ];
+    for &(fx, dy, h, tw) in back_trees {
+        draw_pine_tree(
+            painter,
+            egui::pos2(left + w * fx, bot - dy),
+            h,
+            tw,
+            back_tree_color,
+        );
+    }
+
+    let mist_color1 = Color32::from_rgba_unmultiplied(42, 26, 44, 28);
+    painter.rect_filled(
+        egui::Rect::from_min_max(egui::pos2(left, bot - 110.0), egui::pos2(right, bot - 86.0)),
+        CornerRadius::same(6),
+        mist_color1,
+    );
+
+    let house_color = Color32::from_rgb(10, 8, 12);
+    let roof_color = Color32::from_rgb(8, 6, 10);
+    let house_center_x = right - 44.0;
+    let house_base_y = bot - 98.0;
+    let house_roof_y = bot - 128.0;
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(house_center_x - 22.0, house_roof_y),
+            egui::pos2(house_center_x + 22.0, house_base_y),
+        ),
+        CornerRadius::ZERO,
+        house_color,
+    );
+    let roof_pts = vec![
+        egui::pos2(house_center_x - 26.0, house_roof_y),
+        egui::pos2(house_center_x + 26.0, house_roof_y),
+        egui::pos2(house_center_x, bot - 158.0),
+    ];
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        roof_pts,
+        roof_color,
+        Stroke::NONE,
+    ));
+    painter.rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(house_center_x + 12.0, bot - 154.0),
+            egui::vec2(4.0, 10.0),
+        ),
+        CornerRadius::ZERO,
+        roof_color,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(house_center_x, bot - 158.0),
+            egui::pos2(house_center_x, bot - 164.0),
+        ],
+        Stroke::new(1.0_f32, roof_color),
+    );
+
+    let win_fill = Color32::from_rgb(255, 150, 30);
+
+    let win_upper_center = egui::pos2(house_center_x + 13.0, bot - 132.0);
+    let win_upper = egui::Rect::from_center_size(win_upper_center, egui::vec2(6.0, 10.0));
+    painter.rect_filled(win_upper, CornerRadius::same(1), win_fill);
+    painter.line_segment(
+        [
+            egui::pos2(win_upper.left(), win_upper.center().y),
+            egui::pos2(win_upper.right(), win_upper.center().y),
+        ],
+        Stroke::new(0.8_f32, house_color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(win_upper.center().x, win_upper.top()),
+            egui::pos2(win_upper.center().x, win_upper.bottom()),
+        ],
+        Stroke::new(0.8_f32, house_color),
+    );
+
+    let win_lower_center = egui::pos2(house_center_x - 12.0, bot - 110.0);
+    let win_lower = egui::Rect::from_center_size(win_lower_center, egui::vec2(7.0, 11.0));
+    painter.rect_filled(win_lower, CornerRadius::same(1), win_fill);
+    painter.line_segment(
+        [
+            egui::pos2(win_lower.left(), win_lower.center().y),
+            egui::pos2(win_lower.right(), win_lower.center().y),
+        ],
+        Stroke::new(0.8_f32, house_color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(win_lower.center().x, win_lower.top()),
+            egui::pos2(win_lower.center().x, win_lower.bottom()),
+        ],
+        Stroke::new(0.8_f32, house_color),
+    );
+
+    let front_tree_color = Color32::from_rgb(13, 10, 15);
+    let front_trees: &[(f32, f32, f32, f32)] = &[
+        (0.92, 94.0, 160.0, 30.0),
+        (0.66, 94.0, 130.0, 24.0),
+        (0.44, 94.0, 95.0, 20.0),
+        (0.24, 94.0, 72.0, 17.0),
+        (0.08, 94.0, 52.0, 15.0),
+    ];
+    for &(fx, dy, h, tw) in front_trees {
+        draw_pine_tree(
+            painter,
+            egui::pos2(left + w * fx, bot - dy),
+            h,
+            tw,
+            front_tree_color,
+        );
+    }
+
+    let bat_color = Color32::from_rgb(18, 14, 22);
+    draw_bat_scaled(
+        painter,
+        egui::pos2(left + w * 0.62, bot - 225.0),
+        0.55,
+        bat_color,
+    );
+    draw_bat_scaled(
+        painter,
+        egui::pos2(left + w * 0.44, bot - 270.0),
+        0.45,
+        bat_color,
+    );
+
+    draw_small_pumpkin(
+        painter,
+        egui::pos2(house_center_x - 16.0, house_base_y + 1.0),
+        9.0,
+        -0.10,
+        true,
+    );
+    draw_small_pumpkin(
+        painter,
+        egui::pos2(house_center_x + 15.0, house_base_y + 2.0),
+        8.0,
+        0.08,
+        false,
+    );
+}
+
+pub fn play_hero_split_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    menu: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    let total_w = ui.available_width();
+    let split_w = 40.0_f32;
+    let main_w = (total_w - split_w - 4.0).max(120.0);
+    let p = crate::ui::theme::palette(ui.ctx());
+    let mut play_resp = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let resp = button_sized(ui, text, Tone::Primary, egui::vec2(main_w, 44.0));
+        play_resp = Some(resp);
+        ui.scope(|ui| {
+            let widgets = &mut ui.style_mut().visuals.widgets;
+            widgets.inactive.bg_fill = p.accent;
+            widgets.inactive.weak_bg_fill = p.accent;
+            widgets.hovered.bg_fill = p.accent_hover;
+            widgets.hovered.weak_bg_fill = p.accent_hover;
+            widgets.active.bg_fill = p.accent_hover;
+            widgets.active.weak_bg_fill = p.accent_hover;
+            widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
+            widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
+            widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
+            widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.accent);
+            widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, p.accent_hover);
+            let launch_corner = egui::CornerRadius::same(crate::ui::theme::metrics::CONTROL_RADIUS);
+            widgets.inactive.corner_radius = launch_corner;
+            widgets.hovered.corner_radius = launch_corner;
+            widgets.active.corner_radius = launch_corner;
+            ui.style_mut().spacing.button_padding = egui::vec2(12.0, 10.0);
+            ui.style_mut().spacing.interact_size = egui::vec2(split_w, 44.0);
+            let menu_resp = ui.menu_button("", menu);
+            let r = menu_resp.response.rect;
+            let c = r.center();
+            let stroke = egui::Stroke::new(1.8_f32, p.accent_text);
+            let p1 = c + egui::vec2(-5.5, -3.0);
+            let p2 = c + egui::vec2(0.0, 3.5);
+            let p3 = c + egui::vec2(5.5, -3.0);
+            ui.painter().line_segment([p1, p2], stroke);
+            ui.painter().line_segment([p2, p3], stroke);
+            ui.painter().circle_filled(p1, 0.9, p.accent_text);
+            ui.painter().circle_filled(p2, 0.9, p.accent_text);
+            ui.painter().circle_filled(p3, 0.9, p.accent_text);
+            menu_resp.response.on_hover_text("Launch options");
+        });
+    });
+    play_resp.unwrap()
+}
+
+pub fn draw_instance_banner_fallback(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    name: &str,
+    loader: &str,
+) {
+    let p_theme = Color32::from_rgb(22, 24, 32);
+    painter.rect_filled(rect, CornerRadius::ZERO, p_theme);
+    let icon_size = (rect.height() * 0.60).clamp(24.0, 42.0);
+    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(icon_size, icon_size));
+    draw_instance_thumbnail(painter, icon_rect, name, loader, false);
+}
+
 pub fn badge(ui: &mut egui::Ui, text: &str) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(metrics::PILL_RADIUS);
     egui::Frame::new()
         .fill(p.elevated2)
         .stroke(Stroke::new(1.0_f32, p.border))
-        .corner_radius(CornerRadius::same(metrics::PILL_RADIUS))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(text).size(type_scale::CAPTION).color(TEXT2));
@@ -241,6 +1043,24 @@ pub fn action_button_with_feedback(ui: &mut egui::Ui, text: &str, busy: bool) ->
         false,
         egui::Button::new(RichText::new(text).size(type_scale::BODY))
             .min_size(egui::vec2(220.0, metrics::BUTTON_H))
+            .fill(p.accent),
+    )
+    .on_hover_cursor(egui::CursorIcon::Wait)
+}
+
+pub fn compact_action_button_with_feedback(
+    ui: &mut egui::Ui,
+    text: &str,
+    busy: bool,
+) -> egui::Response {
+    if !busy {
+        return compact_button(ui, text, Tone::Primary);
+    }
+    let p = crate::ui::theme::palette(ui.ctx());
+    ui.add_enabled(
+        false,
+        egui::Button::new(RichText::new(text).size(type_scale::BODY))
+            .min_size(egui::vec2(160.0, 28.0))
             .fill(p.accent),
     )
     .on_hover_cursor(egui::CursorIcon::Wait)
@@ -275,27 +1095,29 @@ pub fn content_secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response
 
 pub fn badge_accent(ui: &mut egui::Ui, text: &str) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(metrics::PILL_RADIUS);
     egui::Frame::new()
         .fill(p.elevated2)
-        .stroke(Stroke::new(1.0_f32, p.accent))
-        .corner_radius(CornerRadius::same(metrics::PILL_RADIUS))
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.label(
                 RichText::new(text)
                     .size(type_scale::CAPTION)
                     .strong()
-                    .color(TEXT),
+                    .color(p.accent),
             );
         });
 }
 
 pub fn badge_boost(ui: &mut egui::Ui, text: &str) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(metrics::PILL_RADIUS);
     egui::Frame::new()
         .fill(p.elevated2)
-        .stroke(Stroke::new(1.0_f32, p.accent))
-        .corner_radius(CornerRadius::same(metrics::PILL_RADIUS))
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.label(
@@ -309,10 +1131,11 @@ pub fn badge_boost(ui: &mut egui::Ui, text: &str) {
 
 pub fn badge_ok(ui: &mut egui::Ui, text: &str) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(metrics::PILL_RADIUS);
     egui::Frame::new()
         .fill(p.elevated2)
         .stroke(Stroke::new(1.0_f32, p.border))
-        .corner_radius(CornerRadius::same(metrics::PILL_RADIUS))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.label(
@@ -325,10 +1148,11 @@ pub fn badge_ok(ui: &mut egui::Ui, text: &str) {
 }
 
 pub fn badge_warning(ui: &mut egui::Ui, text: &str) {
+    let corner = CornerRadius::same(metrics::PILL_RADIUS);
     egui::Frame::new()
         .fill(Color32::from_rgba_unmultiplied(225, 175, 70, 20))
         .stroke(Stroke::new(1.0_f32, WARNING))
-        .corner_radius(CornerRadius::same(metrics::PILL_RADIUS))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(text).size(type_scale::CAPTION).color(WARNING));
@@ -359,17 +1183,53 @@ pub fn hover_card_frame(
         .animate_bool_with_time(id.with("hover"), hovered, 0.15);
     let p = crate::ui::theme::palette(ui.ctx());
     let fill = p.elevated.lerp_to_gamma(p.elevated2, fade);
-    let border_color = p.border.lerp_to_gamma(p.accent, fade * 0.4);
+    let border_color = p.border;
 
+    let corner = CornerRadius::same(metrics::CARD_RADIUS);
     let frame_resp = egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0_f32, border_color))
-        .corner_radius(CornerRadius::same(metrics::CARD_RADIUS))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             add(ui);
         });
+    gloss_highlight(ui, frame_resp.response.rect);
+
+    let resp = ui.interact(frame_resp.response.rect, id, egui::Sense::hover());
+    ui.ctx().data_mut(|d| d.insert_temp(id, resp.hovered()));
+    if fade > 0.001 && fade < 0.999 {
+        ui.ctx().request_repaint();
+    }
+    resp
+}
+
+pub fn compact_hover_card_frame(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    add: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    let id = ui.make_persistent_id(id_salt);
+    let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+    let fade = ui
+        .ctx()
+        .animate_bool_with_time(id.with("hover"), hovered, 0.15);
+    let p = crate::ui::theme::palette(ui.ctx());
+    let fill = p.elevated.lerp_to_gamma(p.elevated2, fade);
+    let border_color = p.border;
+
+    let corner = CornerRadius::same(metrics::CARD_RADIUS);
+    let frame_resp = egui::Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0_f32, border_color))
+        .corner_radius(corner)
+        .inner_margin(egui::Margin::symmetric(14, 8))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add(ui);
+        });
+    gloss_highlight(ui, frame_resp.response.rect);
 
     let resp = ui.interact(frame_resp.response.rect, id, egui::Sense::hover());
     ui.ctx().data_mut(|d| d.insert_temp(id, resp.hovered()));
@@ -389,6 +1249,18 @@ pub enum Tone {
 
 pub fn button(ui: &mut egui::Ui, text: &str, tone: Tone) -> egui::Response {
     button_sized(ui, text, tone, egui::vec2(0.0, metrics::BUTTON_H))
+}
+
+pub fn compact_button(ui: &mut egui::Ui, text: &str, tone: Tone) -> egui::Response {
+    button_sized(ui, text, tone, egui::vec2(0.0, 28.0))
+}
+
+pub fn compact_secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    compact_button(ui, text, Tone::Secondary)
+}
+
+pub fn compact_danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    compact_button(ui, text, Tone::Danger)
 }
 
 pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2) -> egui::Response {
@@ -423,6 +1295,7 @@ pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2)
             p.border.lerp_to_gamma(DANGER, 0.55),
         ),
     };
+    let corner = CornerRadius::same(metrics::CONTROL_RADIUS);
     ui.scope(|ui| {
         let widgets = &mut ui.style_mut().visuals.widgets;
         for (widget, fill, stroke) in [
@@ -442,13 +1315,14 @@ pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2)
             widget.weak_bg_fill = fill;
             widget.fg_stroke = Stroke::new(1.0_f32, foreground);
             widget.bg_stroke = Stroke::new(1.0_f32, stroke);
-            widget.corner_radius = CornerRadius::same(metrics::CONTROL_RADIUS);
+            widget.corner_radius = corner;
             widget.expansion = 0.0;
         }
         ui.add(
             egui::Button::new(RichText::new(text).size(type_scale::BODY))
                 .min_size(size)
-                .fill(normal),
+                .fill(normal)
+                .corner_radius(corner),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand)
     })
@@ -486,27 +1360,6 @@ pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     )
 }
 
-pub fn play_hero_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    button_sized(ui, text, Tone::Primary, egui::vec2(168.0, 44.0))
-}
-
-pub fn boost_toggle_button(ui: &mut egui::Ui, active: bool) -> egui::Response {
-    button_sized(
-        ui,
-        if active {
-            "Eco Mode ON"
-        } else {
-            "Eco Mode OFF"
-        },
-        if active {
-            Tone::Primary
-        } else {
-            Tone::Secondary
-        },
-        egui::vec2(136.0, metrics::BUTTON_H),
-    )
-}
-
 pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     button(ui, text, Tone::Secondary)
 }
@@ -534,6 +1387,71 @@ pub fn tab_button(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Respo
         },
         egui::vec2(110.0, 34.0),
     )
+}
+
+pub fn pill_tab_button(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(metrics::PILL_RADIUS);
+    let fill = if selected { p.accent } else { p.elevated2 };
+    let text_color = if selected { p.accent_text } else { TEXT2 };
+    let stroke = if selected {
+        Stroke::NONE
+    } else {
+        Stroke::new(1.0_f32, p.border)
+    };
+
+    ui.scope(|ui| {
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        widgets.inactive.bg_fill = fill;
+        widgets.inactive.weak_bg_fill = fill;
+        widgets.inactive.bg_stroke = stroke;
+        widgets.inactive.fg_stroke = Stroke::new(1.0_f32, text_color);
+        widgets.inactive.corner_radius = corner;
+
+        widgets.hovered.bg_fill = if selected { p.accent_hover } else { p.hover };
+        widgets.hovered.weak_bg_fill = widgets.hovered.bg_fill;
+        widgets.hovered.bg_stroke = if selected {
+            Stroke::NONE
+        } else {
+            Stroke::new(1.0_f32, p.border.lerp_to_gamma(Color32::WHITE, 0.2))
+        };
+        widgets.hovered.fg_stroke = Stroke::new(
+            1.0_f32,
+            if selected {
+                p.accent_text
+            } else {
+                Color32::WHITE
+            },
+        );
+        widgets.hovered.corner_radius = corner;
+
+        widgets.active.bg_fill = fill;
+        widgets.active.weak_bg_fill = fill;
+        widgets.active.bg_stroke = stroke;
+        widgets.active.fg_stroke = Stroke::new(1.0_f32, text_color);
+        widgets.active.corner_radius = corner;
+
+        ui.style_mut().spacing.button_padding = egui::vec2(12.0, 5.0);
+        let btn_text = if selected {
+            RichText::new(label)
+                .size(type_scale::CAPTION)
+                .strong()
+                .color(text_color)
+        } else {
+            RichText::new(label)
+                .size(type_scale::CAPTION)
+                .color(text_color)
+        };
+        ui.add(
+            egui::Button::new(btn_text)
+                .fill(fill)
+                .stroke(stroke)
+                .corner_radius(corner)
+                .min_size(egui::vec2(0.0, 26.0)),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+    })
+    .inner
 }
 
 pub fn sized_action_button(
@@ -820,7 +1738,7 @@ pub fn draw_instance_thumbnail(
     let block_rect = rect.shrink(1.0);
     painter.rect(
         block_rect,
-        6.0,
+        CornerRadius::ZERO,
         Color32::from_rgb(32, 35, 44),
         Stroke::new(
             if is_selected { 1.5_f32 } else { 1.0_f32 },
@@ -872,32 +1790,14 @@ pub fn draw_instance_thumbnail(
     let top_h = inner_h * 0.38;
 
     let top_rect = egui::Rect::from_min_size(p + egui::vec2(pad, pad), egui::vec2(inner_w, top_h));
-    painter.rect_filled(
-        top_rect,
-        CornerRadius {
-            nw: 5,
-            ne: 5,
-            sw: 0,
-            se: 0,
-        },
-        top_color,
-    );
+    painter.rect_filled(top_rect, CornerRadius::ZERO, top_color);
 
     let fringe_y = p.y + pad + top_h;
     let bot_rect = egui::Rect::from_min_size(
         egui::pos2(p.x + pad, fringe_y),
         egui::vec2(inner_w, (inner_h - top_h).max(1.0)),
     );
-    painter.rect_filled(
-        bot_rect,
-        CornerRadius {
-            nw: 0,
-            ne: 0,
-            sw: 5,
-            se: 5,
-        },
-        side_color,
-    );
+    painter.rect_filled(bot_rect, CornerRadius::ZERO, side_color);
 
     let step = inner_w / 4.0;
     for i in 0..4 {
@@ -958,13 +1858,7 @@ pub fn instance_choice(
             fill,
             Stroke::new(
                 if selected { 1.5_f32 } else { 1.0_f32 },
-                if selected {
-                    p.accent
-                } else if response.hovered() {
-                    p.border.lerp_to_gamma(p.accent, 0.25)
-                } else {
-                    p.border
-                },
+                if selected { p.accent } else { p.border },
             ),
             egui::StrokeKind::Inside,
         );
@@ -1000,10 +1894,17 @@ pub fn instance_choice(
             TEXT2,
         );
         if selected {
+            let selected_text = if crate::ui::theme::current_theme(ui.ctx())
+                == crate::config::ThemeKind::Halloween
+            {
+                "Selected 🎃"
+            } else {
+                "Selected"
+            };
             ui.painter().text(
                 rect.right_center() - egui::vec2(15.0, 0.0),
                 egui::Align2::RIGHT_CENTER,
-                "Selected",
+                selected_text,
                 egui::FontId::proportional(type_scale::CAPTION),
                 p.accent,
             );
@@ -1029,10 +1930,6 @@ pub fn elide(text: &str, max: usize) -> String {
     let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
     out.push('\u{2026}');
     out
-}
-
-pub fn danger_label(text: &str) -> RichText {
-    RichText::new(text).color(DANGER)
 }
 
 pub fn thin_progress(ui: &mut egui::Ui, frac: Option<f32>) {
@@ -1065,13 +1962,6 @@ pub fn thin_progress(ui: &mut egui::Ui, frac: Option<f32>) {
             ui.ctx().request_repaint();
         }
     }
-}
-
-pub fn loading_row(ui: &mut egui::Ui, text: &str) {
-    ui.horizontal(|ui| {
-        ui.spinner();
-        ui.label(RichText::new(text).size(type_scale::LABEL).color(TEXT2));
-    });
 }
 
 pub fn progress_row(ui: &mut egui::Ui, frac: Option<f32>, detail: Option<ProgressDetail<'_>>) {
@@ -1197,13 +2087,11 @@ pub fn search_field(
     hint: &str,
 ) -> (egui::Response, bool) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let corner = CornerRadius::same(10);
     let response = egui::Frame::new()
         .fill(p.elevated2)
-        .stroke(Stroke::new(
-            1.5_f32,
-            if value.is_empty() { p.border } else { p.accent },
-        ))
-        .corner_radius(CornerRadius::same(10))
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(corner)
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {
             ui.set_height(44.0);
@@ -1236,6 +2124,66 @@ pub fn search_field(
                         egui::Align2::CENTER_CENTER,
                         "\u{2715}",
                         egui::FontId::proportional(11.0),
+                        MUTED,
+                    );
+                }
+                field
+            })
+        })
+        .response;
+    let enter = response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    (response, enter)
+}
+
+pub fn compact_search_field(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    max: usize,
+    hint: &str,
+) -> (egui::Response, bool) {
+    let p = crate::ui::theme::palette(ui.ctx());
+    let field_corner = CornerRadius::same(metrics::CONTROL_RADIUS);
+    let response = egui::Frame::new()
+        .fill(p.elevated2)
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(field_corner)
+        .inner_margin(egui::Margin::symmetric(10, 0))
+        .show(ui, |ui| {
+            ui.set_height(32.0);
+            ui.horizontal_centered(|ui| {
+                let (glass, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                magnifier(ui.painter(), glass.center(), 4.0, MUTED);
+                ui.add_space(6.0);
+                let field = ui.add(
+                    egui::TextEdit::singleline(value)
+                        .id(egui::Id::new(id))
+                        .hint_text(hint)
+                        .char_limit(max)
+                        .font(egui::TextStyle::Body)
+                        .frame(false)
+                        .desired_width((ui.available_width() - 20.0).max(60.0)),
+                );
+                if !value.is_empty() {
+                    let (clear, _) =
+                        ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+                    if ui
+                        .interact(
+                            clear,
+                            egui::Id::new((id, "compact_clear")),
+                            egui::Sense::click(),
+                        )
+                        .on_hover_text("Clear")
+                        .clicked()
+                    {
+                        value.clear();
+                    }
+                    ui.painter().text(
+                        clear.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "\u{2715}",
+                        egui::FontId::proportional(10.0),
                         MUTED,
                     );
                 }
@@ -1750,6 +2698,66 @@ mod tests {
         assert!(
             big > plain,
             "the search field ({big}) must read larger than a standard input ({plain})"
+        );
+    }
+
+    #[test]
+    fn pumpkins_draw_without_panicking() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    draw_halloween_shell_artwork(ui.painter(), ui.max_rect());
+                    draw_halloween_sidebar_artwork(ui.painter(), ui.max_rect());
+                    draw_small_pumpkin(ui.painter(), egui::pos2(100.0, 100.0), 10.0, 0.0, true);
+                    draw_small_pumpkin(ui.painter(), egui::pos2(120.0, 100.0), 8.0, 0.15, false);
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn compact_hover_card_frame_is_denser_than_standard() {
+        let ctx = egui::Context::default();
+        let measure = |compact: bool| -> f32 {
+            let mut h = 0.0;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let resp = if compact {
+                            compact_hover_card_frame(ui, "card", |ui| {
+                                ui.label("content");
+                            })
+                        } else {
+                            hover_card_frame(ui, "card", |ui| {
+                                ui.label("content");
+                            })
+                        };
+                        h = resp.rect.height();
+                    });
+                },
+            );
+            h
+        };
+        let compact_h = measure(true);
+        let standard_h = measure(false);
+        assert!(
+            compact_h < standard_h,
+            "compact {compact_h} must be less than standard {standard_h}"
         );
     }
 }

@@ -5,7 +5,7 @@ use crate::instance::manager::InstanceManager;
 use crate::modrinth::api::ModrinthClient;
 use crate::modrinth::dependencies::resolve_required;
 use crate::modrinth::models::{is_compatible, pick_best_version, primary_file, ProjectVersion};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -80,6 +80,8 @@ pub async fn install_project(
             .iter()
             .map(crate::curseforge::to_project_version)
             .collect::<Vec<_>>()
+    } else if let Some(vid) = &req.version_id {
+        vec![mr.version(vid).await?]
     } else {
         mr.project_versions(&req.project_id, None, None).await?
     };
@@ -122,6 +124,14 @@ pub async fn install_project(
             .cloned()
             .unwrap_or_else(|| game_versions[0].clone())
     };
+    if chosen.project_id != req.project_id
+        && (crate::curseforge::is_curseforge_slug(&req.project_id)
+            || mr.project(&chosen.project_id).await?.slug != req.project_id)
+    {
+        return Err(MonoryxError::Modrinth(
+            "requested version belongs to a different project".into(),
+        ));
+    }
     if req.kind != ContentKind::Mod
         && !chosen.game_versions.is_empty()
         && !chosen
@@ -143,40 +153,68 @@ pub async fn install_project(
         }
     }
     let store = ContentStore::for_instance(&manager.instance_dir(instance_id));
-    let installed_ids: HashSet<String> = store.project_ids().into_iter().collect();
+    let installed: HashMap<String, String> = store
+        .load_result()?
+        .entries
+        .into_iter()
+        .filter(|entry| entry.kind == ContentKind::Mod && entry.enabled)
+        .filter_map(|entry| Some((entry.project_id?, entry.version_id.unwrap_or_default())))
+        .collect();
     let mut to_install: Vec<ProjectVersion> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
     if req.kind == ContentKind::Mod {
-        let id_map = store.id_to_name();
-        let incompat =
-            crate::modrinth::dependencies::find_incompatibilities(&chosen, &installed_ids, &id_map);
-        if !incompat.is_empty() {
-            return Err(MonoryxError::DependencyConflict(format!(
-                "Conflict detected: {} ({})",
-                req.project_title,
-                incompat.join("; ")
-            )));
-        }
         report("Resolving dependencies...".to_string(), 0, 1);
         let loader_for_deps = loader_id_outer.clone();
-        let plan = resolve_required(&chosen, &installed_ids, |pid: &str| {
-            let mr = mr.clone();
-            let pid = pid.to_string();
-            let mc = req.minecraft_version.clone();
-            let loader_id = loader_for_deps.clone();
-            async move {
-                let vers = mr.project_versions(&pid, None, None).await?;
-                let compat: Vec<ProjectVersion> = vers
-                    .into_iter()
-                    .filter(|v| is_compatible(v, &mc, &loader_id))
-                    .collect();
-                Ok(pick_best_version(&compat, &mc, &loader_id).cloned())
-            }
-        })
+        let cf = crate::curseforge::CurseForgeClient::with_server(
+            dm.client().clone(),
+            req.curseforge_api_key.as_deref().unwrap_or(""),
+            req.curseforge_endpoint
+                .as_deref()
+                .unwrap_or(crate::curseforge::DEFAULT_SERVICE_URL),
+        );
+        let plan = resolve_required(
+            &chosen,
+            &installed,
+            |dep: &crate::modrinth::models::VersionDependency| {
+                let mr = mr.clone();
+                let cf = cf.clone();
+                let dep = dep.clone();
+                let mc = req.minecraft_version.clone();
+                let loader_id = loader_for_deps.clone();
+                async move {
+                    let vers = if let Some(cf_id) = dep
+                        .project_id
+                        .as_deref()
+                        .and_then(crate::curseforge::id_from_slug)
+                    {
+                        cf.files(cf_id, Some(&mc), Some(&loader_id))
+                            .await?
+                            .iter()
+                            .map(crate::curseforge::to_project_version)
+                            .collect()
+                    } else if let Some(vid) = &dep.version_id {
+                        vec![mr.version(vid).await?]
+                    } else if let Some(pid) = &dep.project_id {
+                        mr.project_versions(pid, Some(&mc), Some(&loader_id))
+                            .await?
+                    } else {
+                        return Ok(None);
+                    };
+                    let compat: Vec<ProjectVersion> = vers
+                        .into_iter()
+                        .filter(|v| {
+                            is_compatible(v, &mc, &loader_id)
+                                && dep.version_id.as_ref().is_none_or(|pin| pin == &v.id)
+                        })
+                        .collect();
+                    Ok(pick_best_version(&compat, &mc, &loader_id).cloned())
+                }
+            },
+        )
         .await?;
         warnings.extend(plan.warnings);
         for dep in plan.ordered {
-            if installed_ids.contains(&dep.project_id) {
+            if installed.get(&dep.project_id) == Some(&dep.version_id) {
                 continue;
             }
             if to_install.iter().any(|v| v.project_id == dep.project_id) {
@@ -197,10 +235,7 @@ pub async fn install_project(
         let file = primary_file(ver).ok_or_else(|| {
             MonoryxError::Modrinth("version has no downloadable files".to_string())
         })?;
-        if file.sha512().is_none()
-            && file.sha1().is_none()
-            && !crate::curseforge::is_curseforge_slug(&req.project_id)
-        {
+        if file.sha512().is_none() && file.sha1().is_none() {
             return Err(MonoryxError::Modrinth(format!(
                 "{} has no file checksum, so the download cannot be verified",
                 file.filename
@@ -213,7 +248,9 @@ pub async fn install_project(
         };
         let dir = target_dir(manager, instance_id, kind);
         std::fs::create_dir_all(&dir)?;
-        let dest = dir.join(crate::utils::fs::safe_file_name(&file.filename)?);
+        crate::utils::fs::safe_file_name(&file.filename)?;
+        let staged_dir = tempfile::tempdir_in(manager.instance_dir(instance_id))?;
+        let dest = staged_dir.path().join(&file.filename);
         let mut job =
             DownloadJob::new(&file.filename, &file.url, dest.clone()).with_size(file.size);
         if let Some(sha512) = file.sha512() {
@@ -222,14 +259,6 @@ pub async fn install_project(
             job = job.with_sha1(sha1.to_string());
         }
         dm.download(&job, None).await?;
-        if let Some(previous) = store.load().entries.into_iter().find(|entry| {
-            entry.kind == kind
-                && entry.project_id.as_deref() == Some(&ver.project_id)
-                && entry.file_name != file.filename
-        }) {
-            remove_project_blocking(manager, instance_id, kind, &previous.file_name)
-                .map_err(MonoryxError::Modrinth)?;
-        }
         let title = if ver.project_id == chosen.project_id {
             Some(req.project_title.clone())
         } else if crate::curseforge::is_curseforge_slug(&ver.project_id) {
@@ -242,22 +271,28 @@ pub async fn install_project(
         } else {
             None
         };
-        store.upsert(InstalledEntry {
-            file_name: file.filename.clone(),
-            kind,
-            project_id: Some(ver.project_id.clone()),
-            project_slug: slug,
-            project_title: title,
-            version_id: Some(ver.id.clone()),
-            version_number: Some(ver.version_number.clone()),
-            file_hash_sha512: file.sha512().map(str::to_string),
-            file_hash_sha1: file.sha1().map(str::to_string),
-            size: file.size,
-            enabled: true,
-            installed_at: chrono::Utc::now().to_rfc3339(),
-            loader: req.loader.clone(),
-            game_version: req.minecraft_version.clone(),
-        })?;
+        store.install_file(
+            &dest,
+            InstalledEntry {
+                file_name: file.filename.clone(),
+                kind,
+                project_id: Some(ver.project_id.clone()),
+                project_slug: slug,
+                project_title: title,
+                version_id: Some(ver.id.clone()),
+                version_number: Some(ver.version_number.clone()),
+                file_hash_sha512: file.sha512().map(str::to_string),
+                file_hash_sha1: file.sha1().map(str::to_string),
+                size: file.size,
+                enabled: true,
+                installed_at: chrono::Utc::now().to_rfc3339(),
+                loader: req.loader.clone(),
+                game_version: req.minecraft_version.clone(),
+            },
+            &manager.game_dir(instance_id),
+            &manager.disabled_dir(instance_id),
+            ver.project_id == chosen.project_id,
+        )?;
         installed_files.push(file.filename.clone());
         report(format!("Installed {}", file.filename), i + 1, total);
     }

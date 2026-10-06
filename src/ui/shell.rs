@@ -8,19 +8,15 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
     let startup_passes = ctx.data_mut(|data| data.get_temp::<u8>(startup_window_id).unwrap_or(0));
     if startup_passes < 5 {
         ctx.data_mut(|data| data.insert_temp(startup_window_id, startup_passes + 1));
-        if state.config.start_maximized {
+        if state.page == Page::Onboarding || state.config.start_maximized {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
             #[cfg(target_os = "windows")]
             crate::utils::system::ensure_window_positioned(true, false);
         } else {
-            let (w, h) = if state.config.is_first_run() {
-                (metrics::ONBOARDING_WINDOW[0], metrics::ONBOARDING_WINDOW[1])
-            } else {
-                (
-                    state.config.window_width.clamp(850.0, 2560.0),
-                    state.config.window_height.clamp(560.0, 1440.0),
-                )
-            };
+            let (w, h) = (
+                state.config.window_width.clamp(850.0, 2560.0),
+                state.config.window_height.clamp(560.0, 1440.0),
+            );
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             #[cfg(target_os = "windows")]
             crate::utils::system::ensure_window_positioned(false, startup_passes == 0);
@@ -82,6 +78,7 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                             if ui.button("Dismiss").clicked() {
                                 state.show_update_banner = false;
                             }
+                            let banner_btn_corner = CornerRadius::same(6);
                             if let Some(path) = state.launcher_update_downloaded.clone() {
                                 if ui
                                     .add(
@@ -91,7 +88,7 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                                                 .strong(),
                                         )
                                         .fill(ACCENT)
-                                        .corner_radius(CornerRadius::same(6)),
+                                        .corner_radius(banner_btn_corner),
                                     )
                                     .clicked()
                                 {
@@ -106,14 +103,16 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                                                 .strong(),
                                         )
                                         .fill(ACCENT)
-                                        .corner_radius(CornerRadius::same(6)),
+                                        .corner_radius(banner_btn_corner),
                                     )
                                     .clicked()
                                 {
                                     state.set_page(Page::Settings);
                                 }
                                 if let Some(_dl) = &update.download_url {
-                                    if ui.button("Download").clicked() {
+                                    if crate::ui::components::secondary_button(ui, "Download")
+                                        .clicked()
+                                    {
                                         #[cfg(target_os = "windows")]
                                         {
                                             state.download_launcher_update();
@@ -140,7 +139,19 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                 .inner_margin(egui::Margin::same(16)),
         )
         .show(ctx, |ui| {
+            if crate::ui::theme::current_theme(ctx) == crate::config::ThemeKind::Halloween {
+                crate::ui::components::draw_halloween_sidebar_artwork(ui.painter(), ui.max_rect());
+            }
             ui.add_space(6.0);
+            if crate::ui::theme::current_theme(ctx) == crate::config::ThemeKind::Halloween {
+                let (bat_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 16.0),
+                    egui::Sense::hover(),
+                );
+                let bat_center = egui::pos2(bat_rect.left() + 53.0, bat_rect.center().y);
+                crate::ui::components::draw_glowing_bat(ui.painter(), bat_center, theme.accent);
+                ui.add_space(2.0);
+            }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("MONORYX").size(20.0).strong().color(TEXT));
             });
@@ -162,6 +173,38 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                     for page in Page::all() {
                         if page == Page::Accounts {
                             ui.add_space(16.0);
+                            if crate::ui::theme::current_theme(ctx)
+                                == crate::config::ThemeKind::Halloween
+                            {
+                                let (p_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), 16.0),
+                                    egui::Sense::hover(),
+                                );
+                                let base =
+                                    egui::pos2(p_rect.left() + 32.0, p_rect.center().y + 2.0);
+                                crate::ui::components::draw_small_pumpkin(
+                                    ui.painter(),
+                                    base + egui::vec2(-14.0, 0.0),
+                                    11.0,
+                                    -0.12,
+                                    true,
+                                );
+                                crate::ui::components::draw_small_pumpkin(
+                                    ui.painter(),
+                                    base,
+                                    14.0,
+                                    0.08,
+                                    true,
+                                );
+                                crate::ui::components::draw_small_pumpkin(
+                                    ui.painter(),
+                                    base + egui::vec2(14.0, 1.0),
+                                    10.0,
+                                    -0.18,
+                                    true,
+                                );
+                                ui.add_space(2.0);
+                            }
                             ui.label(RichText::new("MANAGE").size(10.0).strong().color(MUTED));
                         }
                         let sel = state.page == page;
@@ -187,6 +230,9 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                 .inner_margin(egui::Margin::same(metrics::PAGE_MARGIN)),
         )
         .show(ctx, |ui| {
+            if crate::ui::theme::current_theme(ctx) == crate::config::ThemeKind::Halloween {
+                crate::ui::components::draw_halloween_shell_artwork(ui.painter(), ui.max_rect());
+            }
             let page_id = egui::Id::new("page-transition");
             let changed = ctx.data_mut(|data| {
                 let previous = data.get_temp::<Page>(page_id);
@@ -203,23 +249,28 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                 ctx.request_repaint();
             }
 
-            egui::ScrollArea::vertical()
+            let mut scroll_area = egui::ScrollArea::vertical()
                 .id_salt(("page-scroll", state.page.as_str()))
-                .auto_shrink([false, false])
-                .show(ui, |ui| match state.page {
-                    Page::Home => crate::ui::pages::home::show(state, ctx, ui),
-                    Page::Instances => crate::ui::pages::instances::show(state, ctx, ui),
-                    Page::Worlds => crate::ui::pages::worlds::show(state, ctx, ui),
-                    Page::Discover => crate::ui::pages::discover::show(state, ctx, ui),
-                    Page::Library => crate::ui::pages::library::show(state, ctx, ui),
-                    Page::Screenshots => crate::ui::pages::screenshots::show(state, ctx, ui),
-                    Page::Downloads => crate::ui::pages::downloads::show(state, ctx, ui),
-                    Page::Nexeu => crate::ui::pages::nexeu::show(state, ctx, ui),
-                    Page::Accounts => crate::ui::pages::accounts::show(state, ctx, ui),
-                    Page::Settings => crate::ui::pages::settings::show(state, ctx, ui),
-                    Page::Logs => crate::ui::pages::logs::show(state, ctx, ui),
-                    Page::Onboarding => {}
-                });
+                .auto_shrink([false, false]);
+            if state.page == Page::Discover && state.reset_discover_scroll {
+                scroll_area = scroll_area.vertical_scroll_offset(0.0);
+                state.reset_discover_scroll = false;
+            }
+
+            scroll_area.show(ui, |ui| match state.page {
+                Page::Home => crate::ui::pages::home::show(state, ctx, ui),
+                Page::Instances => crate::ui::pages::instances::show(state, ctx, ui),
+                Page::Worlds => crate::ui::pages::worlds::show(state, ctx, ui),
+                Page::Discover => crate::ui::pages::discover::show(state, ctx, ui),
+                Page::Library => crate::ui::pages::library::show(state, ctx, ui),
+                Page::Screenshots => crate::ui::pages::screenshots::show(state, ctx, ui),
+                Page::Downloads => crate::ui::pages::downloads::show(state, ctx, ui),
+                Page::Nexeu => crate::ui::pages::nexeu::show(state, ctx, ui),
+                Page::Accounts => crate::ui::pages::accounts::show(state, ctx, ui),
+                Page::Settings => crate::ui::pages::settings::show(state, ctx, ui),
+                Page::Logs => crate::ui::pages::logs::show(state, ctx, ui),
+                Page::Onboarding => {}
+            });
         });
 
     crate::ui::palette::show(state, ctx);
@@ -495,14 +546,14 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Copy error").clicked() {
+                    if crate::ui::components::secondary_button(ui, "Copy error").clicked() {
                         ctx.copy_text(msg.clone());
                         state.notify("Error message copied to clipboard");
                     }
-                    if ui.button("Close").clicked() {
+                    if crate::ui::components::primary_button(ui, "Close").clicked() {
                         state.error_dialog.clear();
                     }
-                    if ui.button("View Logs").clicked() {
+                    if crate::ui::components::secondary_button(ui, "View Logs").clicked() {
                         state.error_dialog.clear();
                         state.set_page(Page::Logs);
                     }
@@ -511,12 +562,16 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
     }
 
     if state.edit_instance.is_some() {
+        let max_w = (ctx.screen_rect().width() - 40.0).clamp(360.0, 520.0);
         egui::Window::new("Edit Instance")
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .min_width(440.0)
+            .default_width(max_w)
+            .min_width(max_w)
+            .max_width(max_w)
             .show(ctx, |ui| {
+                ui.set_width(max_w);
                 show_edit_dialog(state, ui);
             });
     }
@@ -545,7 +600,95 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         return;
     };
 
-    ui.label(RichText::new("Name").size(11.0).color(TEXT2));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+        for (tab_idx, tab_name) in [(0, "General"), (1, "Performance"), (2, "Launch options")] {
+            let is_selected = state.edit_tab == tab_idx;
+            if crate::ui::components::pill_tab_button(ui, tab_name, is_selected).clicked() {
+                state.edit_tab = tab_idx;
+            }
+        }
+    });
+
+    ui.add_space(12.0);
+
+    let max_body_h = (ui.ctx().screen_rect().height() - 200.0).clamp(160.0, 420.0);
+    egui::ScrollArea::vertical()
+        .max_height(max_body_h)
+        .auto_shrink([false, true])
+        .show(ui, |ui| match state.edit_tab {
+            0 => show_edit_general(state, ui, &mut cfg),
+            1 => show_edit_performance(state, ui, &mut cfg),
+            _ => show_edit_launch(ui, &mut cfg),
+        });
+
+    ui.add_space(14.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    ui.horizontal(|ui| {
+        if crate::ui::components::secondary_button(ui, "Cancel").clicked() {
+            state.edit_instance = None;
+            state.edit_error.clear();
+        }
+        if crate::ui::components::secondary_button(ui, "Manage content").clicked() {
+            state.selected_instance = Some(cfg.id.clone());
+            state.edit_instance = None;
+            state.refresh_library();
+            state.set_page(Page::Library);
+        }
+        if crate::ui::components::secondary_button(ui, "Export").clicked() {
+            if let Some(p) = rfd::FileDialog::new()
+                .set_file_name(format!("{}-export.zip", cfg.name))
+                .save_file()
+            {
+                let dir = state.instances.instance_dir(&cfg.id);
+                let meta: std::collections::HashMap<String, (Option<String>, Option<String>)> =
+                    crate::content::ContentStore::for_instance(&dir)
+                        .load()
+                        .entries
+                        .into_iter()
+                        .map(|entry| (entry.file_name, (entry.project_id, entry.version_id)))
+                        .collect();
+                match crate::instance::export::export_instance(&dir, &cfg, &p, true, &meta) {
+                    Ok(()) => state.notify("Instance exported"),
+                    Err(e) => state.fail(e.user_message()),
+                }
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::ui::components::primary_button(ui, "Save changes").clicked() {
+                match cfg.validate() {
+                    Ok(()) => {
+                        if let Err(e) = state.instances.save(&cfg) {
+                            state.edit_error = e.user_message();
+                        } else {
+                            state.edit_instance = None;
+                            state.edit_error.clear();
+                            state.refresh_instances();
+                            state.notify("Instance saved");
+                        }
+                    }
+                    Err(e) => state.edit_error = e.user_message(),
+                }
+            }
+            if !state.edit_error.is_empty() {
+                ui.label(RichText::new(&state.edit_error).size(11.5).color(DANGER));
+            }
+        });
+    });
+
+    if state.edit_instance.is_some() {
+        state.edit_instance = Some(cfg);
+    }
+}
+
+fn show_edit_general(
+    state: &mut AppState,
+    ui: &mut egui::Ui,
+    cfg: &mut crate::instance::config::InstanceConfig,
+) {
+    crate::ui::components::field_label(ui, "INSTANCE NAME");
     crate::ui::components::limited_text_edit(
         ui,
         "edit-instance-name",
@@ -553,118 +696,156 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         crate::ui::components::limits::INSTANCE_NAME,
         "Instance name",
     );
+    ui.add_space(3.0);
+    ui.label(
+        RichText::new("This name appears in Home and Library.")
+            .size(11.5)
+            .color(TEXT2),
+    );
+    ui.add_space(14.0);
 
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("Minecraft {}", cfg.minecraft_version)).color(TEXT));
-        ui.label(RichText::new(cfg.loader.display_name()).color(TEXT2));
-        if !cfg.loader_version.is_empty() {
-            ui.label(RichText::new(&cfg.loader_version).color(TEXT2));
-        }
-    });
-
-    if cfg.loader != crate::instance::config::LoaderKind::Vanilla {
-        ui.horizontal(|ui| {
-            let checking = state.loader_update_checking.as_deref() == Some(&cfg.id);
-            let installing = state.loader_update_busy.as_deref() == Some(&cfg.id);
-            if ui
-                .add_enabled(
-                    !checking && !installing,
-                    egui::Button::new("Check loader update"),
-                )
-                .clicked()
-            {
-                state.loader_update_checking = Some(cfg.id.clone());
-                state.loader_update_candidate = None;
-                state.loader_update_error.clear();
-                crate::app::tasks::check_loader_update(state, cfg.id.clone());
-            }
-            if checking || installing {
-                ui.spinner();
-                ui.label(if checking {
-                    "Checking..."
+    crate::ui::components::field_label(ui, "VERSION & RUNTIME");
+    let p = crate::ui::theme::palette(ui.ctx());
+    egui::Frame::new()
+        .fill(p.elevated2)
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                crate::ui::components::badge(ui, &format!("Minecraft {}", cfg.minecraft_version));
+                let loader_text = if cfg.loader_version.is_empty() {
+                    cfg.loader.display_name().to_string()
                 } else {
-                    "Installing..."
+                    format!("{} {}", cfg.loader.display_name(), cfg.loader_version)
+                };
+                crate::ui::components::badge(ui, &loader_text);
+            });
+
+            if cfg.loader != crate::instance::config::LoaderKind::Vanilla {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let checking = state.loader_update_checking.as_deref() == Some(&cfg.id);
+                    let installing = state.loader_update_busy.as_deref() == Some(&cfg.id);
+                    let mut check_clicked = false;
+                    ui.add_enabled_ui(!checking && !installing, |ui| {
+                        if crate::ui::components::secondary_button(ui, "Check for loader updates")
+                            .clicked()
+                        {
+                            check_clicked = true;
+                        }
+                    });
+                    if check_clicked {
+                        state.loader_update_checking = Some(cfg.id.clone());
+                        state.loader_update_candidate = None;
+                        state.loader_update_error.clear();
+                        crate::app::tasks::check_loader_update(state, cfg.id.clone());
+                    }
+                    if checking || installing {
+                        ui.spinner();
+                        ui.label(
+                            RichText::new(if checking {
+                                "Checking..."
+                            } else {
+                                "Installing..."
+                            })
+                            .size(11.5)
+                            .color(TEXT2),
+                        );
+                    }
+                    if let Some((id, version)) = state.loader_update_candidate.clone() {
+                        if id == cfg.id {
+                            let mut install_clicked = false;
+                            ui.add_enabled_ui(!installing, |ui| {
+                                if crate::ui::components::primary_button(
+                                    ui,
+                                    &format!("Install {version}"),
+                                )
+                                .clicked()
+                                {
+                                    install_clicked = true;
+                                }
+                            });
+                            if install_clicked {
+                                state.loader_update_busy = Some(cfg.id.clone());
+                                state.loader_update_error.clear();
+                                crate::app::tasks::install_loader_update(
+                                    state,
+                                    cfg.id.clone(),
+                                    version,
+                                );
+                            }
+                        }
+                    }
                 });
-            }
-            if let Some((id, version)) = state.loader_update_candidate.clone() {
-                if id == cfg.id
-                    && ui
-                        .add_enabled(!installing, egui::Button::new(format!("Install {version}")))
-                        .clicked()
-                {
-                    state.loader_update_busy = Some(cfg.id.clone());
-                    state.loader_update_error.clear();
-                    crate::app::tasks::install_loader_update(state, cfg.id.clone(), version);
+                if !state.loader_update_error.is_empty() {
+                    ui.add_space(4.0);
+                    ui.colored_label(DANGER, &state.loader_update_error);
                 }
             }
         });
-        if !state.loader_update_error.is_empty() {
-            ui.colored_label(DANGER, &state.loader_update_error);
-        }
-    }
 
-    ui.add_space(4.0);
-
-    let mut boost_val = cfg.boost_mode.unwrap_or(state.config.boost_mode);
+    ui.add_space(14.0);
+    crate::ui::components::field_label(ui, "QUICK ACTIONS");
     ui.horizontal(|ui| {
-        if ui
-            .checkbox(&mut boost_val, "Eco mode (lower memory limit)")
-            .changed()
-        {
-            cfg.boost_mode = Some(boost_val);
+        if crate::ui::components::secondary_button(ui, "Open game folder").clicked() {
+            let _ = open::that(state.instances.game_dir(&cfg.id));
+        }
+        if crate::ui::components::secondary_button(ui, "Manage mods & files").clicked() {
+            state.selected_instance = Some(cfg.id.clone());
+            state.edit_instance = None;
+            state.refresh_library();
+            state.set_page(Page::Library);
         }
     });
+}
 
+fn show_edit_performance(
+    state: &mut AppState,
+    ui: &mut egui::Ui,
+    cfg: &mut crate::instance::config::InstanceConfig,
+) {
+    crate::ui::components::field_label(ui, "MEMORY ALLOCATION");
+    let mut boost_val = cfg.boost_mode.unwrap_or(state.config.boost_mode);
+    if ui
+        .checkbox(&mut boost_val, "Eco mode — reduce memory usage")
+        .changed()
+    {
+        cfg.boost_mode = Some(boost_val);
+    }
+    ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label("Min MB");
+        ui.label(RichText::new("Minimum:").size(12.0).color(TEXT2));
         ui.add(
             egui::DragValue::new(&mut cfg.memory_min_mb)
                 .range(256..=131_072)
-                .speed(128),
+                .speed(128)
+                .suffix(" MB"),
         );
-        ui.label("Max MB");
+        ui.add_space(16.0);
+        ui.label(RichText::new("Maximum:").size(12.0).color(TEXT2));
         ui.add(
             egui::DragValue::new(&mut cfg.memory_max_mb)
                 .range(256..=131_072)
-                .speed(128),
+                .speed(128)
+                .suffix(" MB"),
         );
     });
-
-    ui.label(RichText::new("JVM arguments").size(11.0).color(TEXT2));
-    crate::ui::components::limited_text_edit_with_hint(
-        ui,
-        "edit-instance-jvm",
-        &mut cfg.jvm_args,
-        crate::ui::components::limits::JVM_ARGS,
-        "-Xmx4G",
-        "Passed to the JVM before the game class.",
+    ui.add_space(3.0);
+    ui.label(
+        RichText::new("Allocated memory dynamically scales up to the maximum during gameplay.")
+            .size(11.0)
+            .color(TEXT2),
     );
 
-    ui.label(RichText::new("Game arguments").size(11.0).color(TEXT2));
-    crate::ui::components::limited_text_edit_with_hint(
-        ui,
-        "edit-instance-game-args",
-        &mut cfg.game_args,
-        crate::ui::components::limits::GAME_ARGS,
-        "--username Steve",
-        "Appended to the game command line.",
+    ui.add_space(14.0);
+    crate::ui::components::field_label(ui, "JAVA RUNTIME");
+    ui.label(
+        RichText::new("Choose the Java installation used to launch Minecraft.")
+            .size(11.5)
+            .color(TEXT2),
     );
-
-    ui.horizontal(|ui| {
-        let mut w = cfg.width.map(|v| v.to_string()).unwrap_or_default();
-        let mut h = cfg.height.map(|v| v.to_string()).unwrap_or_default();
-        ui.label("W");
-        if ui.text_edit_singleline(&mut w).changed() {
-            cfg.width = w.parse().ok();
-        }
-        ui.label("H");
-        if ui.text_edit_singleline(&mut h).changed() {
-            cfg.height = h.parse().ok();
-        }
-        ui.checkbox(&mut cfg.fullscreen, "Fullscreen");
-    });
-
-    ui.label(RichText::new("Java runtime").size(11.0).color(TEXT2));
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
         egui::ComboBox::from_id_salt("edit-instance-java-mode")
             .selected_text(match cfg.java_mode {
@@ -697,7 +878,7 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
                 crate::ui::components::limits::PATH,
                 "C:\\Program Files\\Java\\bin\\javaw.exe",
             );
-            if ui.button("Browse").clicked() {
+            if crate::ui::components::secondary_button(ui, "Browse").clicked() {
                 if let Some(p) = rfd::FileDialog::new().pick_file() {
                     cfg.java_path = p.display().to_string();
                 }
@@ -705,60 +886,117 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
         }
     });
 
-    if !state.edit_error.is_empty() {
-        ui.label(RichText::new(&state.edit_error).color(DANGER));
-    }
-
+    ui.add_space(14.0);
+    crate::ui::components::field_label(ui, "JVM PRESETS");
+    ui.label(
+        RichText::new("Apply garbage collector optimizations suited for your hardware.")
+            .size(11.5)
+            .color(TEXT2),
+    );
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        if ui.button("Cancel").clicked() {
-            state.edit_instance = None;
-            state.edit_error.clear();
-        }
-        if ui.button("Save").clicked() {
-            match cfg.validate() {
-                Ok(()) => {
-                    if let Err(e) = state.instances.save(&cfg) {
-                        state.edit_error = e.user_message();
-                    } else {
-                        state.edit_instance = None;
-                        state.edit_error.clear();
-                        state.refresh_instances();
-                        state.notify("Instance saved");
-                    }
-                }
-                Err(e) => state.edit_error = e.user_message(),
-            }
-        }
-        if ui.button("Export").clicked() {
-            if let Some(p) = rfd::FileDialog::new()
-                .set_file_name(format!("{}-export.zip", cfg.name))
-                .save_file()
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for preset in [
+            crate::config::JvmPreset::Aikar,
+            crate::config::JvmPreset::Shenandoah,
+            crate::config::JvmPreset::GenerationalZgc,
+            crate::config::JvmPreset::HighThroughput,
+            crate::config::JvmPreset::LowMemory,
+        ] {
+            let is_active = cfg.jvm_args == preset.flags();
+            if crate::ui::components::pill_tab_button(ui, preset.short_name(), is_active)
+                .on_hover_text(preset.label())
+                .clicked()
             {
-                let dir = state.instances.instance_dir(&cfg.id);
-                let meta: std::collections::HashMap<String, (Option<String>, Option<String>)> =
-                    crate::content::ContentStore::for_instance(&dir)
-                        .load()
-                        .entries
-                        .into_iter()
-                        .map(|entry| (entry.file_name, (entry.project_id, entry.version_id)))
-                        .collect();
-                match crate::instance::export::export_instance(&dir, &cfg, &p, true, &meta) {
-                    Ok(()) => state.notify("Instance exported"),
-                    Err(e) => state.fail(e.user_message()),
-                }
+                cfg.jvm_args = preset.flags().to_string();
             }
         }
-        if ui.button("Manage content").clicked() {
-            state.selected_instance = Some(cfg.id.clone());
-            state.edit_instance = None;
-            state.refresh_library();
-            state.set_page(Page::Library);
+        if !cfg.jvm_args.is_empty() && ui.button("Clear").clicked() {
+            cfg.jvm_args.clear();
         }
     });
 
-    if state.edit_instance.is_some() {
-        state.edit_instance = Some(cfg);
+    ui.add_space(6.0);
+    crate::ui::components::limited_text_edit_with_hint(
+        ui,
+        "edit-instance-jvm",
+        &mut cfg.jvm_args,
+        crate::ui::components::limits::JVM_ARGS,
+        "-Xmx4G",
+        "Passed to the JVM before the game class.",
+    );
+}
+
+fn show_edit_launch(ui: &mut egui::Ui, cfg: &mut crate::instance::config::InstanceConfig) {
+    crate::ui::components::field_label(ui, "WINDOW SIZE");
+    ui.label(
+        RichText::new("Initial window resolution when Minecraft starts.")
+            .size(11.5)
+            .color(TEXT2),
+    );
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let mut w = cfg.width.map(|v| v.to_string()).unwrap_or_default();
+        let mut h = cfg.height.map(|v| v.to_string()).unwrap_or_default();
+        ui.label(RichText::new("Width:").size(12.0).color(TEXT2));
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut w)
+                    .desired_width(75.0)
+                    .hint_text("Default"),
+            )
+            .changed()
+        {
+            cfg.width = w.parse().ok();
+        }
+        ui.add_space(14.0);
+        ui.label(RichText::new("Height:").size(12.0).color(TEXT2));
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut h)
+                    .desired_width(75.0)
+                    .hint_text("Default"),
+            )
+            .changed()
+        {
+            cfg.height = h.parse().ok();
+        }
+    });
+    ui.add_space(6.0);
+    ui.checkbox(&mut cfg.fullscreen, "Start in fullscreen mode");
+
+    ui.add_space(14.0);
+    crate::ui::components::field_label(ui, "GAME ARGUMENTS");
+    ui.label(
+        RichText::new("Custom command line arguments passed directly to Minecraft.")
+            .size(11.5)
+            .color(TEXT2),
+    );
+    ui.add_space(4.0);
+    crate::ui::components::limited_text_edit_with_hint(
+        ui,
+        "edit-instance-game-args",
+        &mut cfg.game_args,
+        crate::ui::components::limits::GAME_ARGS,
+        "--username Steve",
+        "Appended to the game command line.",
+    );
+}
+
+fn page_icon(page: Page) -> &'static str {
+    match page {
+        Page::Onboarding => "✨",
+        Page::Home => "🏠",
+        Page::Instances => "📦",
+        Page::Worlds => "📁",
+        Page::Discover => "🧭",
+        Page::Library => "🔖",
+        Page::Screenshots => "🖼",
+        Page::Downloads => "📥",
+        Page::Nexeu => "🔗",
+        Page::Accounts => "👤",
+        Page::Settings => "⚙",
+        Page::Logs => "📄",
     }
 }
 
@@ -770,6 +1008,7 @@ fn sidebar_item(
     has_badge: bool,
 ) -> egui::Response {
     let label = page.label();
+    let icon = page_icon(page);
     let id = ui.make_persistent_id(format!("sidebar_item_{label}"));
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
@@ -779,6 +1018,7 @@ fn sidebar_item(
         ctx.request_repaint();
     }
     let p = crate::ui::theme::palette(ctx);
+    let current_theme = crate::ui::theme::current_theme(ctx);
     let fill = if selected {
         p.accent
     } else if fade > 0.01 {
@@ -788,17 +1028,30 @@ fn sidebar_item(
     };
 
     if fill != Color32::TRANSPARENT {
-        ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+        let item_corner = CornerRadius::same(8);
+        ui.painter().rect_filled(rect, item_corner, fill);
     }
 
     let text_color = if selected {
-        p.accent_text
+        if current_theme == crate::config::ThemeKind::Halloween {
+            Color32::WHITE
+        } else {
+            p.accent_text
+        }
     } else {
         TEXT2.lerp_to_gamma(TEXT, fade)
     };
 
     ui.painter().text(
-        egui::pos2(rect.min.x + 14.0, rect.center().y),
+        egui::pos2(rect.min.x + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        icon,
+        egui::FontId::proportional(12.5),
+        text_color,
+    );
+
+    ui.painter().text(
+        egui::pos2(rect.min.x + 32.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         if selected {
@@ -822,7 +1075,24 @@ fn sidebar_item(
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    response
+    response.on_hover_text(page_tooltip(page))
+}
+
+fn page_tooltip(page: Page) -> &'static str {
+    match page {
+        Page::Home => "Home · Your selected instance, quick actions, and recent activity",
+        Page::Instances => "Instances · Create, configure, and manage Minecraft installations",
+        Page::Worlds => "Worlds & Files · Browse world saves, resource packs, and instance files",
+        Page::Discover => "Discover · Search and install mods, modpacks, and shaders",
+        Page::Library => "Library · Installed mods and content across your instances",
+        Page::Screenshots => "Screenshots · View, organize, and export in-game screenshots",
+        Page::Downloads => "Downloads · Active game and mod downloads",
+        Page::Nexeu => "Nexeu Servers · Partner Minecraft community servers",
+        Page::Accounts => "Accounts · Switch player accounts or manage offline mode",
+        Page::Settings => "Settings · Launcher preferences, Java runtimes, and themes",
+        Page::Logs => "Logs · Launcher and game crash diagnostic logs",
+        Page::Onboarding => "Setup",
+    }
 }
 fn status_card(state: &mut AppState, ui: &mut egui::Ui, theme: crate::ui::theme::Palette) {
     let op_phase = state.operations.values().next().map(|o| o.phase.clone());
@@ -831,10 +1101,11 @@ fn status_card(state: &mut AppState, ui: &mut egui::Ui, theme: crate::ui::theme:
     }
     let text = op_phase.unwrap_or_else(|| state.global_status.clone());
     let frac = state.global_frac;
+    let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     egui::Frame::new()
         .fill(theme.elevated2)
         .stroke(Stroke::new(1.0_f32, theme.border))
-        .corner_radius(CornerRadius::same(metrics::CARD_RADIUS))
+        .corner_radius(card_corner)
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -856,6 +1127,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
     let account = state.config.active_account();
     let has_update = state.launcher_update.as_ref().is_some_and(|u| u.has_update);
     let version = env!("CARGO_PKG_VERSION").to_string();
+    let theme = crate::ui::theme::palette(ui.ctx());
 
     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
         if let Some(acc) = account {
@@ -869,14 +1141,14 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
             if fade > 0.001 && fade < 0.999 {
                 ui.ctx().request_repaint();
             }
-            let theme = crate::ui::theme::palette(ui.ctx());
             let fill = theme.elevated2.lerp_to_gamma(theme.hover, fade);
-            let border_color = theme.border.lerp_to_gamma(theme.accent, fade * 0.28);
+            let border_color = theme.border;
+            let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
 
             let frame_resp = egui::Frame::new()
                 .fill(fill)
                 .stroke(Stroke::new(1.0_f32, border_color))
-                .corner_radius(CornerRadius::same(metrics::CARD_RADIUS))
+                .corner_radius(card_corner)
                 .inner_margin(egui::Margin::symmetric(10, 7))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
@@ -900,7 +1172,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         }
                         ui.add_space(6.0);
 
-                        let badge_width = 46.0_f32;
+                        let badge_width = 50.0_f32;
                         let name_width = (ui.available_width() - badge_width).max(24.0);
                         let (name_rect, _) = ui.allocate_exact_size(
                             egui::vec2(name_width, 22.0),
@@ -909,7 +1181,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         ui.painter().with_clip_rect(name_rect).text(
                             name_rect.left_center(),
                             egui::Align2::LEFT_CENTER,
-                            crate::ui::components::elide(acc.username(), 16),
+                            crate::ui::components::elide(acc.username(), 11),
                             egui::FontId::new(type_scale::LABEL, egui::FontFamily::Proportional),
                             TEXT,
                         );
@@ -921,9 +1193,9 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                             badge.right_center(),
                             egui::Align2::RIGHT_CENTER,
                             if acc.is_offline() {
-                                "Offline"
+                                "Offline ▾"
                             } else {
-                                "Microsoft"
+                                "Microsoft ▾"
                             },
                             egui::FontId::proportional(type_scale::MICRO),
                             if acc.is_offline() {
@@ -974,6 +1246,57 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                     .size(type_scale::MICRO)
                     .color(MUTED),
             );
+            let (theme_icon, theme_label) = match state.config.theme {
+                crate::config::ThemeKind::Monochrome => ("◐", "Mono"),
+                crate::config::ThemeKind::Gloss => ("✨", "Gloss"),
+                crate::config::ThemeKind::Halloween => ("🎃", "Spooky"),
+                crate::config::ThemeKind::SoftPink => ("🌸", "Pink"),
+                crate::config::ThemeKind::SoftBrown => ("🍂", "Brown"),
+            };
+            let icon_color = if state.config.theme == crate::config::ThemeKind::Halloween {
+                Color32::from_rgb(255, 125, 20)
+            } else {
+                TEXT2
+            };
+            let theme_btn_size = egui::vec2(66.0, 20.0);
+            let (theme_rect, theme_click) =
+                ui.allocate_exact_size(theme_btn_size, egui::Sense::click());
+            let theme_hovered = theme_click.hovered();
+            if theme_hovered {
+                let toggle_corner = CornerRadius::same(4);
+                ui.painter()
+                    .rect_filled(theme_rect, toggle_corner, theme.hover);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            ui.painter().text(
+                egui::pos2(theme_rect.left() + 4.0, theme_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                format!("{theme_icon} {theme_label}"),
+                egui::FontId::proportional(type_scale::MICRO),
+                if theme_hovered {
+                    Color32::WHITE
+                } else {
+                    icon_color
+                },
+            );
+            if theme_click
+                .on_hover_text(format!(
+                    "Theme: {} (click to cycle themes)",
+                    state.config.theme.label()
+                ))
+                .clicked()
+            {
+                let next_theme = match state.config.theme {
+                    crate::config::ThemeKind::Monochrome => crate::config::ThemeKind::Gloss,
+                    crate::config::ThemeKind::Gloss => crate::config::ThemeKind::Halloween,
+                    crate::config::ThemeKind::Halloween => crate::config::ThemeKind::SoftPink,
+                    crate::config::ThemeKind::SoftPink => crate::config::ThemeKind::SoftBrown,
+                    crate::config::ThemeKind::SoftBrown => crate::config::ThemeKind::Monochrome,
+                };
+                state.config.theme = next_theme;
+                crate::ui::theme::apply_selected_theme(ui.ctx(), next_theme);
+                state.save_config();
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if has_update
                     && crate::ui::components::button(

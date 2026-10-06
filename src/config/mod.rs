@@ -2,6 +2,7 @@ use crate::account::offline::OfflineProfile;
 use crate::error::{MonoryxError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+mod secrets;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -55,9 +56,10 @@ impl GpuPreference {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeKind {
-    #[default]
     Monochrome,
     Gloss,
+    #[default]
+    Halloween,
     SoftPink,
     SoftBrown,
 }
@@ -67,15 +69,17 @@ impl ThemeKind {
         match self {
             Self::Monochrome => "Monochrome",
             Self::Gloss => "Gloss",
+            Self::Halloween => "Halloween",
             Self::SoftPink => "Soft pink",
             Self::SoftBrown => "Soft brown",
         }
     }
 
-    pub const fn all() -> [Self; 4] {
+    pub const fn all() -> [Self; 5] {
         [
             Self::Monochrome,
             Self::Gloss,
+            Self::Halloween,
             Self::SoftPink,
             Self::SoftBrown,
         ]
@@ -107,12 +111,21 @@ pub struct JavaDefaults {
     pub custom_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct CurseForgeSettings {
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub api_key: String,
     #[serde(default)]
     pub custom_endpoint: String,
+}
+
+impl std::fmt::Debug for CurseForgeSettings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CurseForgeSettings")
+            .field("custom_endpoint", &self.custom_endpoint)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CurseForgeSettings {
@@ -219,19 +232,46 @@ pub enum JvmPreset {
     None,
     #[default]
     Aikar,
+    Shenandoah,
+    GenerationalZgc,
+    LowMemory,
+    HighThroughput,
 }
 
 impl JvmPreset {
     #[must_use]
-    pub const fn all() -> [Self; 2] {
-        [Self::None, Self::Aikar]
+    pub const fn all() -> [Self; 6] {
+        [
+            Self::Aikar,
+            Self::Shenandoah,
+            Self::GenerationalZgc,
+            Self::HighThroughput,
+            Self::LowMemory,
+            Self::None,
+        ]
     }
 
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::None => "None (use my own)",
-            Self::Aikar => "Aikar flags (recommended)",
+            Self::None => "Vanilla (no extra flags)",
+            Self::Aikar => "Aikar's G1GC (recommended)",
+            Self::Shenandoah => "Shenandoah GC (ultra-low pause)",
+            Self::GenerationalZgc => "Generational ZGC (Java 21+)",
+            Self::HighThroughput => "High Throughput G1GC (modpacks 8GB+)",
+            Self::LowMemory => "Low Memory / Budget (<4GB RAM)",
+        }
+    }
+
+    #[must_use]
+    pub const fn short_name(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Aikar => "Aikar",
+            Self::Shenandoah => "Shenandoah",
+            Self::GenerationalZgc => "ZGC",
+            Self::HighThroughput => "High Throughput",
+            Self::LowMemory => "Low RAM",
         }
     }
 
@@ -249,17 +289,43 @@ impl JvmPreset {
                 "-XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1 ",
                 "-Dusing.aikars.flags=https://mcflags.emc.gs -Daikarsnewflags=true"
             ),
+            Self::Shenandoah => concat!(
+                "-XX:+UseShenandoahGC -XX:+UnlockExperimentalVMOptions ",
+                "-XX:ShenandoahGCMode=satb -XX:ShenandoahGCHeuristics=adaptive ",
+                "-XX:+AlwaysPreTouch -XX:+DisableExplicitGC"
+            ),
+            Self::GenerationalZgc => concat!(
+                "-XX:+UseZGC -XX:+ZGenerational -XX:+UnlockExperimentalVMOptions ",
+                "-XX:+AlwaysPreTouch -XX:+DisableExplicitGC"
+            ),
+            Self::HighThroughput => concat!(
+                "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=130 ",
+                "-XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch ",
+                "-XX:G1NewSizePercent=28 -XX:G1MaxNewSizePercent=38 -XX:G1ReservePercent=15 ",
+                "-XX:G1HeapRegionSize=16M -XX:InitiatingHeapOccupancyPercent=20"
+            ),
+            Self::LowMemory => "-XX:+UseSerialGC -XX:+DisableExplicitGC -XX:+AlwaysPreTouch",
         }
     }
 
     #[must_use]
     pub const fn hint(self) -> &'static str {
         match self {
-            Self::None => "Instances use whatever you type in their own JVM arguments field.",
+            Self::None => "Vanilla launcher behavior. No extra garbage collector flags injected.",
             Self::Aikar => {
-                "Tunes garbage collection for long sessions, so the game stutters less. \
-                 It does not make the game boot faster. Ignored on instances where you set \
-                 your own arguments."
+                "The community standard for Minecraft. Optimizes G1GC to prevent garbage collection lag spikes during long sessions."
+            }
+            Self::Shenandoah => {
+                "Reduces GC pause times down to single-digit milliseconds. Excellent for Java 11, 17, and 21 on multi-core CPUs."
+            }
+            Self::GenerationalZgc => {
+                "Next-generation ultra-low latency collector for Java 21+. Keeps GC pause times under 1ms even with high memory heaps."
+            }
+            Self::HighThroughput => {
+                "Aggressively tuned for heavy 200+ modpacks with 8GB or more allocated RAM to maximize FPS stability."
+            }
+            Self::LowMemory => {
+                "Uses lightweight Serial GC to minimize memory overhead on budget PCs or laptops with less than 4GB allocated."
             }
         }
     }
@@ -267,6 +333,8 @@ impl JvmPreset {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_id: Option<String>,
     #[serde(default)]
     pub discord: crate::discord::Settings,
     #[serde(default)]
@@ -295,7 +363,7 @@ pub struct LauncherConfig {
     pub window_width: f32,
     #[serde(default = "default_height")]
     pub window_height: f32,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub start_maximized: bool,
     #[serde(default = "default_true")]
     pub completed_onboarding: bool,
@@ -343,6 +411,7 @@ fn default_parallel() -> usize {
 impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
+            credentials_id: None,
             theme: ThemeKind::default(),
             discord: crate::discord::Settings::default(),
             profile: None,
@@ -360,7 +429,7 @@ impl Default for LauncherConfig {
             default_game_args: String::new(),
             window_width: default_width(),
             window_height: default_height(),
-            start_maximized: false,
+            start_maximized: true,
             completed_onboarding: false,
             parallel_downloads: 6,
             show_snapshots: false,
@@ -400,18 +469,111 @@ impl LauncherConfig {
             return Ok(Self::default());
         }
         let text = std::fs::read_to_string(path)?;
-        let config: Self =
-            toml::from_str(&text).map_err(|e| MonoryxError::TomlDe(e.to_string()))?;
+        let mut config: Self = match toml::from_str(&text) {
+            Ok(config) => config,
+            Err(error) => {
+                let backup = path.with_extension("toml.bak");
+                let backup_text = std::fs::read_to_string(&backup).map_err(|_| {
+                    MonoryxError::TomlDe(format!(
+                        "{error}. Configuration was preserved at {}",
+                        path.display()
+                    ))
+                })?;
+                let recovered: Self = toml::from_str(&backup_text).map_err(|_| {
+                    MonoryxError::TomlDe(format!(
+                        "{error}. Configuration and its backup were preserved."
+                    ))
+                })?;
+                let preserved =
+                    path.with_extension(format!("corrupt-{}.toml", uuid::Uuid::new_v4()));
+                std::fs::copy(path, &preserved)?;
+                crate::utils::fs::atomic_write_str(path, &backup_text)?;
+                tracing::warn!("Recovered launcher settings from backup; damaged configuration preserved at {}", preserved.display());
+                recovered
+            }
+        };
+        let legacy_secrets = secrets::Secrets::from_config(&config);
+        if !legacy_secrets.is_empty() {
+            config.save(path)?;
+            config.credentials_id = toml::from_str::<Self>(&std::fs::read_to_string(path)?)
+                .map_err(|e| MonoryxError::TomlDe(e.to_string()))?
+                .credentials_id;
+        } else if let Some(id) = &config.credentials_id {
+            secrets::Secrets::read(id)?.apply(&mut config);
+        }
         if text.contains("keep_open") || text.contains("keepopen") || text.contains("keep-open") {
-            let _ = config.save(path);
+            config.save(path)?;
         }
         Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let lock = crate::utils::fs::path_lock(parent);
+        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = match std::fs::read_to_string(path) {
+            Ok(text) => Some(toml::from_str::<Self>(&text).map_err(|_| MonoryxError::InvalidConfig(format!("Refusing to overwrite damaged settings at {}. Restore the file or its backup first.", path.display())))?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let old_id = previous
+            .as_ref()
+            .and_then(|config| config.credentials_id.clone());
+        let old_secrets = if let Some(id) = &old_id {
+            secrets::Secrets::read(id)?
+        } else {
+            previous
+                .as_ref()
+                .map(secrets::Secrets::from_config)
+                .unwrap_or_default()
+        };
+        let new_secrets = secrets::Secrets::from_config(self);
+        let mut persisted = self.clone();
+        persisted.credentials_id = if new_secrets.is_empty() {
+            None
+        } else if new_secrets == old_secrets && old_id.is_some() {
+            old_id.clone()
+        } else {
+            Some(uuid::Uuid::new_v4().to_string())
+        };
         let text =
-            toml::to_string_pretty(self).map_err(|e| MonoryxError::TomlSer(e.to_string()))?;
-        crate::storage::atomic::atomic_write_str(path, &text)
+            toml::to_string_pretty(&persisted).map_err(|e| MonoryxError::TomlSer(e.to_string()))?;
+        let changed = old_id != persisted.credentials_id;
+        if changed {
+            if let Some(id) = &persisted.credentials_id {
+                if let Err(error) = new_secrets.write(id) {
+                    secrets::Secrets::delete(id);
+                    return Err(error);
+                }
+            }
+        }
+        let write_result = (|| {
+            if let Some(mut backup) = previous {
+                backup.credentials_id = None;
+                backup.microsoft_profile = None;
+                backup.use_microsoft_auth = false;
+                let backup_text = toml::to_string_pretty(&backup)
+                    .map_err(|e| MonoryxError::TomlSer(e.to_string()))?;
+                crate::utils::fs::atomic_write_str(&path.with_extension("toml.bak"), &backup_text)?;
+            }
+            crate::storage::atomic::atomic_write_str(path, &text)
+        })();
+        if let Err(error) = write_result {
+            if changed {
+                if let Some(id) = &persisted.credentials_id {
+                    secrets::Secrets::delete(id);
+                }
+            }
+            return Err(error);
+        }
+        if let Some(id) = old_id.filter(|id| persisted.credentials_id.as_ref() != Some(id)) {
+            secrets::Secrets::delete(&id);
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -423,6 +585,157 @@ impl LauncherConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn signed_in_config() -> LauncherConfig {
+        LauncherConfig {
+            microsoft_profile: Some(crate::account::microsoft::MicrosoftProfile {
+                username: "Player".into(),
+                uuid: uuid::Uuid::new_v4(),
+                access_token: "private-access-token".into(),
+                refresh_token: "private-refresh-token".into(),
+                expires_at: 100,
+            }),
+            curseforge: CurseForgeSettings {
+                api_key: "private-api-key".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn credentials_roundtrip_without_plaintext_in_settings_or_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let config = signed_in_config();
+        config.save(&path).unwrap();
+        config.save(&path).unwrap();
+        for file in [&path, &path.with_extension("toml.bak")] {
+            let text = std::fs::read_to_string(file).unwrap();
+            assert!(!text.contains("private-"));
+            assert!(!text.contains("access_token"));
+            assert!(!text.contains("refresh_token"));
+            assert!(!text.contains("api_key"));
+        }
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert_eq!(loaded.microsoft_profile, config.microsoft_profile);
+        assert_eq!(loaded.curseforge.api_key, config.curseforge.api_key);
+    }
+
+    #[test]
+    fn legacy_plaintext_credentials_migrate_only_after_vault_accepts_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let text = format!("[microsoft_profile]\nusername = 'Player'\nuuid = '{}'\naccess_token = 'private-access-token'\nrefresh_token = 'private-refresh-token'\nexpires_at = 100\n[curseforge]\napi_key = 'private-api-key'\n", uuid::Uuid::new_v4());
+        std::fs::write(&path, &text).unwrap();
+        secrets::backend::FAIL.set(true);
+        let failed = LauncherConfig::load(&path);
+        secrets::backend::FAIL.set(false);
+        assert!(failed.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert_eq!(loaded.curseforge.api_key, "private-api-key");
+        assert_eq!(
+            loaded.microsoft_profile.unwrap().refresh_token,
+            "private-refresh-token"
+        );
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("private-"));
+        assert!(!std::fs::read_to_string(path.with_extension("toml.bak"))
+            .unwrap()
+            .contains("private-"));
+    }
+
+    #[test]
+    fn unavailable_vault_preserves_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        signed_in_config().save(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        secrets::backend::FAIL.set(true);
+        let loaded = LauncherConfig::load(&path);
+        let saved = LauncherConfig::default().save(&path);
+        secrets::backend::FAIL.set(false);
+        assert!(loaded.is_err() && saved.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn damaged_config_is_preserved_and_recovers_last_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = LauncherConfig {
+            last_page: "library".into(),
+            ..Default::default()
+        };
+        config.save(&path).unwrap();
+        config.last_page = "settings".into();
+        config.save(&path).unwrap();
+        std::fs::write(&path, b"broken = [").unwrap();
+        assert!(LauncherConfig::default().save(&path).is_err());
+        let recovered = LauncherConfig::load(&path).unwrap();
+        assert_eq!(recovered.last_page, "library");
+        assert!(std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .any(
+                |file| file.file_name().to_string_lossy().contains("corrupt-")
+                    && std::fs::read(file.path()).unwrap() == b"broken = ["
+            ));
+    }
+
+    #[test]
+    fn sign_out_removes_saved_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        signed_in_config().save(&path).unwrap();
+        let id = LauncherConfig::load(&path).unwrap().credentials_id.unwrap();
+        LauncherConfig::default().save(&path).unwrap();
+        assert!(secrets::Secrets::read(&id).is_err());
+        assert!(LauncherConfig::load(&path)
+            .unwrap()
+            .credentials_id
+            .is_none());
+    }
+
+    #[test]
+    fn changed_credentials_use_a_new_reference_after_successful_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = signed_in_config();
+        config.save(&path).unwrap();
+        let original_id = LauncherConfig::load(&path).unwrap().credentials_id.unwrap();
+        config.microsoft_profile.as_mut().unwrap().refresh_token =
+            "new-private-refresh-token".into();
+        config.save(&path).unwrap();
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert_ne!(loaded.credentials_id.as_deref(), Some(original_id.as_str()));
+        assert_eq!(
+            loaded.microsoft_profile.unwrap().refresh_token,
+            "new-private-refresh-token"
+        );
+        assert!(secrets::Secrets::read(&original_id).is_err());
+    }
+
+    #[test]
+    fn failed_settings_write_keeps_the_previous_credential_reference_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = signed_in_config();
+        config.save(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let original_id = LauncherConfig::load(&path).unwrap().credentials_id.unwrap();
+        std::fs::create_dir(path.with_extension("toml.bak")).unwrap();
+        config.microsoft_profile.as_mut().unwrap().refresh_token =
+            "new-private-refresh-token".into();
+        assert!(config.save(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert_eq!(loaded.credentials_id.as_deref(), Some(original_id.as_str()));
+        assert_eq!(
+            loaded.microsoft_profile.unwrap().refresh_token,
+            "private-refresh-token"
+        );
+    }
 
     #[test]
     fn roundtrip() {
@@ -492,7 +805,12 @@ mod tests {
         config.save(&path).unwrap();
         let loaded = LauncherConfig::load(&path).unwrap();
         assert_eq!(loaded.theme, ThemeKind::SoftPink);
-        assert!(!LauncherConfig::default().start_maximized);
+        assert!(LauncherConfig::default().start_maximized);
+        assert!(
+            toml::from_str::<LauncherConfig>("")
+                .unwrap()
+                .start_maximized
+        );
         assert_eq!(LauncherConfig::default().window_width, 1280.0);
     }
 
@@ -563,5 +881,24 @@ mod tests {
         assert_eq!(loaded.close_action, CloseAction::Hide);
         let migrated_text = std::fs::read_to_string(&p).unwrap();
         assert!(migrated_text.contains("close_action = \"hide\""));
+    }
+
+    #[test]
+    fn jvm_presets_flags() {
+        assert_eq!(JvmPreset::None.flags(), "");
+        assert!(JvmPreset::Aikar.flags().contains("UseG1GC"));
+        assert!(JvmPreset::Shenandoah.flags().contains("UseShenandoahGC"));
+        assert!(JvmPreset::GenerationalZgc.flags().contains("UseZGC"));
+        assert!(JvmPreset::HighThroughput.flags().contains("UseG1GC"));
+        assert!(JvmPreset::HighThroughput
+            .flags()
+            .contains("G1HeapRegionSize=16M"));
+        assert!(JvmPreset::LowMemory.flags().contains("UseSerialGC"));
+
+        assert_eq!(JvmPreset::all().len(), 6);
+        for preset in JvmPreset::all() {
+            assert!(!preset.label().is_empty());
+            assert!(!preset.hint().is_empty());
+        }
     }
 }

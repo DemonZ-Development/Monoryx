@@ -129,6 +129,12 @@ mod tests {
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
+    HierarchyBuilt(
+        u64,
+        String,
+        std::result::Result<crate::content::DependencyHierarchy, String>,
+    ),
+    PackExported(String, std::result::Result<std::path::PathBuf, String>),
     Notice(String),
     Error(String),
     VersionsLoaded(std::result::Result<VersionManifest, String>),

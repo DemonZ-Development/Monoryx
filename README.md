@@ -7,11 +7,11 @@
 ### A native Minecraft Java launcher written in Rust.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/Release-v1.4.0-success.svg)](https://github.com/DemonZ-Development/Monoryx/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-informational.svg)](https://github.com/DemonZ-Development/Monoryx/releases)
+[![Rust](https://img.shields.io/badge/Rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/Release-v1.5.0-success.svg)](https://demonz.org/projects/monoryx)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-informational.svg)](https://demonz.org/projects/monoryx)
 
-[**Download MONORYX**](https://github.com/DemonZ-Development/Monoryx/releases) • [**Installation Guide**](INSTALLATION.md) • [**Changelog**](CHANGELOG.md) • [**Issue Tracker**](https://github.com/DemonZ-Development/Monoryx/issues)
+[**Download MONORYX**](https://demonz.org/projects/monoryx) • [**Installation Guide**](INSTALLATION.md) • [**Changelog**](CHANGELOG.md) • [**Issue Tracker**](https://github.com/DemonZ-Development/Monoryx/issues)
 
 </div>
 
@@ -52,7 +52,7 @@ MONORYX is a desktop launcher for Minecraft: Java Edition. It runs as a native R
 ### Integrations
 - Discord Rich Presence shows your instance, playtime, and world or server name with per-item privacy toggles.
 - Nexeu game panel integration connects to remote server consoles, monitors CPU and memory load, and triggers power actions.
-- Companion updater (`monoryx-updater.exe`) handles in-place updates.
+- Update checks and release notes come from the [official MONORYX API](https://demonz.org/api). Windows updates require SHA-256 verification before installation; the companion updater handles binary replacement.
 
 ---
 
@@ -60,7 +60,7 @@ MONORYX is a desktop launcher for Minecraft: Java Edition. It runs as a native R
 
 ### Windows
 
-1. Download `MONORYX-Setup-1.4.0.exe` or the portable zip from [Releases](https://github.com/DemonZ-Development/Monoryx/releases).
+1. Download `MONORYX-Setup-1.5.0.exe` or the portable zip from the [official website](https://demonz.org/projects/monoryx).
 2. Run the installer or extract the zip archive.
 3. Open MONORYX, set your username or log in with Microsoft, and select your memory limit.
 4. Click **Create Instance**, choose your Minecraft version and loader, then click **Play**.
@@ -73,7 +73,7 @@ For detailed setup steps and screenshots, read [INSTALLATION.md](INSTALLATION.md
 
 ### Requirements
 
-- Rust 1.85 or newer
+- Rust 1.88 or newer
 - Windows, Linux, or macOS
 - C compiler toolchain (MSVC on Windows, GCC/Clang on Linux/macOS)
 - Linux dependencies: `libssl-dev`, `pkg-config`, `libasound2-dev`, `libfontconfig1-dev`
@@ -108,7 +108,7 @@ MONORYX stores all files in an isolated data directory:
 
 ```
 %APPDATA%/DemonZDevelopment/MONORYX/
-├── config.toml           # Launcher settings and account tokens
+├── config.toml           # Launcher settings and credential references
 ├── cache/                # Cached manifests, images, and API responses
 ├── minecraft/            # Assets, libraries, and client jars
 ├── java/                 # Downloaded Temurin runtimes
@@ -119,6 +119,10 @@ MONORYX stores all files in an isolated data directory:
 │       └── game/         # mods, configs, saves, screenshots
 └── logs/                 # Launcher log files
 ```
+
+Microsoft tokens and custom CurseForge API keys are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. Existing plaintext credentials migrate automatically after the credential store accepts them. If secure storage is unavailable, the original settings file is preserved. Linux sign-in requires an unlocked Secret Service provider, such as GNOME Keyring or KWallet.
+
+Settings saves keep a `config.toml.bak` backup without Microsoft credentials or custom API keys. If the main settings file becomes malformed, the launcher preserves it separately and restores that backup; Microsoft sign-in and custom API keys must then be configured again.
 
 ---
 

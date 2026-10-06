@@ -1,5 +1,5 @@
 use crate::error::{MonoryxError, Result};
-use crate::modrinth::models::{DependencyType, ProjectVersion};
+use crate::modrinth::models::{DependencyType, ProjectVersion, VersionDependency};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default)]
@@ -28,25 +28,39 @@ pub struct DepInfo {
 
 pub async fn resolve_required<F, Fut>(
     root: &ProjectVersion,
-    installed: &HashSet<String>,
-    mut fetch_best: F,
+    installed: &HashMap<String, String>,
+    mut fetch_version: F,
 ) -> Result<DependencyPlan>
 where
-    F: FnMut(&str) -> Fut,
+    F: FnMut(&VersionDependency) -> Fut,
     Fut: std::future::Future<Output = Result<Option<ProjectVersion>>>,
 {
-    let mut plan = DependencyPlan::default();
-    let mut visiting: HashSet<String> = HashSet::new();
-    let mut done: HashSet<String> = installed.clone();
-
-    done.insert(root.project_id.clone());
-
-    let mut stack: Vec<(ProjectVersion, usize)> = vec![(root.clone(), 0)];
-
-    let mut ordered_tmp: Vec<ResolvedDep> = Vec::new();
-
-    while let Some((ver, depth)) = stack.pop() {
-        for dep in &ver.dependencies {
+    let mut selected = HashMap::from([(root.project_id.clone(), root.clone())]);
+    let mut fetched = HashMap::new();
+    let mut requests = 0;
+    for _ in 0..1024 {
+        let mut plan = DependencyPlan::default();
+        let mut visited = HashSet::from([root.project_id.clone()]);
+        let mut pins = HashMap::from([(root.project_id.clone(), root.id.clone())]);
+        let mut incompatible = Vec::new();
+        let mut conflicts = Vec::new();
+        let mut failures = Vec::new();
+        let mut changed = false;
+        let mut stack = vec![(root.clone(), 0, 0)];
+        while let Some((ver, depth, index)) = stack.pop() {
+            if index == ver.dependencies.len() {
+                if depth > 0 && installed.get(&ver.project_id) != Some(&ver.id) {
+                    plan.ordered.push(ResolvedDep {
+                        project_id: ver.project_id.clone(),
+                        version_id: ver.id.clone(),
+                        version: ver,
+                        depth,
+                    });
+                }
+                continue;
+            }
+            let dep = ver.dependencies[index].clone();
+            stack.push((ver.clone(), depth, index + 1));
             match dep.dependency_type {
                 DependencyType::Embedded => {
                     plan.warnings.push(format!(
@@ -55,85 +69,165 @@ where
                     ));
                     continue;
                 }
-                DependencyType::Incompatible => {
-                    if let Some(pid) = &dep.project_id {
-                        if done.contains(pid) {
-                            return Err(MonoryxError::DependencyConflict(format!(
-                                "{} is incompatible with installed {}",
-                                ver.project_id, pid
-                            )));
-                        }
-                    }
-                    continue;
-                }
                 DependencyType::Optional => {
                     plan.optional.push(DepInfo {
-                        project_id: dep.project_id.clone(),
-                        version_id: dep.version_id.clone(),
-                        file_name: dep.file_name.clone(),
+                        project_id: dep.project_id,
+                        version_id: dep.version_id,
+                        file_name: dep.file_name,
                     });
+                    continue;
+                }
+                DependencyType::Incompatible => {
+                    incompatible.push((ver.project_id, dep));
                     continue;
                 }
                 DependencyType::Required => {}
             }
-
-            if let Some(vid) = &dep.version_id {
-                if done.contains(vid) {
+            if let Some(pid) = &dep.project_id {
+                if !selected.contains_key(pid)
+                    && installed
+                        .get(pid)
+                        .is_some_and(|vid| dep.version_id.as_ref().is_none_or(|pin| pin == vid))
+                {
+                    if let Some(pin) = &dep.version_id {
+                        if pins.get(pid).is_some_and(|existing| existing != pin) {
+                            conflicts.push(format!("conflicting pinned versions for {pid}"));
+                        } else {
+                            pins.insert(pid.clone(), pin.clone());
+                        }
+                    }
                     continue;
                 }
-
-                if dep.project_id.is_none() {
-                    plan.warnings.push(format!(
-                        "required dependency {vid} has no project id; skipping"
+            }
+            let existing = dep
+                .project_id
+                .as_ref()
+                .and_then(|pid| selected.get(pid))
+                .filter(|version| dep.version_id.as_ref().is_none_or(|pin| pin == &version.id))
+                .cloned();
+            let best = if let Some(version) = existing {
+                version
+            } else {
+                let key = (dep.project_id.clone(), dep.version_id.clone());
+                if let Some(version) = fetched.get(&key) {
+                    ProjectVersion::clone(version)
+                } else {
+                    let label = dep
+                        .version_id
+                        .as_deref()
+                        .or(dep.project_id.as_deref())
+                        .or(dep.file_name.as_deref())
+                        .unwrap_or("unknown");
+                    requests += 1;
+                    if requests > 4096 {
+                        return Err(MonoryxError::DependencyConflict(
+                            "dependency resolution exceeds 4096 requests".into(),
+                        ));
+                    }
+                    let version = match fetch_version(&dep).await {
+                        Ok(Some(version)) => version,
+                        Ok(None) => {
+                            failures.push(format!(
+                                "required dependency {label} has no compatible version"
+                            ));
+                            continue;
+                        }
+                        Err(error) => {
+                            failures.push(format!(
+                                "required dependency {label}: {}",
+                                error.user_message()
+                            ));
+                            continue;
+                        }
+                    };
+                    if dep
+                        .version_id
+                        .as_ref()
+                        .is_some_and(|pin| pin != &version.id)
+                        || dep
+                            .project_id
+                            .as_ref()
+                            .is_some_and(|pid| pid != &version.project_id)
+                    {
+                        return Err(MonoryxError::DependencyConflict(format!("required dependency {label} resolved to a different project or version")));
+                    }
+                    fetched.insert(key, version.clone());
+                    if fetched.len() > 4096 {
+                        return Err(MonoryxError::DependencyConflict(
+                            "dependency resolution exceeds 4096 versions".into(),
+                        ));
+                    }
+                    version
+                }
+            };
+            if let Some(pin) = &dep.version_id {
+                if let Some(existing_pin) = pins.get(&best.project_id).filter(|value| *value != pin)
+                {
+                    conflicts.push(format!(
+                        "conflicting versions for {}: {existing_pin} vs {pin}",
+                        best.project_id
                     ));
                     continue;
                 }
+                pins.insert(best.project_id.clone(), pin.clone());
             }
-            let Some(pid) = dep.project_id.clone() else {
-                continue;
-            };
-            if done.contains(&pid) {
-                continue;
+            if selected
+                .get(&best.project_id)
+                .is_some_and(|version| version.id != best.id)
+            {
+                changed = true;
             }
-            if !visiting.insert(pid.clone()) {
-                return Err(MonoryxError::DependencyConflict(format!(
-                    "dependency cycle detected at {pid}"
-                )));
-            }
-            let Some(best) = fetch_best(&pid).await? else {
-                return Err(MonoryxError::DependencyConflict(format!(
-                    "required dependency {pid} has no compatible version"
-                )));
-            };
-
-            if let Some(existing) = ordered_tmp.iter().find(|r| r.project_id == best.project_id) {
-                if existing.version_id != best.id {
-                    return Err(MonoryxError::DependencyConflict(format!(
-                        "conflicting versions for {}: {} vs {}",
-                        best.project_id, existing.version_id, best.id
-                    )));
+            selected.insert(best.project_id.clone(), best.clone());
+            if visited.insert(best.project_id.clone()) {
+                if visited.len() > 1024 {
+                    return Err(MonoryxError::DependencyConflict(
+                        "dependency graph exceeds 1024 projects".into(),
+                    ));
                 }
-                visiting.remove(&pid);
-                continue;
+                stack.push((best, depth + 1, 0));
             }
-            done.insert(pid.clone());
-            done.insert(best.id.clone());
-            visiting.remove(&pid);
-            ordered_tmp.push(ResolvedDep {
-                project_id: best.project_id.clone(),
-                version_id: best.id.clone(),
-                version: best.clone(),
-                depth: depth + 1,
-            });
-            stack.push((best, depth + 1));
         }
+        if changed {
+            continue;
+        }
+        if !conflicts.is_empty() {
+            return Err(MonoryxError::DependencyConflict(conflicts.join("; ")));
+        }
+        if !failures.is_empty() {
+            return Err(MonoryxError::DependencyConflict(failures.join("; ")));
+        }
+        let mut final_versions = installed.clone();
+        for pid in &visited {
+            if let Some(version) = selected.get(pid) {
+                final_versions.insert(pid.clone(), version.id.clone());
+            }
+        }
+        for (owner, dep) in incompatible {
+            let conflicts = if let Some(pid) = &dep.project_id {
+                final_versions
+                    .get(pid)
+                    .is_some_and(|vid| dep.version_id.as_ref().is_none_or(|pin| pin == vid))
+            } else if let Some(vid) = &dep.version_id {
+                final_versions.values().any(|value| value == vid)
+            } else {
+                false
+            };
+            if conflicts {
+                return Err(MonoryxError::DependencyConflict(format!(
+                    "{owner} is incompatible with {}",
+                    dep.project_id
+                        .as_deref()
+                        .or(dep.version_id.as_deref())
+                        .unwrap_or("unknown")
+                )));
+            }
+        }
+        return Ok(plan);
     }
-
-    ordered_tmp.sort_by_key(|r| std::cmp::Reverse(r.depth));
-    plan.ordered = ordered_tmp;
-    Ok(plan)
+    Err(MonoryxError::DependencyConflict(
+        "dependency constraints did not converge".into(),
+    ))
 }
-
 #[must_use]
 pub fn find_incompatibilities(
     version: &ProjectVersion,
@@ -191,6 +285,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn version_only_dependency_is_resolved_exactly() {
+        let root = ver(
+            "root",
+            "root-v",
+            vec![VersionDependency {
+                version_id: Some("pinned".into()),
+                project_id: None,
+                file_name: None,
+                dependency_type: DependencyType::Required,
+            }],
+        );
+        let plan = resolve_required(&root, &HashMap::new(), |dep| {
+            assert_eq!(dep.version_id.as_deref(), Some("pinned"));
+            async { Ok(Some(ver("dependency", "pinned", vec![]))) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(plan.ordered[0].version_id, "pinned");
+        assert_eq!(plan.ordered[0].project_id, "dependency");
+    }
+
+    #[tokio::test]
+    async fn installed_wrong_version_does_not_satisfy_pin() {
+        let mut dep = req("a");
+        dep.version_id = Some("required-v".into());
+        let root = ver("root", "root-v", vec![dep]);
+        let installed = HashMap::from([("a".into(), "old-v".into())]);
+        let plan = resolve_required(&root, &installed, |_| async {
+            Ok(Some(ver("a", "required-v", vec![])))
+        })
+        .await
+        .unwrap();
+        assert_eq!(plan.ordered.len(), 1);
+        assert_eq!(plan.ordered[0].version_id, "required-v");
+    }
+
+    #[tokio::test]
+    async fn conflicting_pins_are_rejected() {
+        let mut first = req("a");
+        first.version_id = Some("v1".into());
+        let mut second = req("a");
+        second.version_id = Some("v2".into());
+        let root = ver("root", "root-v", vec![first, second]);
+        assert!(resolve_required(&root, &HashMap::new(), |_| async {
+            Ok(Some(ver("a", "v1", vec![])))
+        })
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn incompatible_planned_project_is_rejected_regardless_of_order() {
+        let mut incompatible = req("a");
+        incompatible.dependency_type = DependencyType::Incompatible;
+        let root = ver("root", "root-v", vec![incompatible, req("a")]);
+        assert!(resolve_required(&root, &HashMap::new(), |_| async {
+            Ok(Some(ver("a", "a-v", vec![])))
+        })
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn later_transitive_pin_overrides_unpinned_choice_and_prunes_old_dependencies() {
+        let root = ver("root", "root-v", vec![req("a"), req("b")]);
+        let mut pin = req("a");
+        pin.version_id = Some("a-pinned".into());
+        let versions = HashMap::from([
+            ("a-newest", ver("a", "a-newest", vec![req("orphan")])),
+            ("a-pinned", ver("a", "a-pinned", vec![])),
+            ("b", ver("b", "b-v", vec![pin])),
+            ("orphan", ver("orphan", "orphan-v", vec![])),
+        ]);
+        let plan = resolve_required(&root, &HashMap::new(), |dep| {
+            let key = dep.version_id.as_deref().unwrap_or_else(|| {
+                if dep.project_id.as_deref() == Some("a") {
+                    "a-newest"
+                } else {
+                    dep.project_id.as_deref().unwrap()
+                }
+            });
+            let version = versions.get(key).cloned();
+            async move { Ok(version) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(plan.ordered.len(), 2);
+        assert_eq!(plan.ordered[0].version_id, "a-pinned");
+        assert_eq!(plan.ordered[1].project_id, "b");
+    }
+
+    #[tokio::test]
+    async fn unavailable_dependency_of_a_replaced_unpinned_version_is_pruned() {
+        let root = ver("root", "root-v", vec![req("a"), req("b")]);
+        let mut pin = req("a");
+        pin.version_id = Some("a-pinned".into());
+        let versions = HashMap::from([
+            (
+                "a-newest",
+                ver("a", "a-newest", vec![req("unavailable-orphan")]),
+            ),
+            ("a-pinned", ver("a", "a-pinned", vec![])),
+            ("b", ver("b", "b-v", vec![pin])),
+        ]);
+        let plan = resolve_required(&root, &HashMap::new(), |dep| {
+            let key = dep.version_id.as_deref().unwrap_or_else(|| {
+                if dep.project_id.as_deref() == Some("a") {
+                    "a-newest"
+                } else {
+                    dep.project_id.as_deref().unwrap()
+                }
+            });
+            let version = versions.get(key).cloned();
+            async move { Ok(version) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(plan.ordered.len(), 2);
+        assert_eq!(plan.ordered[0].version_id, "a-pinned");
+    }
+
+    #[tokio::test]
     async fn resolves_transitive_required() {
         let root = ver("root", "v-root", vec![req("a")]);
         let a = ver("a", "v-a", vec![req("b")]);
@@ -198,8 +414,12 @@ mod tests {
         let map: HashMap<String, ProjectVersion> = [("a".to_string(), a), ("b".to_string(), b)]
             .into_iter()
             .collect();
-        let plan = resolve_required(&root, &HashSet::new(), |pid: &str| {
-            let m = map.get(pid).cloned();
+        let plan = resolve_required(&root, &HashMap::new(), |dep: &VersionDependency| {
+            let m = dep
+                .project_id
+                .as_ref()
+                .and_then(|pid| map.get(pid))
+                .cloned();
             async move { Ok(m) }
         })
         .await
@@ -218,8 +438,12 @@ mod tests {
         let map: HashMap<String, ProjectVersion> = [("a".to_string(), a), ("b".to_string(), b)]
             .into_iter()
             .collect();
-        let plan = resolve_required(&root, &HashSet::new(), |pid: &str| {
-            let m = map.get(pid).cloned();
+        let plan = resolve_required(&root, &HashMap::new(), |dep: &VersionDependency| {
+            let m = dep
+                .project_id
+                .as_ref()
+                .and_then(|pid| map.get(pid))
+                .cloned();
             async move { Ok(m) }
         })
         .await
@@ -231,9 +455,11 @@ mod tests {
     #[tokio::test]
     async fn missing_required_errors() {
         let root = ver("root", "v-root", vec![req("ghost")]);
-        let err = resolve_required(&root, &HashSet::new(), |_: &str| async move { Ok(None) })
-            .await
-            .unwrap_err();
+        let err = resolve_required(&root, &HashMap::new(), |_: &VersionDependency| async move {
+            Ok(None)
+        })
+        .await
+        .unwrap_err();
         assert!(matches!(err, MonoryxError::DependencyConflict(_)));
     }
 

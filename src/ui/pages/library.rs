@@ -1,8 +1,9 @@
 use crate::app::state::AppState;
 use crate::content::{ContentKind, InstalledEntry};
 use crate::ui::components::{
-    card_frame, content_primary_button, content_secondary_button, empty_state, hover_card_frame,
-    page_header,
+    badge, badge_accent, badge_ok, badge_warning, card_frame, compact_action_button_with_feedback,
+    compact_danger_button, compact_hover_card_frame, compact_secondary_button,
+    content_primary_button, content_secondary_button, empty_state, page_header,
 };
 use crate::ui::theme::{format_bytes, MUTED, TEXT, TEXT2, WARNING};
 use egui::RichText;
@@ -52,11 +53,29 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             (ContentKind::Resourcepack, "Resource Packs"),
             (ContentKind::Shader, "Shaders"),
         ] {
-            if ui
-                .selectable_label(state.library_filter == k, label)
+            if crate::ui::components::pill_tab_button(ui, label, state.library_filter == k)
                 .clicked()
             {
                 state.library_filter = k;
+            }
+        }
+
+        if state.library_filter == ContentKind::Mod {
+            ui.separator();
+            if crate::ui::components::pill_tab_button(ui, "☰ List", !state.library_view_hierarchy)
+                .clicked()
+            {
+                state.library_view_hierarchy = false;
+            }
+            if crate::ui::components::pill_tab_button(
+                ui,
+                "🌲 Hierarchy",
+                state.library_view_hierarchy,
+            )
+            .clicked()
+            {
+                state.library_view_hierarchy = true;
+                state.ensure_hierarchy();
             }
         }
     });
@@ -81,6 +100,56 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
         {
             crate::app::tasks::update_all_mods(state);
         }
+
+        if content_secondary_button(ui, "📦 Export Pack (.zip)")
+            .on_hover_text("One-click export full instance pack to exports/ folder")
+            .clicked()
+        {
+            state.export_pack(cfg.clone());
+        }
+
+        ui.menu_button("📋 Export List", |ui| {
+            if ui.button("Copy Markdown Table").clicked() {
+                let md =
+                    crate::instance::export::export_mod_list_markdown(&cfg, &state.library_entries);
+                ui.ctx().copy_text(md);
+                state.notify("Copied Markdown mod list to clipboard");
+                ui.close();
+            }
+            if ui.button("Copy Plain Text").clicked() {
+                let txt =
+                    crate::instance::export::export_mod_list_text(&cfg, &state.library_entries);
+                ui.ctx().copy_text(txt);
+                state.notify("Copied plain text mod list to clipboard");
+                ui.close();
+            }
+            if ui.button("Save modlist.txt to exports/").clicked() {
+                let exports_dir = crate::storage::paths::data_root().join("exports");
+                let _ = crate::utils::fs::ensure_dir(&exports_dir);
+                let safe_name = cfg
+                    .name
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect::<String>();
+                let file = exports_dir.join(format!("{safe_name}-mods.txt"));
+                let txt =
+                    crate::instance::export::export_mod_list_text(&cfg, &state.library_entries);
+                if std::fs::write(&file, txt).is_ok() {
+                    state.notify(format!(
+                        "Saved {}",
+                        file.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                    let _ = open::that_detached(&file);
+                }
+                ui.close();
+            }
+        });
     });
     if state.updates_loading {
         ui.horizontal(|ui| {
@@ -109,6 +178,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 "Install content from Discover or copy files manually.",
             );
         });
+        return;
+    }
+    if state.library_view_hierarchy && state.library_filter == ContentKind::Mod {
+        render_hierarchy_view(state, ui, &cfg);
         return;
     }
     let enabled_count = entries.iter().filter(|entry| entry.enabled).count();
@@ -164,7 +237,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     );
     ui.add_space(2.0);
     for e in entries {
-        hover_card_frame(ui, format!("lib_entry_{}", e.file_name), |ui| {
+        compact_hover_card_frame(ui, format!("lib_entry_{}", e.file_name), |ui| {
             let has_update = state
                 .updates
                 .iter()
@@ -173,7 +246,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
             if width >= 960.0 {
                 ui.horizontal(|ui| {
                     let id_width = (width * 0.28).clamp(200.0, 320.0);
-                    let details_width = (width * 0.18).clamp(160.0, 200.0);
+                    let details_width = (width * 0.22).clamp(180.0, 240.0);
                     ui.allocate_ui_with_layout(
                         egui::vec2(id_width, 0.0),
                         egui::Layout::top_down(egui::Align::LEFT),
@@ -201,7 +274,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 });
             } else {
                 ui.horizontal(|ui| {
-                    let id_width = (width * 0.55).max(180.0);
+                    let id_width = (width * 0.52).max(180.0);
                     ui.allocate_ui_with_layout(
                         egui::vec2(id_width, 0.0),
                         egui::Layout::top_down(egui::Align::LEFT),
@@ -216,7 +289,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         |ui| entry_details(ui, &e, has_update),
                     );
                 });
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 if width >= 520.0 {
                     let actions_width = ui.available_width();
                     ui.allocate_ui_with_layout(
@@ -231,28 +304,31 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 }
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(3.0);
     }
 }
 
 fn entry_identity(ui: &mut egui::Ui, entry: &InstalledEntry) {
+    ui.spacing_mut().item_spacing.y = 2.0;
     let title = entry.project_title.as_deref().unwrap_or(&entry.file_name);
-    ui.add(egui::Label::new(RichText::new(title).size(15.0).strong().color(TEXT)).truncate());
-    if title != entry.file_name {
-        ui.add(
-            egui::Label::new(RichText::new(&entry.file_name).size(11.5).color(TEXT2)).truncate(),
-        );
-    }
-    if entry.size > 0 {
-        ui.label(
-            RichText::new(format_bytes(entry.size))
-                .size(11.0)
-                .color(MUTED),
-        );
+    ui.add(egui::Label::new(RichText::new(title).size(14.0).strong().color(TEXT)).truncate());
+    let sub = match (title != entry.file_name, entry.size > 0) {
+        (true, true) => Some(format!(
+            "{} · {}",
+            entry.file_name,
+            format_bytes(entry.size)
+        )),
+        (true, false) => Some(entry.file_name.clone()),
+        (false, true) => Some(format_bytes(entry.size)),
+        (false, false) => None,
+    };
+    if let Some(text) = sub {
+        ui.add(egui::Label::new(RichText::new(text).size(11.0).color(TEXT2)).truncate());
     }
 }
 
 fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
+    ui.spacing_mut().item_spacing.y = 2.0;
     let source = if let Some(pid) = entry.project_id.as_deref() {
         if crate::curseforge::is_curseforge_slug(pid) {
             "CURSEFORGE"
@@ -260,34 +336,8 @@ fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
             "MODRINTH"
         }
     } else {
-        "MANUAL FILE"
+        "MANUAL"
     };
-    ui.label(RichText::new(source).size(10.5).strong().color(MUTED));
-    if let Some(version) = entry.version_number.as_deref() {
-        ui.add(
-            egui::Label::new(
-                RichText::new(format!("Version {version}"))
-                    .size(11.5)
-                    .color(TEXT2),
-            )
-            .truncate(),
-        );
-    }
-    if !entry.game_version.is_empty() {
-        let loader = if entry.loader.is_empty() {
-            String::new()
-        } else {
-            format!(" · {}", entry.loader)
-        };
-        ui.add(
-            egui::Label::new(
-                RichText::new(format!("MC {}{loader}", entry.game_version))
-                    .size(11.5)
-                    .color(TEXT2),
-            )
-            .truncate(),
-        );
-    }
     let (status, color) = if has_update {
         ("Update available", WARNING)
     } else if entry.enabled {
@@ -295,7 +345,29 @@ fn entry_details(ui: &mut egui::Ui, entry: &InstalledEntry, has_update: bool) {
     } else {
         ("Disabled", MUTED)
     };
-    ui.label(RichText::new(status).size(11.5).color(color));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(RichText::new(source).size(10.5).strong().color(MUTED));
+        ui.label(RichText::new("·").size(10.5).color(MUTED));
+        ui.label(RichText::new(status).size(11.0).color(color));
+    });
+    let mut parts = Vec::new();
+    if let Some(version) = entry.version_number.as_deref() {
+        parts.push(format!("v{version}"));
+    }
+    if !entry.game_version.is_empty() {
+        let loader = if entry.loader.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", entry.loader)
+        };
+        parts.push(format!("MC {}{loader}", entry.game_version));
+    }
+    if !parts.is_empty() {
+        ui.add(
+            egui::Label::new(RichText::new(parts.join(" · ")).size(11.0).color(TEXT2)).truncate(),
+        );
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -357,7 +429,7 @@ fn entry_action(
         EntryAction::Update => {
             if let Some(update) = &update {
                 let busy = state.row_is_busy(&entry.file_name);
-                if crate::ui::components::action_button_with_feedback(
+                if compact_action_button_with_feedback(
                     ui,
                     &format!("Update to {}", update.new_version),
                     busy,
@@ -374,7 +446,7 @@ fn entry_action(
                 let busy = state.row_is_busy(&entry.file_name);
                 let mut clicked = false;
                 ui.add_enabled_ui(!busy, |ui| {
-                    if content_secondary_button(ui, "Reinstall").clicked() {
+                    if compact_secondary_button(ui, "Reinstall").clicked() {
                         clicked = true;
                     }
                 });
@@ -395,7 +467,7 @@ fn entry_action(
             }
         }
         EntryAction::Toggle => {
-            if content_secondary_button(ui, if entry.enabled { "Disable" } else { "Enable" })
+            if compact_secondary_button(ui, if entry.enabled { "Disable" } else { "Enable" })
                 .clicked()
             {
                 let target = !entry.enabled;
@@ -419,7 +491,7 @@ fn entry_action(
             }
         }
         EntryAction::OpenFolder => {
-            if content_secondary_button(ui, "Open folder").clicked() {
+            if compact_secondary_button(ui, "Open folder").clicked() {
                 let dir = match entry.kind {
                     ContentKind::Mod => state.instances.mods_dir(instance_id),
                     ContentKind::Resourcepack => state.instances.resourcepacks_dir(instance_id),
@@ -429,7 +501,7 @@ fn entry_action(
             }
         }
         EntryAction::Remove => {
-            if crate::ui::components::danger_button(ui, "Remove").clicked() {
+            if compact_danger_button(ui, "Remove").clicked() {
                 state.pending_content_delete = Some((
                     instance_id.to_string(),
                     entry.kind,
@@ -440,6 +512,176 @@ fn entry_action(
                         .unwrap_or_else(|| entry.file_name.clone()),
                 ));
             }
+        }
+    }
+}
+
+fn render_hierarchy_view(
+    state: &mut AppState,
+    ui: &mut egui::Ui,
+    cfg: &crate::instance::config::InstanceConfig,
+) {
+    state.ensure_hierarchy();
+    let hierarchy = match &state.cached_hierarchy {
+        Some(h) => h.clone(),
+        None => return,
+    };
+
+    if !hierarchy.all_missing.is_empty() {
+        card_frame(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("⚠ Missing Dependencies Detected")
+                        .size(13.0)
+                        .strong()
+                        .color(WARNING),
+                );
+                badge_warning(ui, &format!("{} Missing", hierarchy.all_missing.len()));
+            });
+            ui.add_space(4.0);
+            for item in &hierarchy.all_missing {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("• {} requires", item.mod_name)).color(TEXT2));
+                    ui.label(RichText::new(&item.display_dep).strong().color(WARNING));
+                    let dep_query = item.search_query.clone();
+                    if ui.small_button("Search on Discover").clicked() {
+                        state.search.query = dep_query;
+                        state.set_page(crate::app::Page::Discover);
+                        state.run_search();
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
+    }
+
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("PRIMARY MODS")
+                .size(11.0)
+                .strong()
+                .color(MUTED),
+        );
+        badge(ui, &hierarchy.root_mods.len().to_string());
+    });
+    ui.add_space(4.0);
+
+    if hierarchy.root_mods.is_empty() {
+        card_frame(ui, |ui| {
+            ui.label(
+                RichText::new("No standalone mods detected.")
+                    .size(12.0)
+                    .color(MUTED),
+            );
+        });
+    }
+
+    for node in &hierarchy.root_mods {
+        let e = &node.entry;
+        compact_hover_card_frame(ui, format!("h_root_{}", e.file_name), |ui| {
+            let has_update = state
+                .updates
+                .iter()
+                .any(|u| u.file_name == e.file_name && u.kind == e.kind);
+
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(&node.display_name)
+                                .size(14.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        if let Some(ver) = &e.version_number {
+                            badge(ui, ver);
+                        }
+                    });
+                    if node.display_name != e.file_name {
+                        ui.label(RichText::new(&e.file_name).size(11.0).color(MUTED));
+                    }
+                    if !node.dependencies.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("↳ Depends on:").size(11.0).color(TEXT2));
+                            for dep in &node.dependencies {
+                                badge_ok(ui, dep);
+                            }
+                        });
+                    }
+                    if !node.missing_dependencies.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("↳ Missing:").size(11.0).color(WARNING));
+                            for m in &node.missing_dependencies {
+                                badge_warning(ui, m);
+                            }
+                        });
+                    }
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    entry_actions(ui, state, &cfg.id, e, true);
+                    if has_update {
+                        entry_details(ui, e, true);
+                    }
+                });
+            });
+        });
+        ui.add_space(4.0);
+    }
+
+    if !hierarchy.shared_libraries.is_empty() {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("SHARED LIBRARIES & APIS")
+                    .size(11.0)
+                    .strong()
+                    .color(MUTED),
+            );
+            badge(ui, &hierarchy.shared_libraries.len().to_string());
+        });
+        ui.add_space(4.0);
+
+        for node in &hierarchy.shared_libraries {
+            let e = &node.entry;
+            compact_hover_card_frame(ui, format!("h_lib_{}", e.file_name), |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(&node.display_name)
+                                    .size(14.0)
+                                    .strong()
+                                    .color(TEXT),
+                            );
+                            if let Some(ver) = &e.version_number {
+                                badge(ui, ver);
+                            }
+                            if !node.required_by.is_empty() {
+                                badge_accent(
+                                    ui,
+                                    &format!("Used by {} mods", node.required_by.len()),
+                                );
+                            } else {
+                                badge(ui, "Library");
+                            }
+                        });
+                        if !node.required_by.is_empty() {
+                            let used_summary = node.required_by.join(", ");
+                            ui.label(
+                                RichText::new(format!("Required by: {used_summary}"))
+                                    .size(11.0)
+                                    .color(TEXT2),
+                            );
+                        }
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        entry_actions(ui, state, &cfg.id, e, true);
+                    });
+                });
+            });
+            ui.add_space(4.0);
         }
     }
 }
@@ -468,7 +710,7 @@ mod tests {
         let cc = eframe::CreationContext::_new_kittest(ctx.clone());
         let mut state = AppState::new_for_preview(&cc, paths);
         state.selected_instance = Some(inst.id.clone());
-        state.instance_list = vec![inst.clone()];
+        state.instance_list = vec![inst];
         state.library_entries = vec![
             InstalledEntry {
                 file_name: "test-mod-1.0.jar".to_string(),

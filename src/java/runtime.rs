@@ -31,10 +31,6 @@ pub enum JavaMode {
 
 impl JavaMode {
     #[must_use]
-    pub fn from_config(mode: &str, custom_path: &str) -> Self {
-        Self::from_str_fallback(mode, custom_path)
-    }
-    #[must_use]
     pub fn from_str_fallback(mode: &str, custom_path: &str) -> Self {
         match mode {
             "system" => Self::SystemDefault,

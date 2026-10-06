@@ -114,16 +114,16 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     .strong()
                     .color(TEXT),
             );
-            badge_accent(ui, "SkinsRestorer Compatible");
+            badge_accent(ui, "Offline");
         });
 
         ui.label(
-                RichText::new(
-                    "Offline profiles allow you to play singleplayer and join offline/community servers without an internet login.",
-                )
-                .size(12.0)
-                .color(TEXT2),
-            );
+            RichText::new(
+                "Offline profiles allow you to play singleplayer and join offline/community servers without an internet login.",
+            )
+            .size(12.0)
+            .color(TEXT2),
+        );
 
         let current_username = state
             .config
@@ -192,9 +192,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         });
         ctx.data_mut(|data| data.insert_temp(draft_id, draft));
 
-        ui.add_space(10.0);
+        ui.add_space(8.0);
 
-        egui::Frame::new()
+        egui::CollapsingHeader::new(
+            RichText::new("Advanced compatibility")
+                .size(12.5)
+                .color(TEXT2),
+        )
+        .id_salt("accounts-advanced-compatibility")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            egui::Frame::new()
                 .fill(crate::ui::theme::palette(ui.ctx()).elevated2)
                 .stroke(Stroke::new(1.0_f32, crate::ui::theme::palette(ui.ctx()).border))
                 .corner_radius(CornerRadius::same(8))
@@ -221,7 +230,12 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Derived UUID:").size(11.0).color(MUTED));
-                            ui.label(RichText::new(prof.uuid.to_string()).size(11.0).monospace().color(TEXT2));
+                            ui.label(
+                                RichText::new(prof.uuid.to_string())
+                                    .size(11.0)
+                                    .monospace()
+                                    .color(TEXT2),
+                            );
                         });
                     }
                     ui.add_space(4.0);
@@ -232,7 +246,10 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         )
                         .changed()
                     {
-                        save_account_config(state, "Skin compatibility preference saved".to_string());
+                        save_account_config(
+                            state,
+                            "Skin compatibility preference saved".to_string(),
+                        );
                     }
                     ui.label(
                         RichText::new(
@@ -242,6 +259,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         .color(MUTED),
                     );
                 });
+        });
     });
 
     ui.add_space(8.0);
@@ -509,5 +527,30 @@ mod tests {
         };
         assert!(save_offline_profile(&mut config, dir.path(), "Alex").is_err());
         assert_eq!(config.profile, Some(previous));
+    }
+
+    #[test]
+    fn accounts_page_renders_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::storage::paths::MonoryxPaths::new(dir.path().to_path_buf());
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, paths);
+        state.config.profile = Some(OfflineProfile::new("Steve").unwrap());
+
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    show(&mut state, ctx, ui);
+                });
+            },
+        );
     }
 }

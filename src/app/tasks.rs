@@ -281,9 +281,6 @@ async fn play_inner(
             .await
             {
                 Ok(new_profile) => {
-                    let mut updated_config = config.clone();
-                    updated_config.microsoft_profile = Some(new_profile.clone());
-                    let _ = updated_config.save(&paths.config_file());
                     let _ = tx.send(AppEvent::MicrosoftSessionRefreshed(new_profile.clone()));
                     account = crate::account::Account::Microsoft(new_profile);
                 }
@@ -640,7 +637,12 @@ pub fn install_content(
         };
         let r = install_project(&dm, &mr, &instances, &cfg.id, req, None)
             .await
-            .map(|o| o.installed_files)
+            .map(|outcome| {
+                for warning in outcome.warnings {
+                    tracing::warn!("Content installation: {warning}");
+                }
+                outcome.installed_files
+            })
             .map_err(|e| e.user_message());
         let _ = tx.send(AppEvent::ModInstallDone(r));
     });
@@ -881,7 +883,7 @@ pub fn open_project_page(state: &AppState, slug: String) {
     if crate::curseforge::is_curseforge_slug(&slug) {
         let Some(mod_id) = crate::curseforge::id_from_slug(&slug) else {
             let _ = state.tx.send(AppEvent::ProjectDetail(
-                slug.clone(),
+                slug,
                 Err("Invalid CurseForge project ID".to_string()),
             ));
             return;
@@ -955,13 +957,6 @@ pub fn open_project_page(state: &AppState, slug: String) {
     });
 }
 
-pub fn download_with_tracking(state: &AppState, job: DownloadJob) {
-    let dm = state.dm.clone();
-    state.runtime.spawn(async move {
-        let _ = dm.download(&job, None).await;
-    });
-}
-
 pub fn check_launcher_update(state: &AppState) {
     let http = state.http.clone();
     let tx = state.tx.clone();
@@ -973,7 +968,7 @@ pub fn check_launcher_update(state: &AppState) {
     });
 }
 
-pub fn download_launcher_update(state: &AppState, url: String, version: String) {
+pub fn download_launcher_update(state: &AppState, info: crate::app::LauncherUpdateInfo) {
     let http = state.http.clone();
     let tx = state.tx.clone();
     let ctx = state.egui_ctx.clone();
@@ -982,7 +977,7 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
         let result = async {
             #[cfg(not(target_os = "windows"))]
             {
-                let _ = (&http, &url, &version, &root);
+                let _ = (&http, &info, &root);
                 Err("In-app installation is currently available on Windows only.".to_string())
             }
             #[cfg(target_os = "windows")]
@@ -990,21 +985,45 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
                 use futures::StreamExt;
                 use tokio::io::AsyncWriteExt;
 
-                let trusted_prefix =
-                    "https://github.com/demonz-development/monoryx/releases/download/";
-                if !url.to_ascii_lowercase().starts_with(trusted_prefix) {
-                    return Err(
-                        "Update asset URL is not from the MONORYX release page.".to_string()
-                    );
+                let asset = info
+                    .download_asset
+                    .ok_or("No update asset was published.")?;
+                let url = info
+                    .download_url
+                    .ok_or("No update download URL was published.")?;
+                let filename = crate::app::updater::validated_update_filename(
+                    &asset.direct_url,
+                    &info.latest_version,
+                )?;
+                if filename != asset.file_name {
+                    return Err("Update filename does not match its release asset.".into());
                 }
-                let parsed_version = semver::Version::parse(&version)
+                let parsed_version = semver::Version::parse(&info.latest_version)
                     .map_err(|_| "Invalid update version.".to_string())?;
-                let dir = root.join("updates");
+                if url != crate::app::updater::download_url("windows", &parsed_version) {
+                    return Err("Update URL does not match the official download endpoint.".into());
+                }
+                let expected = match asset.sha256.as_deref() {
+                    Some(hash) => crate::app::updater::parse_sha256(hash, "", true)
+                        .ok_or("Invalid update SHA-256 checksum.")?,
+                    None => {
+                        crate::app::updater::fetch_expected_sha256(
+                            &http,
+                            &asset.direct_url,
+                            &filename,
+                        )
+                        .await?
+                    }
+                };
+                let dir = root.join("updates").join(parsed_version.to_string());
                 tokio::fs::create_dir_all(&dir)
                     .await
                     .map_err(|e| format!("Could not prepare update folder: {e}"))?;
-                let target = dir.join(format!("MONORYX-Setup-{parsed_version}.exe"));
-                let partial = dir.join(format!("MONORYX-Setup-{parsed_version}.part"));
+                let target = dir.join(&filename);
+                let partial_guard = tempfile::NamedTempFile::new_in(&dir)
+                    .map_err(|e| e.to_string())?
+                    .into_temp_path();
+                let partial = partial_guard.to_path_buf();
                 let response = http
                     .get(&url)
                     .timeout(std::time::Duration::from_secs(600))
@@ -1019,9 +1038,18 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
                 }
                 const MAX_SIZE: u64 = 512 * 1024 * 1024;
                 let total = response.content_length();
-                if total.is_some_and(|size| size > MAX_SIZE) {
+                if total.is_some_and(|size| size > MAX_SIZE)
+                    || asset.file_size.is_some_and(|size| size > MAX_SIZE)
+                {
                     return Err("Update installer is unexpectedly large.".to_string());
                 }
+                if total
+                    .zip(asset.file_size)
+                    .is_some_and(|(received, expected)| received != expected)
+                {
+                    return Err("Update download size does not match the release metadata.".into());
+                }
+                let total = asset.file_size.or(total);
                 let mut file = tokio::fs::File::create(&partial)
                     .await
                     .map_err(|e| format!("Could not save update installer: {e}"))?;
@@ -1065,29 +1093,28 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
                     .map_err(|e| e.to_string())?;
                 if &header != b"MZ" {
                     let _ = tokio::fs::remove_file(&partial).await;
-                    return Err("Downloaded update is not a Windows installer.".to_string());
+                    return Err("Downloaded update is not a Windows executable.".to_string());
                 }
                 drop(header_file);
-                let expected_hash =
-                    fetch_expected_sha256(&http, &url, &parsed_version.to_string()).await;
-                if let Some(expected) = expected_hash {
-                    let actual = crate::utils::hash::sha256_file(&partial)
-                        .map_err(|e| format!("Could not verify update checksum: {e}"))?;
-                    if actual.to_lowercase() != expected.to_lowercase() {
-                        let _ = tokio::fs::remove_file(&partial).await;
-                        return Err(
-                            "Downloaded update failed SHA-256 integrity verification.".to_string()
-                        );
-                    }
+                let hash_path = partial.clone();
+                let actual = tokio::task::spawn_blocking(move || {
+                    crate::utils::hash::sha256_file(&hash_path)
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("Could not verify update checksum: {e}"))?;
+                if !actual.eq_ignore_ascii_case(&expected) {
+                    return Err(
+                        "Downloaded update failed SHA-256 integrity verification.".to_string()
+                    );
                 }
-                if target.exists() {
-                    tokio::fs::remove_file(&target)
-                        .await
-                        .map_err(|e| format!("Could not replace existing update installer: {e}"))?;
-                }
-                tokio::fs::rename(&partial, &target)
-                    .await
-                    .map_err(|e| format!("Could not finalize update installer: {e}"))?;
+                let persist_target = target.clone();
+                tokio::task::spawn_blocking(move || {
+                    partial_guard.persist(&persist_target).map_err(|e| e.error)
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("Could not finalize update: {e}"))?;
                 Ok(target)
             }
         }
@@ -1095,55 +1122,6 @@ pub fn download_launcher_update(state: &AppState, url: String, version: String) 
         let _ = tx.send(AppEvent::LauncherUpdateDownloaded(result));
         ctx.request_repaint();
     });
-}
-
-#[cfg(target_os = "windows")]
-async fn fetch_expected_sha256(http: &reqwest::Client, url: &str, version: &str) -> Option<String> {
-    let direct_url = format!("{url}.sha256");
-    if let Ok(resp) = http
-        .get(&direct_url)
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-    {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if let Some(hash) = text.split_whitespace().next() {
-                    let clean = hash.trim().to_lowercase();
-                    if clean.len() == 64 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
-                        return Some(clean);
-                    }
-                }
-            }
-        }
-    }
-    let filename = format!("MONORYX-Setup-{version}.exe");
-    if let Some((base, _)) = url.rsplit_once('/') {
-        let sums_url = format!("{base}/SHA256SUMS.txt");
-        if let Ok(resp) = http
-            .get(&sums_url)
-            .timeout(std::time::Duration::from_secs(15))
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                if let Ok(text) = resp.text().await {
-                    for line in text.lines() {
-                        if line.contains(&filename) {
-                            if let Some(hash) = line.split_whitespace().next() {
-                                let clean = hash.trim().to_lowercase();
-                                if clean.len() == 64 && clean.chars().all(|c| c.is_ascii_hexdigit())
-                                {
-                                    return Some(clean);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
 }
 
 pub fn start_microsoft_login(

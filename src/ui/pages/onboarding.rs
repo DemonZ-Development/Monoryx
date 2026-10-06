@@ -1,7 +1,7 @@
 use crate::app::state::AppState;
-use crate::ui::components::{button_row, provider_card, step_rail, wizard_frame};
+use crate::ui::components::{button_row, pill_tab_button, provider_card, step_rail, wizard_frame};
 use crate::ui::theme::{type_scale, DANGER, MUTED, TEXT, TEXT2};
-use egui::{CornerRadius, RichText, Stroke};
+use egui::{Color32, CornerRadius, RichText, Stroke};
 
 const STEPS: usize = 3;
 
@@ -16,7 +16,7 @@ const INTRO_FEATURES: [(&str, &str); 3] = [
     ),
     (
         "Offline ready",
-        "Play singleplayer and offline-mode servers without a Microsoft account.",
+        "Play local singleplayer worlds and compatible offline servers without an active Microsoft sign-in.",
     ),
 ];
 
@@ -31,13 +31,9 @@ fn background_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
         .ok()?
         .into_rgba8();
     let size = [decoded.width() as usize, decoded.height() as usize];
-    let pixels: Vec<egui::Color32> = decoded
-        .pixels()
-        .map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-        .collect();
     let handle = ctx.load_texture(
         "monoryx-onboarding-bg",
-        egui::ColorImage::new(size, pixels),
+        egui::ColorImage::from_rgba_unmultiplied(size, decoded.as_raw()),
         egui::TextureOptions::LINEAR,
     );
     ctx.data_mut(|d| d.insert_temp(id, handle.clone()));
@@ -79,30 +75,175 @@ pub fn reset_background(ctx: &egui::Context) {
 
 fn paint_background(ui: &mut egui::Ui, rect: egui::Rect) {
     let ctx = ui.ctx().clone();
-    let Some(texture) = background_texture(&ctx) else {
-        return;
-    };
-    let native = texture.size_vec2();
-
-    let scale = (rect.width() / native.x).max(rect.height() / native.y);
-    let shown = egui::Rect::from_center_size(rect.center(), native * scale);
     let p = crate::ui::theme::palette(&ctx);
+    let is_halloween = crate::ui::theme::current_theme(&ctx) == crate::config::ThemeKind::Halloween;
 
     let painter = ui.painter().with_clip_rect(rect);
-    painter.image(
-        texture.id(),
-        shown,
-        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
-    painter.rect_filled(
-        rect,
-        0,
-        egui::Color32::from_rgba_unmultiplied(p.bg.r(), p.bg.g(), p.bg.b(), 224),
-    );
+
+    if is_halloween {
+        painter.rect_filled(rect, 0, p.bg);
+
+        let moon_x = (rect.right() - 170.0).max(rect.left() + 200.0);
+        let moon_y = rect.top() + 130.0;
+        let moon_pos = egui::pos2(moon_x, moon_y);
+        painter.circle_filled(moon_pos, 25.0, egui::Color32::from_rgb(250, 235, 208));
+        painter.circle_filled(
+            moon_pos + egui::vec2(-6.0, 5.0),
+            6.0,
+            egui::Color32::from_rgba_unmultiplied(220, 200, 170, 50),
+        );
+        painter.circle_filled(
+            moon_pos + egui::vec2(8.0, -4.0),
+            4.0,
+            egui::Color32::from_rgba_unmultiplied(220, 200, 170, 40),
+        );
+
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(moon_x - 340.0, moon_y + 20.0),
+                egui::vec2(220.0, 10.0),
+            ),
+            CornerRadius::same(5),
+            egui::Color32::from_rgba_unmultiplied(120, 100, 140, 20),
+        );
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(moon_x - 200.0, moon_y + 44.0),
+                egui::vec2(170.0, 8.0),
+            ),
+            CornerRadius::same(4),
+            egui::Color32::from_rgba_unmultiplied(120, 100, 140, 16),
+        );
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(moon_x - 70.0, moon_y - 6.0),
+                egui::vec2(95.0, 6.0),
+            ),
+            CornerRadius::same(3),
+            egui::Color32::from_rgba_unmultiplied(230, 210, 180, 25),
+        );
+
+        let left_hill = vec![
+            egui::pos2(rect.center().x - 180.0, moon_y + 170.0),
+            egui::pos2(rect.center().x - 60.0, moon_y + 122.0),
+            egui::pos2(moon_x - 180.0, moon_y + 96.0),
+            egui::pos2(moon_x - 70.0, moon_y + 112.0),
+            egui::pos2(moon_x + 60.0, moon_y + 170.0),
+        ];
+        painter.add(egui::epaint::PathShape::convex_polygon(
+            left_hill,
+            egui::Color32::from_rgb(22, 24, 33),
+            egui::Stroke::NONE,
+        ));
+
+        let moon_hill = vec![
+            egui::pos2(moon_x - 260.0, moon_y + 170.0),
+            egui::pos2(moon_x - 140.0, moon_y + 82.0),
+            egui::pos2(moon_x - 50.0, moon_y + 68.0),
+            egui::pos2(moon_x + 30.0, moon_y + 74.0),
+            egui::pos2(moon_x + 130.0, moon_y + 64.0),
+            egui::pos2(moon_x + 240.0, moon_y + 100.0),
+            egui::pos2(moon_x + 240.0, moon_y + 170.0),
+        ];
+        painter.add(egui::epaint::PathShape::convex_polygon(
+            moon_hill,
+            egui::Color32::from_rgb(26, 28, 38),
+            egui::Stroke::NONE,
+        ));
+
+        crate::ui::components::draw_bat_scaled(
+            &painter,
+            moon_pos + egui::vec2(-40.0, -32.0),
+            1.15,
+            egui::Color32::from_rgb(14, 15, 20),
+        );
+        crate::ui::components::draw_bat_scaled(
+            &painter,
+            moon_pos + egui::vec2(-85.0, 18.0),
+            0.85,
+            egui::Color32::from_rgb(16, 17, 24),
+        );
+        crate::ui::components::draw_bat_scaled(
+            &painter,
+            moon_pos + egui::vec2(55.0, -38.0),
+            0.65,
+            egui::Color32::from_rgb(18, 19, 27),
+        );
+        crate::ui::components::draw_bat_scaled(
+            &painter,
+            moon_pos + egui::vec2(-150.0, -12.0),
+            0.95,
+            egui::Color32::from_rgb(15, 16, 22),
+        );
+
+        let bot_y = rect.bottom();
+        let step_x = 42.0_f32;
+        let mut cur_x = rect.left() + 18.0;
+        let mut idx = 0_usize;
+        while cur_x < rect.right() - 10.0 {
+            let tree_h = 55.0 + ((idx * 37) % 55) as f32;
+            let tree_w = 20.0 + ((idx * 19) % 16) as f32;
+            let tree_color = if idx.is_multiple_of(2) {
+                egui::Color32::from_rgb(32, 34, 46)
+            } else {
+                egui::Color32::from_rgb(24, 25, 35)
+            };
+            if idx.is_multiple_of(3) {
+                crate::ui::components::draw_dead_tree(
+                    &painter,
+                    egui::pos2(cur_x, bot_y),
+                    tree_h * 0.9,
+                    tree_color,
+                );
+            } else {
+                crate::ui::components::draw_pine_tree(
+                    &painter,
+                    egui::pos2(cur_x, bot_y),
+                    tree_h,
+                    tree_w,
+                    tree_color,
+                );
+            }
+            cur_x += step_x;
+            idx += 1;
+        }
+
+        let fog_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), bot_y - 35.0),
+            egui::pos2(rect.right(), bot_y),
+        );
+        painter.rect_filled(
+            fog_rect,
+            0,
+            egui::Color32::from_rgba_unmultiplied(28, 25, 38, 90),
+        );
+    } else if let Some(texture) = background_texture(&ctx) {
+        let native = texture.size_vec2();
+        let scale = (rect.width() / native.x).max(rect.height() / native.y);
+        let shown = egui::Rect::from_center_size(rect.center(), native * scale);
+
+        painter.image(
+            texture.id(),
+            shown,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        let overlay_alpha = if is_halloween { 236 } else { 224 };
+        painter.rect_filled(
+            rect,
+            0,
+            egui::Color32::from_rgba_unmultiplied(p.bg.r(), p.bg.g(), p.bg.b(), overlay_alpha),
+        );
+    } else {
+        painter.rect_filled(rect, 0, p.bg);
+    }
 }
 
 pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    #[cfg(target_os = "windows")]
+    crate::utils::system::ensure_window_positioned(true, false);
+
     let step = (state.onboarding_step as usize).min(STEPS - 1);
     let panel_height = ui.available_height();
     let enter = ctx.animate_bool_with_time(egui::Id::new("onboarding-enter"), true, 0.18);
@@ -111,6 +252,20 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     }
 
     paint_background(ui, ui.max_rect());
+
+    let is_halloween =
+        crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
+    let cache_id = egui::Id::new(("wizard-height", step));
+    let default_h = if step == 2 { 380.0 } else { 330.0 };
+    let known_card_height = ui
+        .ctx()
+        .data(|d| d.get_temp::<f32>(cache_id).unwrap_or(default_h));
+    let header_height = if is_halloween { 135.0 } else { 115.0 };
+    let total_block = header_height + known_card_height + 24.0;
+    let available_space = panel_height - total_block;
+    if available_space > 30.0 {
+        ui.add_space(((available_space / 2.0) - 34.0).clamp(0.0, 160.0));
+    }
 
     wordmark(ui);
     step_rail(ui, STEPS, step);
@@ -144,31 +299,62 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 }
 
 fn wordmark(ui: &mut egui::Ui) {
+    let is_halloween =
+        crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
+    let p = crate::ui::theme::palette(ui.ctx());
+
     ui.vertical_centered(|ui| {
-        ui.add_space(28.0);
+        if is_halloween {
+            let (bat_rect, _) =
+                ui.allocate_exact_size(egui::vec2(28.0, 16.0), egui::Sense::hover());
+            crate::ui::components::draw_glowing_bat(ui.painter(), bat_rect.center(), p.accent);
+            ui.add_space(4.0);
+        }
         ui.label(
             RichText::new("MONORYX")
                 .size(type_scale::TITLE)
                 .strong()
-                .color(TEXT),
+                .color(if is_halloween {
+                    egui::Color32::from_rgb(255, 235, 215)
+                } else {
+                    TEXT
+                }),
         );
         ui.label(
             RichText::new("Play. Modify. Nothing else.")
                 .size(type_scale::LABEL)
-                .color(MUTED),
+                .color(if is_halloween {
+                    egui::Color32::from_rgb(175, 155, 140)
+                } else {
+                    MUTED
+                }),
         );
-        ui.add_space(18.0);
+        ui.add_space(10.0);
     });
 }
 
 fn heading(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    let is_halloween =
+        crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
     ui.label(
         RichText::new(title)
             .size(type_scale::TITLE)
             .strong()
-            .color(TEXT),
+            .color(if is_halloween {
+                egui::Color32::from_rgb(255, 240, 225)
+            } else {
+                TEXT
+            }),
     );
-    ui.label(RichText::new(subtitle).size(type_scale::LABEL).color(TEXT2));
+    ui.label(
+        RichText::new(subtitle)
+            .size(type_scale::LABEL)
+            .color(if is_halloween {
+                egui::Color32::from_rgb(195, 180, 170)
+            } else {
+                egui::Color32::from_rgb(182, 189, 202)
+            }),
+    );
     ui.add_space(18.0);
 }
 
@@ -183,8 +369,12 @@ fn intro(state: &mut AppState, ui: &mut egui::Ui) {
                     .color(TEXT),
             );
             ui.add(
-                egui::Label::new(RichText::new(detail).size(type_scale::CAPTION).color(TEXT2))
-                    .wrap(),
+                egui::Label::new(
+                    RichText::new(detail)
+                        .size(type_scale::CAPTION)
+                        .color(egui::Color32::from_rgb(182, 189, 202)),
+                )
+                .wrap(),
             );
         });
         ui.add_space(10.0);
@@ -218,15 +408,13 @@ fn username(state: &mut AppState, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         let offline = !state.onboarding_use_microsoft;
-        if ui.selectable_label(offline, "Play Offline").clicked() && state.onboarding_use_microsoft
+        if pill_tab_button(ui, "Play Offline", offline).clicked() && state.onboarding_use_microsoft
         {
             state.onboarding_use_microsoft = false;
             state.cancel_microsoft_login();
             state.onboarding_error.clear();
         }
-        if ui
-            .selectable_label(state.onboarding_use_microsoft, "Sign in with Microsoft")
-            .clicked()
+        if pill_tab_button(ui, "Sign in with Microsoft", state.onboarding_use_microsoft).clicked()
             && !state.onboarding_use_microsoft
         {
             state.onboarding_use_microsoft = true;
@@ -454,10 +642,14 @@ pub fn complete_onboarding(state: &mut AppState, ctx: &egui::Context) -> bool {
     state.save_config();
     state.page = crate::app::events::Page::Home;
 
-    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-        state.config.window_width.clamp(850.0, 2560.0),
-        state.config.window_height.clamp(560.0, 1440.0),
-    )));
+    if state.config.start_maximized {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    } else {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+            state.config.window_width.clamp(850.0, 2560.0),
+            state.config.window_height.clamp(560.0, 1440.0),
+        )));
+    }
     state.notify("Welcome to MONORYX");
     true
 }
@@ -468,17 +660,22 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
         "Launcher defaults",
         "Everything here can be changed later in Settings.",
     );
-    ui.checkbox(&mut state.onboarding_mem_auto, "Automatic memory");
+
+    ui.checkbox(
+        &mut state.onboarding_mem_auto,
+        RichText::new("Automatic memory").strong().color(TEXT),
+    );
     if state.onboarding_mem_auto {
         ui.label(
             RichText::new(format!(
-                "MONORYX will cap this at {} MB based on your system.",
+                "{} MB recommended for this system",
                 crate::utils::system::default_max_memory_mb()
             ))
             .size(type_scale::CAPTION)
-            .color(TEXT2),
+            .color(Color32::from_rgb(182, 189, 202)),
         );
     } else {
+        ui.add_space(4.0);
         crate::ui::components::field_label(ui, "Max memory (MB)");
         crate::ui::components::limited_text_edit(
             ui,
@@ -488,20 +685,44 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
             "3072",
         );
     }
-    ui.add_space(12.0);
-    crate::ui::components::field_label(ui, "Java");
+
+    ui.add_space(16.0);
+
+    ui.label(RichText::new("Java runtime").strong().color(TEXT));
     ui.label(
-        RichText::new("Automatic — MONORYX downloads a matching Temurin runtime.")
+        RichText::new("Automatic — Temurin")
             .size(type_scale::CAPTION)
-            .color(TEXT2),
+            .color(Color32::from_rgb(182, 189, 202)),
     );
-    ui.add_space(12.0);
-    crate::ui::components::field_label(ui, "GPU");
-    super::settings::gpu_preference_selector(ui, &mut state.config.gpu_preference);
+
+    ui.add_space(16.0);
+
+    ui.label(RichText::new("GPU preference").strong().color(TEXT));
+    ui.add_space(2.0);
+    ui.add_enabled_ui(cfg!(target_os = "windows"), |ui| {
+        egui::ComboBox::from_id_salt("onboarding-gpu-preference")
+            .selected_text(state.config.gpu_preference.as_str())
+            .show_ui(ui, |ui| {
+                for value in [
+                    crate::config::GpuPreference::System,
+                    crate::config::GpuPreference::HighPerformance,
+                    crate::config::GpuPreference::PowerSaving,
+                ] {
+                    ui.selectable_value(&mut state.config.gpu_preference, value, value.as_str());
+                }
+            });
+    });
+    ui.label(
+        RichText::new("Windows only. Prefers the dedicated GPU.")
+            .size(type_scale::CAPTION)
+            .color(Color32::from_rgb(182, 189, 202)),
+    );
+
     if !state.onboarding_error.is_empty() {
         ui.add_space(8.0);
         ui.label(RichText::new(&state.onboarding_error).color(DANGER));
     }
+
     ui.add_space(20.0);
     ui.horizontal(|ui| {
         let (back, next) = button_row(

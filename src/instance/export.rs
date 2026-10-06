@@ -124,6 +124,106 @@ pub fn export_instance(
     Ok(())
 }
 
+pub fn export_mod_list_markdown(
+    cfg: &InstanceConfig,
+    entries: &[crate::content::InstalledEntry],
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {} — Mod List\n\n", cfg.name));
+    out.push_str(&format!(
+        "- **Minecraft:** {}\n- **Loader:** {}\n- **Installed Mods:** {}\n\n",
+        cfg.minecraft_version,
+        cfg.loader.display_name(),
+        entries
+            .iter()
+            .filter(|e| e.kind == crate::content::ContentKind::Mod)
+            .count()
+    ));
+    out.push_str("| Mod | Version | Filename | Links |\n");
+    out.push_str("| :--- | :--- | :--- | :--- |\n");
+    for entry in entries {
+        if entry.kind != crate::content::ContentKind::Mod {
+            continue;
+        }
+        let name = entry.project_title.as_deref().unwrap_or(&entry.file_name);
+        let ver = entry.version_number.as_deref().unwrap_or("-");
+        let link = if let Some(slug) = &entry.project_slug {
+            format!("[Modrinth](https://modrinth.com/mod/{slug})")
+        } else {
+            "-".to_string()
+        };
+        out.push_str(&format!(
+            "| **{name}** | {ver} | `{}` | {link} |\n",
+            entry.file_name
+        ));
+    }
+    out
+}
+
+pub fn export_mod_list_text(
+    cfg: &InstanceConfig,
+    entries: &[crate::content::InstalledEntry],
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{} (Minecraft {} - {})\n",
+        cfg.name,
+        cfg.minecraft_version,
+        cfg.loader.display_name()
+    ));
+    out.push_str(&format!(
+        "Total mods: {}\n\n",
+        entries
+            .iter()
+            .filter(|e| e.kind == crate::content::ContentKind::Mod)
+            .count()
+    ));
+    for entry in entries {
+        if entry.kind != crate::content::ContentKind::Mod {
+            continue;
+        }
+        let name = entry.project_title.as_deref().unwrap_or(&entry.file_name);
+        if let Some(ver) = &entry.version_number {
+            out.push_str(&format!("• {} ({})\n", name, ver));
+        } else {
+            out.push_str(&format!("• {}\n", name));
+        }
+    }
+    out
+}
+
+pub fn export_quick_zip(
+    instance_dir: &Path,
+    cfg: &InstanceConfig,
+    entries: &[crate::content::InstalledEntry],
+) -> Result<std::path::PathBuf> {
+    let exports_dir = crate::storage::paths::data_root().join("exports");
+    crate::utils::fs::ensure_dir(&exports_dir)?;
+    let safe_name = cfg
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let out_file = exports_dir.join(format!("{safe_name}-v{}.zip", cfg.minecraft_version));
+    let meta: std::collections::HashMap<String, (Option<String>, Option<String>)> = entries
+        .iter()
+        .map(|e| {
+            (
+                e.file_name.clone(),
+                (e.project_id.clone(), e.version_id.clone()),
+            )
+        })
+        .collect();
+    export_instance(instance_dir, cfg, &out_file, true, &meta)?;
+    Ok(out_file)
+}
+
 pub fn read_export_manifest(zip_path: &Path) -> Result<InstanceExportManifest> {
     let f = std::fs::File::open(zip_path)?;
     let mut zip = zip::ZipArchive::new(f).map_err(|e| MonoryxError::Archive(e.to_string()))?;
@@ -311,5 +411,81 @@ mod tests {
             std::fs::read(manager.mods_dir(&imported.id).join("hello.jar")).unwrap(),
             b"mod bytes"
         );
+    }
+
+    #[test]
+    fn export_mod_list_markdown_and_text_formatting() {
+        let cfg = InstanceConfig {
+            id: "inst-1".into(),
+            name: "Survival World".into(),
+            icon: "default".into(),
+            minecraft_version: "1.20.1".into(),
+            loader: LoaderKind::Fabric,
+            loader_version: "0.15.11".into(),
+            resolved_version_id: "1.20.1-fabric".into(),
+            memory_min_mb: 512,
+            memory_max_mb: 4096,
+            java_mode: crate::instance::config::JavaMode::Automatic,
+            java_path: String::new(),
+            jvm_args: String::new(),
+            game_args: String::new(),
+            width: None,
+            height: None,
+            fullscreen: false,
+            created_at: String::new(),
+            last_played_at: None,
+            total_plays: 0,
+            play_time_secs: 0,
+            boost_mode: None,
+            appcds_pending: false,
+        };
+        let entries = vec![
+            crate::content::InstalledEntry {
+                file_name: "sodium-mc1.20.1-0.5.8.jar".into(),
+                kind: crate::content::ContentKind::Mod,
+                project_id: None,
+                project_slug: Some("sodium".into()),
+                project_title: Some("Sodium".into()),
+                version_id: None,
+                version_number: Some("0.5.8".into()),
+                file_hash_sha512: None,
+                file_hash_sha1: None,
+                size: 1024,
+                enabled: true,
+                installed_at: String::new(),
+                loader: "fabric".into(),
+                game_version: "1.20.1".into(),
+            },
+            crate::content::InstalledEntry {
+                file_name: "iris-mc1.20.1-1.7.0.jar".into(),
+                kind: crate::content::ContentKind::Mod,
+                project_id: None,
+                project_slug: Some("iris".into()),
+                project_title: Some("Iris Shaders".into()),
+                version_id: None,
+                version_number: Some("1.7.0".into()),
+                file_hash_sha512: None,
+                file_hash_sha1: None,
+                size: 2048,
+                enabled: false,
+                installed_at: String::new(),
+                loader: "fabric".into(),
+                game_version: "1.20.1".into(),
+            },
+        ];
+
+        let md = export_mod_list_markdown(&cfg, &entries);
+        assert!(md.contains("# Survival World — Mod List"));
+        assert!(md.contains("1.20.1"));
+        assert!(md.contains("Sodium"));
+        assert!(md.contains("Iris Shaders"));
+        assert!(md.contains("0.5.8"));
+        assert!(md.contains("1.7.0"));
+
+        let txt = export_mod_list_text(&cfg, &entries);
+        assert!(txt.contains("Survival World (Minecraft 1.20.1 - Fabric)"));
+        assert!(txt.contains("Total mods: 2"));
+        assert!(txt.contains("• Sodium (0.5.8)"));
+        assert!(txt.contains("• Iris Shaders (1.7.0)"));
     }
 }

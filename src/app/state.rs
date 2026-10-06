@@ -9,7 +9,7 @@ use crate::java::runtime::JavaRuntime;
 use crate::minecraft::manifest::VersionManifest;
 use crate::modrinth::api::ModrinthClient;
 use crate::modrinth::models::{Project, ProjectVersion};
-use crate::modrinth::search::{DiscoverTab, SearchFilters, SortOrder};
+use crate::modrinth::search::{DiscoverTab, SearchFilters};
 use crate::modrinth::updates::UpdateInfo;
 use crate::storage::paths::MonoryxPaths;
 use std::collections::{HashMap, HashSet};
@@ -52,6 +52,7 @@ impl InstallOperation {
 
 #[derive(Debug, Clone, Default)]
 pub struct NewInstanceDraft {
+    pub step: usize,
     pub name: String,
     pub version: String,
     pub loader: LoaderKind,
@@ -158,6 +159,11 @@ pub struct AppState {
     pub markdown_blocks: Vec<crate::ui::markdown::Block>,
     pub library_entries: Vec<InstalledEntry>,
     pub library_filter: ContentKind,
+    pub library_view_hierarchy: bool,
+    pub cached_hierarchy: Option<crate::content::DependencyHierarchy>,
+    hierarchy_generation: u64,
+    hierarchy_pending: bool,
+    pending_pack_exports: std::collections::HashSet<String>,
     pub pending_content_delete: Option<(String, ContentKind, String, String)>,
     pub updates: Vec<UpdateInfo>,
     pub updates_loading: bool,
@@ -195,12 +201,15 @@ pub struct AppState {
     pub confirm_delete: Option<String>,
     pub confirm_title: String,
     pub edit_instance: Option<InstanceConfig>,
+    pub edit_tab: usize,
     pub edit_error: String,
     pub new_draft: NewInstanceDraft,
     pub show_new_instance: bool,
     pub thumbnails: HashMap<String, egui::TextureHandle>,
     pub image_slots: std::sync::Arc<tokio::sync::Semaphore>,
     pub pending_thumbs: HashMap<String, bool>,
+    pub failed_thumbs: HashSet<String>,
+    pub reset_discover_scroll: bool,
     pub project_image_url: Option<String>,
     pub project_image: Option<egui::TextureHandle>,
     pub project_image_loading: bool,
@@ -245,6 +254,9 @@ pub struct AppState {
     pub crash_share_error: String,
     pub command_palette_open: bool,
     pub command_palette_query: String,
+    pub home_instance_search: String,
+    pub home_grid_view: bool,
+    pub home_screenshot_index: usize,
 }
 
 impl AppState {
@@ -265,7 +277,10 @@ impl AppState {
 
     fn build(_cc: &eframe::CreationContext<'_>, paths: MonoryxPaths, bootstrap: bool) -> Self {
         let _ = paths.ensure_all();
-        let config = LauncherConfig::load(&paths.config_file()).unwrap_or_default();
+        let (config, config_error) = match LauncherConfig::load(&paths.config_file()) {
+            Ok(config) => (config, String::new()),
+            Err(error) => (LauncherConfig::default(), error.user_message()),
+        };
         let http = crate::utils::net::create_client().expect("http client");
         let (tx, rx) = std::sync::mpsc::channel();
         let download_tx = tx.clone();
@@ -357,6 +372,11 @@ impl AppState {
             markdown_blocks: Vec::new(),
             library_entries: Vec::new(),
             library_filter: ContentKind::Mod,
+            library_view_hierarchy: false,
+            cached_hierarchy: None,
+            hierarchy_generation: 0,
+            hierarchy_pending: false,
+            pending_pack_exports: std::collections::HashSet::new(),
             pending_content_delete: None,
             updates: Vec::new(),
             updates_loading: false,
@@ -390,16 +410,19 @@ impl AppState {
             onboarding_use_microsoft: default_onboarding_use_microsoft,
             notice: String::new(),
             notice_at: None,
-            error_dialog: String::new(),
+            error_dialog: config_error,
             confirm_delete: None,
             confirm_title: String::new(),
             edit_instance: None,
+            edit_tab: 0,
             edit_error: String::new(),
             new_draft: NewInstanceDraft::default(),
             show_new_instance: false,
             thumbnails: HashMap::new(),
             image_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(3)),
             pending_thumbs: HashMap::new(),
+            failed_thumbs: HashSet::new(),
+            reset_discover_scroll: false,
             project_image_url: None,
             project_image: None,
             project_image_loading: false,
@@ -444,6 +467,9 @@ impl AppState {
             crash_share_error: String::new(),
             command_palette_open: false,
             command_palette_query: String::new(),
+            home_instance_search: String::new(),
+            home_grid_view: false,
+            home_screenshot_index: 0,
         };
         s.settings_jvm = s.config.default_jvm_args.clone();
         s.settings_game_args = s.config.default_game_args.clone();
@@ -582,16 +608,23 @@ impl AppState {
     pub fn set_page(&mut self, page: Page) {
         self.page = page;
         self.save_config();
-        if page != Page::Screenshots {
+        if page != Page::Screenshots && page != Page::Home {
             self.screenshot_thumbnails.clear();
+            self.screenshot_thumbnails.shrink_to_fit();
             self.pending_screenshot_thumbnails.clear();
+            self.pending_screenshot_thumbnails.shrink_to_fit();
         }
         if page != Page::Discover {
             self.thumbnails.clear();
+            self.thumbnails.shrink_to_fit();
             self.pending_thumbs.clear();
+            self.pending_thumbs.shrink_to_fit();
+            self.failed_thumbs.clear();
+            self.failed_thumbs.shrink_to_fit();
         }
         if page != Page::Instances {
-            self.patch_notes = HashMap::new();
+            self.patch_notes.clear();
+            self.patch_notes.shrink_to_fit();
             self.patch_notes_loaded = false;
         }
         if page != Page::Worlds {
@@ -1025,9 +1058,58 @@ impl AppState {
                     .count(),
             );
             self.library_entries = entries;
+            self.cached_hierarchy = None;
         } else {
             self.library_entries = Vec::new();
+            self.cached_hierarchy = None;
         }
+        self.hierarchy_generation = self.hierarchy_generation.wrapping_add(1);
+        self.hierarchy_pending = false;
+    }
+
+    pub fn ensure_hierarchy(&mut self) {
+        if self.cached_hierarchy.is_some() || self.hierarchy_pending {
+            return;
+        }
+        let Some(id) = self.selected_instance.clone() else {
+            return;
+        };
+        self.hierarchy_pending = true;
+        let generation = self.hierarchy_generation;
+        let mods_dir = self.instances.mods_dir(&id);
+        let entries = self.library_entries.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.runtime.spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                crate::content::build_hierarchy(&mods_dir, &entries)
+            })
+            .await
+            .map_err(|error| error.to_string());
+            let _ = tx.send(AppEvent::HierarchyBuilt(generation, id, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn export_pack(&mut self, config: crate::instance::config::InstanceConfig) {
+        if !self.pending_pack_exports.insert(config.id.clone()) {
+            return;
+        }
+        let instance_dir = self.instances.instance_dir(&config.id);
+        let entries = self.library_entries.clone();
+        let id = config.id.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.runtime.spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                crate::instance::export::export_quick_zip(&instance_dir, &config, &entries)
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.user_message()));
+            let _ = tx.send(AppEvent::PackExported(id, result));
+            ctx.request_repaint();
+        });
     }
 
     pub fn poll_events(&mut self, ctx: &egui::Context) {
@@ -1050,6 +1132,34 @@ impl AppState {
 
     fn handle_event(&mut self, ev: AppEvent, ctx: &egui::Context) {
         match ev {
+            AppEvent::HierarchyBuilt(generation, id, result) => {
+                if generation == self.hierarchy_generation
+                    && self.selected_instance.as_deref() == Some(&id)
+                {
+                    self.hierarchy_pending = false;
+                    match result {
+                        Ok(hierarchy) => self.cached_hierarchy = Some(hierarchy),
+                        Err(error) => {
+                            self.cached_hierarchy =
+                                Some(crate::content::DependencyHierarchy::default());
+                            self.fail(error);
+                        }
+                    }
+                }
+            }
+            AppEvent::PackExported(id, result) => {
+                self.pending_pack_exports.remove(&id);
+                match result {
+                    Ok(path) => {
+                        self.notify(format!(
+                            "Exported pack: {}",
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                        let _ = open::that_detached(path.parent().unwrap_or(&path));
+                    }
+                    Err(error) => self.fail(error),
+                }
+            }
             AppEvent::Notice(m) => self.notify(m),
             AppEvent::Error(m) => self.fail(m),
             AppEvent::PatchNotesLoaded(result) => {
@@ -1383,18 +1493,23 @@ impl AppState {
             }
             AppEvent::Thumbnail(url, r) => {
                 self.pending_thumbs.remove(&url);
-                if let Ok(img) = r {
-                    let cimg = egui::ColorImage::from_rgba_unmultiplied(
-                        [img.width, img.height],
-                        &img.pixels,
-                    );
-                    let tex = ctx.load_texture(url.clone(), cimg, egui::TextureOptions::LINEAR);
-                    if self.thumbnails.len() >= 96 {
-                        if let Some(old) = self.thumbnails.keys().next().cloned() {
-                            self.thumbnails.remove(&old);
+                match r {
+                    Ok(img) => {
+                        let cimg = egui::ColorImage::from_rgba_unmultiplied(
+                            [img.width, img.height],
+                            &img.pixels,
+                        );
+                        let tex = ctx.load_texture(url.clone(), cimg, egui::TextureOptions::LINEAR);
+                        if self.thumbnails.len() >= 96 {
+                            if let Some(old) = self.thumbnails.keys().next().cloned() {
+                                self.thumbnails.remove(&old);
+                            }
                         }
+                        self.thumbnails.insert(url, tex);
                     }
-                    self.thumbnails.insert(url, tex);
+                    Err(_) => {
+                        self.failed_thumbs.insert(url);
+                    }
                 }
             }
             AppEvent::ProjectImage(url, result) => {
@@ -1442,7 +1557,7 @@ impl AppState {
                             [image.width, image.height],
                             &image.pixels,
                         );
-                        if self.screenshot_thumbnails.len() >= 96 {
+                        if self.screenshot_thumbnails.len() >= 24 {
                             if let Some(old) = self.screenshot_thumbnails.keys().next().cloned() {
                                 self.screenshot_thumbnails.remove(&old);
                             }
@@ -1731,6 +1846,11 @@ impl AppState {
             } => {
                 self.playing.insert(id.clone(), false);
                 self.game_activities.remove(&id);
+                if let Some(launched) = launched_at {
+                    if let Ok(duration) = std::time::SystemTime::now().duration_since(launched) {
+                        let _ = self.instances.add_play_time(&id, duration.as_secs());
+                    }
+                }
                 if code == 0 {
                     self.last_exit.clear();
                 } else {
@@ -1859,12 +1979,20 @@ impl AppState {
                 }
             }
             AppEvent::MicrosoftSessionRefreshed(profile) => {
-                self.config.microsoft_profile = Some(profile);
+                if self
+                    .config
+                    .microsoft_profile
+                    .as_ref()
+                    .is_some_and(|current| current.uuid == profile.uuid)
+                {
+                    self.config.microsoft_profile = Some(profile);
+                    self.save_config();
+                }
             }
             AppEvent::PlayLog(line) => {
                 self.log_lines.push(line);
-                if self.log_lines.len() > 2000 {
-                    let drain = self.log_lines.len() - 2000;
+                if self.log_lines.len() > 1000 {
+                    let drain = self.log_lines.len() - 1000;
                     self.log_lines.drain(0..drain);
                 }
             }
@@ -2153,14 +2281,15 @@ impl AppState {
         let Some(info) = self.launcher_update.as_ref() else {
             return;
         };
-        let Some(url) = info.download_url.clone() else {
+        if info.download_url.is_none() || info.download_asset.is_none() {
             return;
-        };
+        }
+        let info = info.clone();
         self.launcher_update_download_loading = true;
         self.launcher_update_download_progress = None;
         self.launcher_update_downloaded = None;
         self.launcher_update_download_error = None;
-        crate::app::tasks::download_launcher_update(self, url, info.latest_version.clone());
+        crate::app::tasks::download_launcher_update(self, info);
     }
 
     pub fn start_microsoft_login(&mut self) {
@@ -2195,14 +2324,6 @@ impl AppState {
         self.onboarding_use_microsoft =
             self.config.use_microsoft_auth && self.config.microsoft_profile.is_some();
         self.page = Page::Onboarding;
-    }
-
-    pub fn is_boost_active(&self) -> bool {
-        if let Some(cfg) = self.selected() {
-            cfg.boost_mode.unwrap_or(self.config.boost_mode)
-        } else {
-            self.config.boost_mode
-        }
     }
 
     pub fn toggle_boost(&mut self) {
@@ -2263,6 +2384,7 @@ impl AppState {
             || !url.starts_with("https://")
             || self.thumbnails.contains_key(url)
             || self.pending_thumbs.contains_key(url)
+            || self.failed_thumbs.contains(url)
         {
             return;
         }
@@ -2623,6 +2745,75 @@ fn read_local_image(
     decode_image(bytes, max_width, max_height)
 }
 
-pub fn sort_options() -> [SortOrder; 4] {
-    SortOrder::all()
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+
+    #[test]
+    fn hierarchy_results_cannot_overwrite_a_newer_instance_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        state.selected_instance = Some("active".into());
+        state.hierarchy_generation = 2;
+        state.hierarchy_pending = true;
+        state.handle_event(
+            AppEvent::HierarchyBuilt(
+                1,
+                "active".into(),
+                Ok(crate::content::DependencyHierarchy::default()),
+            ),
+            &ctx,
+        );
+        state.handle_event(
+            AppEvent::HierarchyBuilt(
+                2,
+                "previous".into(),
+                Ok(crate::content::DependencyHierarchy::default()),
+            ),
+            &ctx,
+        );
+        assert!(state.cached_hierarchy.is_none() && state.hierarchy_pending);
+        state.handle_event(
+            AppEvent::HierarchyBuilt(
+                2,
+                "active".into(),
+                Ok(crate::content::DependencyHierarchy::default()),
+            ),
+            &ctx,
+        );
+        assert!(state.cached_hierarchy.is_some() && !state.hierarchy_pending);
+    }
+
+    #[test]
+    fn background_session_refresh_keeps_current_settings_and_ignores_another_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = MonoryxPaths::new(dir.path().into());
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, paths.clone());
+        let mut profile = crate::account::microsoft::MicrosoftProfile {
+            username: "Player".into(),
+            uuid: uuid::Uuid::new_v4(),
+            access_token: "original".into(),
+            refresh_token: "refresh".into(),
+            expires_at: 100,
+        };
+        state.config.microsoft_profile = Some(profile.clone());
+        state.config.last_page = "library".into();
+        state.page = Page::Library;
+        let mut other = profile.clone();
+        other.uuid = uuid::Uuid::new_v4();
+        state.handle_event(AppEvent::MicrosoftSessionRefreshed(other), &ctx);
+        assert_eq!(
+            state.config.microsoft_profile.as_ref().unwrap().uuid,
+            profile.uuid
+        );
+        profile.access_token = "renewed".into();
+        state.handle_event(AppEvent::MicrosoftSessionRefreshed(profile), &ctx);
+        let loaded = LauncherConfig::load(&paths.config_file()).unwrap();
+        assert_eq!(loaded.last_page, "library");
+        assert_eq!(loaded.microsoft_profile.unwrap().access_token, "renewed");
+    }
 }

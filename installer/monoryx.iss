@@ -1,9 +1,9 @@
 #ifndef AppVersion
-  #define AppVersion "1.4.0"
+  #define AppVersion "1.5.0"
 #endif
 #define AppName "MONORYX"
 #define AppPublisher "DemonZDevelopment"
-#define AppURL "https://github.com/DemonZ-Development/Monoryx"
+#define AppURL "https://demonz.org/projects/monoryx"
 #define AppExe "monoryx.exe"
 #define AppDataDir "{userappdata}\DemonZDevelopment\MONORYX"
 
@@ -15,7 +15,7 @@ AppVerName={#AppName} v{#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
-AppUpdatesURL={#AppURL}/releases
+AppUpdatesURL={#AppURL}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 PrivilegesRequired=lowest

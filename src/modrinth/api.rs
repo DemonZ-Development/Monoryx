@@ -18,13 +18,6 @@ impl ModrinthClient {
         }
     }
 
-    fn cache(&self, dir: &std::path::Path) -> crate::storage::cache::DiskCache {
-        crate::storage::cache::DiskCache::new(
-            dir.join("metadata").join("modrinth"),
-            Duration::from_secs(300),
-        )
-    }
-
     async fn get<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
         let mut attempt = 0u32;
         loop {
@@ -114,27 +107,6 @@ impl ModrinthClient {
         self.get(&format!("{API_BASE}/version/{version_id}")).await
     }
 
-    pub async fn versions_by_ids(&self, ids: &[String]) -> Result<Vec<ProjectVersion>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let body = serde_json::json!({ "ids": ids });
-        let resp = self
-            .http
-            .post(format!("{API_BASE}/versions"))
-            .header(reqwest::header::USER_AGENT, &self.ua)
-            .json(&body)
-            .send()
-            .await?;
-        if !resp.status().is_success() {
-            return Err(MonoryxError::Modrinth(format!(
-                "Modrinth returned HTTP {} for /versions",
-                resp.status()
-            )));
-        }
-        Ok(resp.json().await?)
-    }
-
     pub async fn lookup_hashes(
         &self,
         hashes: &[String],
@@ -158,17 +130,6 @@ impl ModrinthClient {
             )));
         }
         Ok(resp.json().await?)
-    }
-
-    pub fn cached_project(&self, cache_dir: &std::path::Path, id: &str) -> Option<Project> {
-        let bytes = self.cache(cache_dir).get(&format!("project-{id}"))?;
-        serde_json::from_slice(&bytes).ok()
-    }
-
-    pub fn put_cached_project(&self, cache_dir: &std::path::Path, id: &str, p: &Project) {
-        if let Ok(bytes) = serde_json::to_vec(p) {
-            let _ = self.cache(cache_dir).put(&format!("project-{id}"), &bytes);
-        }
     }
 }
 

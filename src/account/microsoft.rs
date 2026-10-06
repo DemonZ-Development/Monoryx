@@ -3,13 +3,26 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MicrosoftProfile {
     pub username: String,
     pub uuid: uuid::Uuid,
+    #[serde(default, skip_serializing)]
     pub access_token: String,
+    #[serde(default, skip_serializing)]
     pub refresh_token: String,
     pub expires_at: i64,
+}
+
+impl std::fmt::Debug for MicrosoftProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MicrosoftProfile")
+            .field("username", &self.username)
+            .field("uuid", &self.uuid)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

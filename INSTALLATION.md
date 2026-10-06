@@ -32,12 +32,12 @@ Welcome to **MONORYX** — a fast, lightweight Minecraft Java Edition launcher b
 The Windows Setup Wizard installs MONORYX cleanly, sets up desktop and start menu shortcuts, and bundles the atomic companion updater.
 
 #### 1. Download the Installer
-Head to the [MONORYX Releases](https://github.com/DemonZ-Development/Monoryx/releases) page and download `MONORYX-Setup-1.4.0.exe`.
+Head to the [official MONORYX website](https://demonz.org/projects/monoryx) and download `MONORYX-Setup-1.5.0.exe`.
 
 ![Releases Page](./assets/instalation-guide/Screenshot%202026-09-29%20110323.png)
 
 #### 2. Open Downloads & Launch Setup
-Open File Explorer, go to your **Downloads** folder, and double-click `MONORYX-Setup-1.4.0.exe`.
+Open File Explorer, go to your **Downloads** folder, and double-click `MONORYX-Setup-1.5.0.exe`.
 
 ![Downloads Folder](./assets/instalation-guide/Screenshot%202026-09-29%20110659.png)
 
@@ -82,7 +82,7 @@ Review your chosen settings and click **Install**. The files and `monoryx-update
 
 For USB drives or isolated development environments:
 
-1. Download `monoryx-v1.4.0-windows-x64.zip` from [Releases](https://github.com/DemonZ-Development/Monoryx/releases).
+1. Download `monoryx-v1.5.0-windows-x64.zip` from the [official website](https://demonz.org/projects/monoryx).
 2. Extract the archive into any preferred folder (e.g. `C:\Games\MONORYX` or `D:\PortableApps\MONORYX`).
 3. Ensure both `monoryx.exe` and `monoryx-updater.exe` reside in the same directory.
 4. Launch `monoryx.exe` directly. All configurations and instances are saved portably or in user profile data.
@@ -91,7 +91,7 @@ For USB drives or isolated development environments:
 
 For macOS 11.0 or newer on Apple Silicon or Intel:
 
-1. Download `monoryx-v1.4.0-macos-universal.dmg` from [Releases](https://github.com/DemonZ-Development/Monoryx/releases).
+1. Download `monoryx-v1.5.0-macos-universal.dmg` from the [official website](https://demonz.org/projects/monoryx).
 2. Double-click the downloaded `.dmg` file to mount it.
 3. Drag **MONORYX** into the **Applications** folder shortcut.
 4. Open your **Applications** folder and launch **MONORYX**.
@@ -105,7 +105,7 @@ For macOS 11.0 or newer on Apple Silicon or Intel:
 If you prefer compiling directly from source on Windows, Linux, or macOS:
 
 #### Prerequisites
-- **Rust Toolchain**: Stable Rust 1.85+ (install via [rustup.rs](https://rustup.rs/)).
+- **Rust Toolchain**: Stable Rust 1.88+ (install via [rustup.rs](https://rustup.rs/)).
 - **C Compiler (Windows GNU only)**: If using the `x86_64-pc-windows-gnu` target, install MinGW-w64 via `winget install BrechtSanders.WinLibs.POSIX.UCRT`.
 - **Java**: Java 8, 17, or 21 (or allow MONORYX to automatically download managed Temurin runtimes).
 
@@ -212,15 +212,12 @@ If you want to use your own Azure app registration:
 
 ### Tutorial 4: Companion Updater (`monoryx-updater`)
 
-MONORYX v1.4.0 introduces the dedicated companion binary `monoryx-updater`.
+MONORYX checks the [official update API](https://demonz.org/api) using the installed version and platform. It compares versions locally, so older releases and beta releases on stable installations do not trigger an update.
 
-1. When a new version of MONORYX is released, a banner appears: `Restart to Update`.
-2. Clicking **Restart to Update**:
-   - Downloads the new binary payload into a staging directory.
-   - Spawns `monoryx-updater.exe` with `--wait-pid <current_pid> --update-source <staged> --target-dest <app_exe> --relaunch`.
-   - Closes the launcher cleanly.
-   - The companion binary waits for process termination, performs an atomic file swap, creates a safety `.old` backup, and relaunches the upgraded launcher.
-3. No license prompts, no installation wizards, and zero redundant dialogs!
+1. Open **Settings** and check for updates. Available updates include release notes from the official API.
+2. On Windows, click **Download Update**. The launcher requests the exact version through the official download endpoint and verifies the executable's size and SHA-256 checksum. Checksums come from the API or the selected release's checksum files; installation stops if verification fails or no checksum is available.
+3. Click **Restart to apply update**. Binary updates use `monoryx-updater.exe` to wait for the launcher to exit, replace the executable, keep a `.old` backup, and relaunch. Setup packages run the installer in silent mode.
+4. On Linux and macOS, **Download Update** opens the [official website](https://demonz.org/projects/monoryx), where you can choose the package for your platform.
 
 ---
 
