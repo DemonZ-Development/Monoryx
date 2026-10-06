@@ -883,20 +883,21 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         let (avatar, _) =
                             ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                        if !acc.is_offline() {
+                        crate::ui::components::draw_cute_avatar(
+                            ui.painter(),
+                            avatar_rect,
+                            acc.username(),
+                            !acc.is_offline(),
+                        );
+                        /*if !acc.is_offline() {
                             crate::ui::components::draw_avatar(
                                 ui.painter(),
                                 avatar_rect,
                                 &acc.uuid().to_string(),
                             )
                         } else {
-                            crate::ui::components::draw_cute_avatar(
-                                ui.painter(),
-                                avatar_rect,
-                                acc.username(),
-                                !acc.is_offline(),
-                            );
-                        }
+                            
+                        }*/
                         ui.add_space(6.0);
 
                         let badge_width = 46.0_f32;
