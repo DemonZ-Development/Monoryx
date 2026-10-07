@@ -19,14 +19,14 @@
 
 ## Overview
 
-MONORYX is a lightweight desktop launcher for Minecraft: Java Edition built with Rust, `egui`, and `eframe`. It runs directly as a compiled native binary without Chromium or Node runtimes, holding an idle memory footprint under 50 MB.
+MONORYX is a desktop launcher for Minecraft: Java Edition written in Rust, `egui`, and `eframe`. It compiles to a native binary with an idle memory footprint under 50 MB.
 
 - **Isolated instance directories**: Every instance keeps its own mods, saves, configs, and screenshots in a dedicated directory. Your `.minecraft` directory remains untouched.
-- **Dual-source content discovery**: Search projects across both Modrinth and CurseForge, resolve required dependencies automatically, and install `.mrpack` modpacks or individual mods from a unified interface.
+- **Dual-source content discovery**: Search projects across Modrinth and CurseForge, resolve required dependencies, and install `.mrpack` modpacks or individual mods from a single interface.
 - **Offline and Microsoft accounts**: Sign in via Microsoft OAuth device code flow (`microsoft.com/link`) for authenticated Mojang servers, or create an offline profile for singleplayer and LAN worlds.
-- **Automated Java management**: Detects local JREs on your system and downloads matched Adoptium Temurin runtimes when an instance requires a specific Java version.
+- **Automated Java management**: Detects local JREs and downloads matched Adoptium Temurin runtimes when an instance requires a specific Java version.
 - **Launch tuning**: Features AppCDS class data sharing, Aikar garbage collection presets, customizable memory allocations, and discrete GPU selection on Windows.
-- **Native Windows binary**: Runs as a standard Windows GUI application without opening a background console terminal.
+- **Native Windows binary**: Runs as a standard Windows GUI application without opening a console terminal.
 
 ---
 
@@ -50,7 +50,7 @@ MONORYX is a lightweight desktop launcher for Minecraft: Java Edition built with
 
 ### Mod Browsing and Updates
 - Search both Modrinth and CurseForge with Minecraft version and loader filters.
-- Install mods, resource packs, and shaders directly into your active instance.
+- Install mods, resource packs, and shaders into your active instance.
 - Dependency resolution detects required libraries and warns on incompatible versions.
 - Background update scanner checks local jar hashes and Murmur2 fingerprints for new releases.
 - Dense Library table displays mod states, update badges, and dependency trees.
@@ -63,7 +63,7 @@ MONORYX is a lightweight desktop launcher for Minecraft: Java Edition built with
 
 ### Diagnostics and World Tools
 - Crash analyzer parses JVM logs, highlights failing mod IDs, and offers direct export.
-- Upload logs directly to [mclo.gs](https://mclo.gs) with one click.
+- Upload logs to [mclo.gs](https://mclo.gs) with one click.
 - Create compressed ZIP backups of local worlds with a restore-as-copy option.
 - Browse world folders, inspect level metadata, and preview saved screenshots in full size.
 
@@ -150,7 +150,7 @@ MONORYX maintains all instance data in an isolated application directory:
 └── logs/                 # Launcher execution logs
 ```
 
-Credentials (Microsoft tokens and custom CurseForge API keys) are stored in your operating system credential store: Windows Credential Manager, macOS Keychain, or Linux Secret Service (via GNOME Keyring or KWallet). Plaintext credentials migrate automatically upon initial access.
+Credentials (Microsoft tokens and custom CurseForge API keys) are stored in your operating system credential store: Windows Credential Manager, macOS Keychain, or Linux Secret Service (via GNOME Keyring or KWallet). Plaintext credentials migrate to the system keyring on initial access.
 
 ---
 
@@ -160,7 +160,7 @@ Credentials (Microsoft tokens and custom CurseForge API keys) are stored in your
 No. MONORYX supports offline profiles for singleplayer and local LAN play. If you own Minecraft Java Edition, you can log in with your Microsoft account to connect to official Mojang servers.
 
 **Can I transfer worlds and mods from another launcher?**  
-Yes. Copy your `mods/`, `saves/`, and config files into the `instances/<instance-id>/game/` directory. MONORYX indexes them automatically on startup.
+Yes. Copy your `mods/`, `saves/`, and config files into the `instances/<instance-id>/game/` directory. MONORYX indexes them on startup.
 
 **How does memory allocation work?**  
 Automatic memory detects system RAM and assigns a safe default cap. You can enable Eco Mode to reduce resource usage or configure custom values in instance settings.

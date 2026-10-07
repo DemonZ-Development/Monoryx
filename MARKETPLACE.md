@@ -4,7 +4,7 @@
 
 ![MONORYX Interface](assets/screenshots/home-halloween.png)
 
-### Minecraft, without the clutter. Pure native performance, sandboxed instances, and dual-source mod discovery.
+### Minecraft, without the clutter. Native Rust performance, sandboxed instances, and dual-source mod discovery.
 
 [![Release](https://img.shields.io/badge/Release-v1.5.0-success.svg)](https://demonz.org/projects/monoryx)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational.svg)](https://demonz.org/projects/monoryx)
@@ -17,24 +17,24 @@
 
 ---
 
-## What is MONORYX?
+## Overview
 
-MONORYX is a lightweight desktop launcher for Minecraft: Java Edition built from scratch in Rust. It eliminates the memory overhead and sluggish cold starts common to web-based launchers, holding an idle RAM footprint under 50 MB.
+MONORYX is a native Minecraft: Java Edition launcher written in Rust, `egui`, and `eframe`. Cold starts complete in under a second, and idle memory usage stays below 50 MB.
 
-Whether you run light vanilla worlds or heavy modpacks with hundreds of mods, MONORYX manages your profiles, dependencies, and Java runtimes without touching your existing `.minecraft` folder.
+Each instance runs in an isolated directory with its own mods, saves, configs, and Java runtimes. Your default `.minecraft` directory remains untouched.
 
 ---
 
 ## Key Highlights
 
-- **Pure Native Speed**: Starts instantly and conserves system resources. No Chromium runtimes, no Electron wrappers, and no background telemetry processes.
-- **Unified Mod Ecosystem**: Search and install over 100,000 mods, resource packs, shaders, and modpacks directly from Modrinth and CurseForge in a single interface.
+- **Native Performance**: Compiles to a native binary using OpenGL. Idle memory stays below 50 MB.
+- **Unified Mod Ecosystem**: Search and install mods, resource packs, shaders, and modpacks from Modrinth and CurseForge in one interface.
 - **Sandboxed Instance Directories**: Every profile maintains its own isolated directory for mods, configurations, world saves, and screenshots.
 - **Automated Java Provisioning**: Detects installed JREs on your system and downloads matched Adoptium Temurin runtimes for any Minecraft version.
 - **World Protection & Backups**: Safeguard worlds with one-click compressed ZIP backups and a restore-as-copy mechanism.
 - **Flexible Authentication**: Sign in via Microsoft OAuth device code flow (`microsoft.com/link`) for official online servers, or use offline profiles for singleplayer and LAN play.
 - **Handcrafted Themes**: Includes the seasonal Spooky (Halloween) theme with procedural vector artwork, alongside Gloss, High Contrast, Dark, and Light palettes.
-- **Native Windows Build**: Compiles directly as a clean Windows subsystem GUI executable without background console popups.
+- **Native Windows Build**: Compiles as a Windows subsystem GUI executable without opening a console window.
 
 ---
 
@@ -61,19 +61,19 @@ Whether you run light vanilla worlds or heavy modpacks with hundreds of mods, MO
 ## Core Capabilities
 
 ### 1. Dual-Source Mod Browsing
-Browse the complete catalog of Modrinth and CurseForge projects with version, loader, and category filters. The dependency resolver automatically identifies required libraries and warns on version mismatches before installation.
+Browse the catalog of Modrinth and CurseForge projects with version, loader, and category filters. The dependency resolver identifies required libraries and flags version mismatches before installation.
 
 ### 2. Dense Library Management
 View installed mods in a compact table view with version selection, toggle switches, and an interactive dependency hierarchy. The update scanner uses Murmur2 fingerprints and jar hashes to check for new releases across both platforms.
 
 ### 3. Instance Sandbox
-Support for Vanilla, Fabric, Quilt, NeoForge, and Forge loaders. Configure custom memory limits, JVM launch flags, and discrete GPU assignment. Instances export to portable ZIP packages for easy sharing.
+Support for Vanilla, Fabric, Quilt, NeoForge, and Forge loaders. Configure custom memory limits, JVM launch flags, and discrete GPU assignment. Instances export to portable ZIP packages for sharing.
 
 ### 4. Worlds & Backups
-Manage your world saves directly inside the launcher. Create compressed ZIP snapshots, inspect level metadata and seeds, browse world directories, and restore saves as distinct copies without overwriting original files.
+Manage world saves inside the launcher. Create compressed ZIP snapshots, inspect level metadata and seeds, browse world directories, and restore saves as distinct copies without overwriting original files.
 
 ### 5. Diagnostics & Crash Reporting
-When a game crash occurs, MONORYX parses the JVM stack trace, isolates failing mod IDs, and displays a plain-language summary. Export logs locally or upload them to [mclo.gs](https://mclo.gs) with a single click.
+When a crash occurs, MONORYX parses the JVM stack trace, isolates failing mod IDs, and displays a summary. Export logs to disk or upload them to [mclo.gs](https://mclo.gs) with one click.
 
 ### 6. Screenshots & Media
 Browse in-game screenshots from your selected instance in a full-size viewer with navigation controls. Home displays recent captures in a filmstrip preview strip.
