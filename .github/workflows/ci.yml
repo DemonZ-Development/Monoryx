@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -17,6 +21,7 @@ jobs:
   check:
     name: Format, Lint and Test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: true
       matrix:
@@ -30,8 +35,8 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=20 libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -42,6 +47,7 @@ jobs:
   msrv:
     name: Rust 1.88 Compatibility
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -50,7 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=20 libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
       - name: Check minimum Rust version
         run: cargo check --locked --all-targets --all-features
