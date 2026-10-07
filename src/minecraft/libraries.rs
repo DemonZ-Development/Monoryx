@@ -106,15 +106,16 @@ mod tests {
         let mut m = std::collections::HashMap::new();
         m.insert("windows".to_string(), "natives-windows".to_string());
         m.insert("linux".to_string(), "natives-linux".to_string());
+        m.insert("osx".to_string(), "natives-osx".to_string());
         let k = current_natives_key(&m).unwrap();
         let expected = match crate::utils::system::mojang_os() {
             "windows" => "natives-windows",
             "linux" => "natives-linux",
+            "osx" => "natives-osx",
             _ => "natives-linux",
         };
 
-        assert!(!k.is_empty());
-        let _ = expected;
+        assert_eq!(k, expected);
     }
 
     #[test]
