@@ -452,14 +452,7 @@ fn render_instance_banner_card(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(
-        1.0_f32,
-        if is_selected {
-            p.border.lerp_to_gamma(p.accent, 0.40)
-        } else {
-            p.border
-        },
-    );
+    let border_stroke = Stroke::new(1.0_f32, p.border);
 
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let pill_corner = CornerRadius::same(metrics::PILL_RADIUS);
@@ -679,14 +672,7 @@ fn render_instance_list_row(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(
-        1.0_f32,
-        if is_selected {
-            p.border.lerp_to_gamma(p.accent, 0.40)
-        } else {
-            p.border
-        },
-    );
+    let border_stroke = Stroke::new(1.0_f32, p.border);
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let thumb_corner = CornerRadius::same(6);
     let btn_corner = CornerRadius::same(metrics::CONTROL_RADIUS);

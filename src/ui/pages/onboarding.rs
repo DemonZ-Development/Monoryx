@@ -252,7 +252,11 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     let is_halloween =
         crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
     let cache_id = egui::Id::new(("wizard-height", step));
-    let default_h = if step == 2 { 380.0 } else { 330.0 };
+    let default_h = match step {
+        0 => 270.0,
+        1 => 330.0,
+        _ => 380.0,
+    };
     let known_card_height = ui
         .ctx()
         .data(|d| d.get_temp::<f32>(cache_id).unwrap_or(default_h));
@@ -712,10 +716,12 @@ fn defaults(state: &mut AppState, ui: &mut egui::Ui) {
 
 fn onboarding_footer(state: &mut AppState, ui: &mut egui::Ui, step: usize) {
     if step == 0 {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::ui::components::primary_button(ui, "Continue").clicked() {
-                state.onboarding_step = 1;
-            }
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::ui::components::primary_button(ui, "Continue").clicked() {
+                    state.onboarding_step = 1;
+                }
+            });
         });
         return;
     }

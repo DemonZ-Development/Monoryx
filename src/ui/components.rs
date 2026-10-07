@@ -111,47 +111,35 @@ pub fn wizard_frame(
     ui: &mut egui::Ui,
     step: usize,
     _panel_height: f32,
-    content_key: u64,
+    _content_key: u64,
     mut add: impl FnMut(&mut egui::Ui, bool),
 ) {
     let p = crate::ui::theme::palette(ui.ctx());
 
     let cache_id = egui::Id::new(("wizard-height", step));
-    let body_cache = egui::Id::new(("wizard-body-height", step, content_key));
 
     ui.add_space(14.0);
     ui.vertical_centered(|ui| {
         let corner = CornerRadius::same(16);
-        let mut measured = 0.0_f32;
         let frame = egui::Frame::new()
             .fill(p.elevated)
             .stroke(Stroke::new(1.0_f32, p.border))
             .corner_radius(corner)
-            .inner_margin(egui::Margin::same(22))
+            .inner_margin(egui::Margin::same(24))
             .show(ui, |ui| {
                 ui.set_width(metrics::WIZARD_CARD_W.min(ui.available_width()));
-                let cap = (ui.available_height() - 62.0).max(80.0);
-                let reserved = ui
-                    .ctx()
-                    .data(|d| d.get_temp::<f32>(body_cache).unwrap_or(cap))
-                    .clamp(0.0, cap);
+                let cap = (ui.available_height() - 64.0).max(120.0);
                 egui::ScrollArea::vertical()
                     .id_salt(("wizard-body", step))
-                    .max_height(reserved)
+                    .max_height(cap)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                            add(ui, false);
-                        });
-                        measured = ui.min_rect().height();
+                        add(ui, false);
                     });
                 ui.add_space(12.0);
                 add(ui, true);
             });
-        if measured > 0.0 {
-            ui.ctx().data_mut(|d| d.insert_temp(body_cache, measured));
-        }
         if crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween {
             draw_spiderweb(ui.painter(), frame.response.rect);
         }
