@@ -2935,8 +2935,14 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(22.0, 22.0));
-                    draw_avatar(ui.painter(), rect, "Player", "4566e69f-c907-48ee-8d71-d7ba5aa00d20");
+                    let rect =
+                        egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(22.0, 22.0));
+                    draw_avatar(
+                        ui.painter(),
+                        rect,
+                        "Player",
+                        "4566e69f-c907-48ee-8d71-d7ba5aa00d20",
+                    );
                 });
             },
         );
