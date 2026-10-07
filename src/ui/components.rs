@@ -196,7 +196,7 @@ pub fn hero_card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
     let corner = CornerRadius::same(14);
     let border_stroke = if is_halloween {
-        Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.35))
+        Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.40))
     } else {
         Stroke::new(1.0_f32, p.border)
     };
@@ -1289,7 +1289,13 @@ pub fn compact_danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     compact_button(ui, text, Tone::Danger)
 }
 
-pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2) -> egui::Response {
+pub fn button_with_corner(
+    ui: &mut egui::Ui,
+    text: &str,
+    tone: Tone,
+    size: egui::Vec2,
+    corner: CornerRadius,
+) -> egui::Response {
     let p = crate::ui::theme::palette(ui.ctx());
     let (normal, hover, pressed, foreground, border) = match tone {
         Tone::Primary => (
@@ -1321,7 +1327,6 @@ pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2)
             p.border.lerp_to_gamma(DANGER, 0.55),
         ),
     };
-    let corner = CornerRadius::same(metrics::CONTROL_RADIUS);
     ui.scope(|ui| {
         let widgets = &mut ui.style_mut().visuals.widgets;
         for (widget, fill, stroke) in [
@@ -1354,6 +1359,31 @@ pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
     })
     .inner
+}
+
+pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2) -> egui::Response {
+    button_with_corner(ui, text, tone, size, CornerRadius::same(metrics::CONTROL_RADIUS))
+}
+
+pub fn square_button_sized(
+    ui: &mut egui::Ui,
+    text: &str,
+    tone: Tone,
+    size: egui::Vec2,
+) -> egui::Response {
+    button_with_corner(ui, text, tone, size, CornerRadius::ZERO)
+}
+
+pub fn square_button(ui: &mut egui::Ui, text: &str, tone: Tone) -> egui::Response {
+    square_button_sized(ui, text, tone, egui::vec2(metrics::BUTTON_W, metrics::BUTTON_H))
+}
+
+pub fn square_primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    square_button(ui, text, Tone::Primary)
+}
+
+pub fn square_action_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    square_button(ui, text, Tone::Secondary)
 }
 
 pub fn button_row(

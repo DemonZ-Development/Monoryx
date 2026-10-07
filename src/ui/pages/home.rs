@@ -1,9 +1,9 @@
 use crate::app::{events::Page, state::AppState};
 use crate::instance::InstanceConfig;
 use crate::ui::components::{
-    action_button, badge, button, card_frame, compact_search_field, draw_instance_banner_fallback,
-    format_last_played, hero_card_frame, page_header, primary_button, render_instance_thumbnail,
-    stat, thin_progress, Tone,
+    badge, card_frame, compact_search_field, draw_instance_banner_fallback, format_last_played,
+    hero_card_frame, page_header, render_instance_thumbnail, square_action_button, square_button,
+    square_primary_button, stat, thin_progress, Tone,
 };
 use crate::ui::theme::{metrics, type_scale, MUTED, TEXT, TEXT2};
 use egui::{Color32, CornerRadius, RichText, Stroke};
@@ -17,10 +17,10 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     RichText::new("The last game session ended unexpectedly.")
                         .color(crate::ui::theme::WARNING),
                 );
-                if action_button(ui, "View logs").clicked() {
+                if square_action_button(ui, "View logs").clicked() {
                     state.set_page(Page::Logs);
                 }
-                if action_button(ui, "Dismiss").clicked() {
+                if square_action_button(ui, "Dismiss").clicked() {
                     state.last_exit.clear();
                 }
             });
@@ -41,7 +41,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 .color(TEXT2),
             );
             ui.add_space(12.0);
-            if primary_button(ui, "Create an instance").clicked() {
+            if square_primary_button(ui, "Create an instance").clicked() {
                 crate::ui::pages::instances::open_new_dialog(state);
                 state.set_page(Page::Instances);
             }
@@ -51,7 +51,7 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
     if ui.available_width() >= 900.0 {
         let total_w = ui.available_width();
         let spacing = 14.0_f32;
-        let left_w = ((total_w - spacing) * 0.55).clamp(420.0, 560.0);
+        let left_w = ((total_w - spacing) * 0.52).clamp(440.0, 680.0);
         let right_w = total_w - left_w - spacing;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
@@ -89,7 +89,7 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
     let installing = state.busy_install.contains_key(&cfg.id);
     let eco = cfg.boost_mode.unwrap_or(state.config.boost_mode);
     hero_card_frame(ui, |ui| {
-        ui.set_min_height(310.0);
+        ui.set_min_height(230.0);
         ui.spacing_mut().item_spacing.y = 5.0;
         ui.horizontal(|ui| {
             render_instance_thumbnail(ui, 50.0, &cfg.name, cfg.loader.display_name(), false);
@@ -100,11 +100,16 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                 egui::Layout::top_down(egui::Align::LEFT),
                 |ui| {
                     ui.set_width(identity_width);
-                    ui.add(
-                        egui::Label::new(RichText::new(&cfg.name).size(21.0).strong().color(TEXT))
-                            .truncate(),
-                    )
-                    .on_hover_text(&cfg.name);
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(&cfg.name).size(21.0).strong().color(TEXT))
+                                .truncate(),
+                        )
+                        .on_hover_text(&cfg.name);
+                        if eco {
+                            crate::ui::components::badge_boost(ui, "Eco Mode");
+                        }
+                    });
                     ui.label(
                         RichText::new(format!(
                             "Minecraft {} · {}",
@@ -124,17 +129,17 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                     widgets.active.corner_radius = CornerRadius::ZERO;
                     widgets.open.corner_radius = CornerRadius::ZERO;
                     let menu_resp = ui.menu_button("More", |ui| {
-                        if action_button(ui, "Open game folder").clicked() {
+                        if square_action_button(ui, "Open game folder").clicked() {
                             let _ = open::that(state.instances.game_dir(&cfg.id));
                             ui.close();
                         }
-                        if action_button(ui, "View logs").clicked() {
+                        if square_action_button(ui, "View logs").clicked() {
                             state.set_page(Page::Logs);
                             ui.close();
                         }
                         ui.separator();
                         ui.add_enabled_ui(!running && !installing, |ui| {
-                            if action_button(ui, "Repair game files")
+                            if square_action_button(ui, "Repair game files")
                                 .on_hover_text("Check and re-download missing or damaged game files.")
                                 .clicked()
                             {
@@ -142,7 +147,7 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                                 ui.close();
                             }
                         });
-                        if action_button(
+                        if square_action_button(
                             ui,
                             if eco {
                                 "Turn off Eco mode"
@@ -172,7 +177,7 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                 }
             });
         });
-        ui.add_space(8.0);
+        ui.add_space(10.0);
         let available_updates = state.instance_update_count();
         if state.updates_loading && state.updates_instance.as_deref() == Some(&cfg.id) {
             crate::ui::components::activity_indicator(ui, "Checking compatible updates…");
@@ -183,14 +188,9 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                     ui,
                     &format!("{available_updates} compatible update(s)"),
                 );
-                ui.scope(|ui| {
-                    ui.visuals_mut().widgets.inactive.corner_radius = CornerRadius::ZERO;
-                    ui.visuals_mut().widgets.hovered.corner_radius = CornerRadius::ZERO;
-                    ui.visuals_mut().widgets.active.corner_radius = CornerRadius::ZERO;
-                    if action_button(ui, "Review updates").clicked() {
-                        state.set_page(Page::Library);
-                    }
-                });
+                if square_action_button(ui, "Review updates").clicked() {
+                    state.set_page(Page::Library);
+                }
             });
         }
         let default_ram = ui.ctx().data_mut(|data| {
@@ -390,7 +390,7 @@ fn instance_list(state: &mut AppState, ui: &mut egui::Ui) {
         );
         badge(ui, &filtered.len().to_string());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if button(ui, "+ New instance", Tone::Primary).clicked() {
+            if square_button(ui, "+ New instance", Tone::Primary).clicked() {
                 crate::ui::pages::instances::open_new_dialog(state);
                 state.set_page(Page::Instances);
             }
@@ -429,7 +429,7 @@ fn instance_list(state: &mut AppState, ui: &mut egui::Ui) {
                 ))
                 .color(TEXT2),
             );
-            if action_button(ui, "Clear search")
+            if square_action_button(ui, "Clear search")
                 .on_hover_text("Clear search query")
                 .clicked()
             {
@@ -494,7 +494,14 @@ fn render_instance_banner_card(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(1.0_f32, p.border);
+    let border_stroke = Stroke::new(
+        1.0_f32,
+        if is_selected {
+            p.border.lerp_to_gamma(p.accent, 0.40)
+        } else {
+            p.border
+        },
+    );
 
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let pill_corner = CornerRadius::same(metrics::PILL_RADIUS);
@@ -683,7 +690,7 @@ fn view_toggle_btn(ui: &mut egui::Ui, active: bool, icon: &str, tooltip: &str) -
         let bg = if resp.hovered() { p.hover } else { p.elevated2 };
         (bg, Stroke::new(1.0_f32, p.border), TEXT2)
     };
-    let corner = CornerRadius::same(6);
+    let corner = CornerRadius::ZERO;
     ui.painter()
         .rect(rect, corner, fill, stroke, egui::StrokeKind::Inside);
     ui.painter().text(
@@ -714,7 +721,14 @@ fn render_instance_list_row(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(1.0_f32, p.border);
+    let border_stroke = Stroke::new(
+        1.0_f32,
+        if is_selected {
+            p.border.lerp_to_gamma(p.accent, 0.40)
+        } else {
+            p.border
+        },
+    );
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let thumb_corner = CornerRadius::same(6);
     let btn_corner = CornerRadius::ZERO;
@@ -792,21 +806,21 @@ fn render_instance_list_row(
         widgets.hovered.corner_radius = btn_corner;
         ui.style_mut().spacing.button_padding = egui::vec2(4.0, 4.0);
         let menu_resp = ui.menu_button("•••", |ui| {
-            if action_button(ui, "Edit instance").clicked() {
+            if square_action_button(ui, "Edit instance").clicked() {
                 state.edit_instance = Some(instance.clone());
                 ui.close();
             }
-            if action_button(ui, "Open game folder").clicked() {
+            if square_action_button(ui, "Open game folder").clicked() {
                 let _ = open::that(state.instances.game_dir(&instance.id));
                 ui.close();
             }
-            if action_button(ui, "View logs").clicked() {
+            if square_action_button(ui, "View logs").clicked() {
                 state.set_page(Page::Logs);
                 ui.close();
             }
             ui.separator();
             ui.add_enabled_ui(!running && !installing, |ui| {
-                if action_button(ui, "Repair game files")
+                if square_action_button(ui, "Repair game files")
                     .on_hover_text("Check and re-download missing or damaged game files.")
                     .clicked()
                 {
@@ -814,7 +828,7 @@ fn render_instance_list_row(
                     ui.close();
                 }
             });
-            if action_button(
+            if square_action_button(
                 ui,
                 if eco {
                     "Turn off Eco mode"
@@ -1199,7 +1213,7 @@ fn open_gallery_button(ui: &mut egui::Ui) -> egui::Response {
     } else {
         (p.elevated2, p.border, TEXT)
     };
-    let corner = CornerRadius::same(metrics::CONTROL_RADIUS);
+    let corner = CornerRadius::ZERO;
     ui.painter().rect(
         rect,
         corner,
