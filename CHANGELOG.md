@@ -1,35 +1,38 @@
-# MONORYX 1.5.0 (Unreleased)
+# MONORYX 1.5.0
 
-## Interface and setup
+Major UI overhaul, seasonal Halloween theme with procedural artwork, comprehensive world backup and screenshot viewer suites, dual-source Discover architecture, streamlined onboarding, and memory optimizations.
 
-- Reworked Home around Play, Mods & packs, Worlds & backups, and Instance settings. Instance maintenance actions are grouped under More.
-- Added five themes, clearer keyboard focus, and improved text contrast. Accounts and Settings stay visible at the bottom of the sidebar.
-- Fixed clipped controls at smaller window sizes. Setup keeps Back and Continue visible while longer content scrolls.
-- Project details open in a centered dialog with a blurred, dimmed background. Dialogs and cards use short transitions.
-- Added Library search, enabled/disabled/update filters, and a dependency tree. Export actions share one menu.
-- Simplified Settings, showed game memory in GB, and moved Java tuning, startup archives, and connection options into advanced sections.
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
 
-## Downloads and installation
+## Interface, Theming & Visuals
 
-- Created instances appear immediately, with Downloads showing preparation before the first file transfer starts.
-- Added animated progress for game files, mods, updates, and modpacks. Repeated clicks no longer start the same install twice.
-- Failed installations offer Retry in Downloads. Each install tracks its own result, so one failure does not finish other active downloads.
-- Discover explains when game files still need downloading and disables content installation until the target instance is ready.
-- Version choices show releases compatible with the selected Minecraft version and loader.
-- Check the selected instance's packages and loader in the background on startup and every 30 minutes. Home and Library show compatible updates; users choose when to install them.
+- **Home Rework:** Redesigned Home around the primary instance hero card with square action buttons (`Play Minecraft`, `Mods & packs`, `Worlds & backups`, `Instance settings`), instance stats (mods, memory, last played, playtime), clean subtle non-glowing borders, and secondary maintenance actions consolidated under the `More` menu.
+- **Seasonal Spooky Theme:** Added the Halloween theme featuring procedural silhouetted vector backdrop artwork (haunted castle, glowing full moon, flying bats, and misty pine forest), custom bat header wordmark, carved pumpkin corner accents, and spiderweb card flourishes.
+- **Theme Palette Expansion:** Added distinct theme options (Halloween, Gloss, High Contrast, Dark, Light) with refined accent palettes, crisp text contrast ratios, and persistent bottom-sidebar access for Accounts, Settings, and Logs.
+- **Modernized Modal Dialogs:** Project and pack detail pages now open as centered floating dialogs with a dual-texture GPU blur effect and background dimming.
+- **Windows Subsystem Configuration:** Attached `#![windows_subsystem = "windows"]` to production builds, eliminating command prompt console windows when launching `monoryx.exe` on Windows.
+- **Onboarding Experience:** Streamlined initial onboarding into a compact three-step wizard with automatic memory allocation, detected GPU preference selection, high-contrast dropdown text styling, and reliable Back/Continue navigation.
 
-## Worlds, diagnostics, and integrations
+## Discovery, Downloads & Mod Management
 
-- Added world browsing, compressed backups, restore-as-copy, and file previews.
-- Added screenshot browsing and a full-size viewer. Home shows screenshots from the selected instance.
-- Improved crash explanations and log sharing, Discord activity controls, and Nexeu server tools.
-- Updated launcher checks to use the official release API and verify Windows update downloads.
+- **Dual-Source Content Discovery:** Browse, filter, and search both Modrinth and CurseForge catalogs directly from Discover, complete with dynamic context-aware search placeholders.
+- **Installation Safety Guardrails:** Discover detects when instance core game files are still pending download and guides the user before allowing mod or pack installs.
+- **Compact Library View:** Compacted mod list rows by 25% for high-density information display, featuring update indicators, direct version selection, and an integrated dependency hierarchy tree.
+- **Isolated Multi-Stage Downloads:** Downloads page provides animated phase-by-phase tracking for client jars, libraries, assets, and third-party packs, with independent failure recovery and single-item retry.
+- **Background Update Scanning:** Selected instances check for compatible package and loader updates on launch and every 30 minutes, presenting update notifications without intrusive popups.
 
-## Resource use
+## Worlds, Screenshots & System Tools
 
-- Limited image decoding and thumbnail queues, discarded image results after leaving their page, and freed full-size images when their viewer closes.
-- Cached system font data across theme changes and loaded one system fallback instead of several overlapping font files.
-- Removed per-download repaint threads and reduced idle repainting. Loading animations run while visible; the dialog blur uses two small GPU textures that are released on close.
+- **World Backup & Explorer:** Added a dedicated Worlds manager supporting ZIP-compressed backups, restore-as-copy capabilities, in-app folder browsing, and world metadata previews.
+- **Integrated Screenshot Gallery:** Added full-size screenshot viewer with navigation controls, alongside a filmstrip preview strip directly on the Home page.
+- **Diagnostic Crash Reporting:** Redesigned crash report modal with automated stack trace parsing, problem diagnosis summaries, and one-click log export.
+- **Advanced Compatibility:** Relocated technical UUID RFC4122 specifications and hash details behind an Advanced Compatibility accordion on the Accounts page for a cleaner interface.
+
+## Performance & Resource Utilization
+
+- **Bounded Image Caching:** Implemented bounded texture capacities and aggressive negative thumbnail caching, pruning queues when switching views to conserve system RAM.
+- **Persistent Font Fallback Cache:** CJK and system fallback fonts resolve once on startup and cache across theme switches, avoiding repetitive font file reads.
+- **Reduced Idle Repaints:** Removed persistent per-download repaint threads and restricted frame requests strictly to active animations, maintaining a lightweight runtime footprint during idle states.
 
 ---
 
