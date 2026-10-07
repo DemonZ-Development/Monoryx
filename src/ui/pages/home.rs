@@ -102,8 +102,10 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                     ui.set_width(identity_width);
                     ui.horizontal(|ui| {
                         ui.add(
-                            egui::Label::new(RichText::new(&cfg.name).size(21.0).strong().color(TEXT))
-                                .truncate(),
+                            egui::Label::new(
+                                RichText::new(&cfg.name).size(21.0).strong().color(TEXT),
+                            )
+                            .truncate(),
                         )
                         .on_hover_text(&cfg.name);
                         if eco {
@@ -140,7 +142,9 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
                         ui.separator();
                         ui.add_enabled_ui(!running && !installing, |ui| {
                             if square_action_button(ui, "Repair game files")
-                                .on_hover_text("Check and re-download missing or damaged game files.")
+                                .on_hover_text(
+                                    "Check and re-download missing or damaged game files.",
+                                )
                                 .clicked()
                             {
                                 crate::app::tasks::repair_instance(state, cfg.id.clone());
@@ -494,14 +498,7 @@ fn render_instance_banner_card(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(
-        1.0_f32,
-        if is_selected {
-            p.border.lerp_to_gamma(p.accent, 0.40)
-        } else {
-            p.border
-        },
-    );
+    let border_stroke = Stroke::new(1.0_f32, p.border);
 
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let pill_corner = CornerRadius::same(metrics::PILL_RADIUS);
@@ -721,14 +718,7 @@ fn render_instance_list_row(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(
-        1.0_f32,
-        if is_selected {
-            p.border.lerp_to_gamma(p.accent, 0.40)
-        } else {
-            p.border
-        },
-    );
+    let border_stroke = Stroke::new(1.0_f32, p.border);
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let thumb_corner = CornerRadius::same(6);
     let btn_corner = CornerRadius::ZERO;

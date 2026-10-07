@@ -192,14 +192,8 @@ pub fn provider_card(ui: &mut egui::Ui, name: &str, detail: &str, status: &str) 
 }
 pub fn hero_card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let p = crate::ui::theme::palette(ui.ctx());
-    let is_halloween =
-        crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
     let corner = CornerRadius::same(14);
-    let border_stroke = if is_halloween {
-        Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.40))
-    } else {
-        Stroke::new(1.0_f32, p.border)
-    };
+    let border_stroke = Stroke::new(1.0_f32, p.border);
     let frame = egui::Frame::new()
         .fill(p.elevated)
         .stroke(border_stroke)
@@ -233,24 +227,24 @@ fn halloween_accent(ui: &egui::Ui, rect: egui::Rect) {
         draw_spiderweb(ui.painter(), rect);
         draw_small_pumpkin(
             ui.painter(),
-            rect.left_top() + egui::vec2(22.0, 4.0),
-            18.0,
-            -0.12,
+            rect.left_top() + egui::vec2(16.0, 4.0),
+            22.0,
+            -0.20,
             true,
         );
         draw_small_pumpkin(
             ui.painter(),
-            rect.right_bottom() + egui::vec2(-36.0, -6.0),
-            19.0,
-            0.12,
+            rect.right_bottom() + egui::vec2(-12.0, -8.0),
+            20.0,
+            0.18,
             true,
         );
         draw_small_pumpkin(
             ui.painter(),
-            rect.right_bottom() + egui::vec2(-16.0, -4.0),
-            14.0,
-            -0.10,
-            false,
+            rect.right_bottom() + egui::vec2(6.0, -1.0),
+            15.0,
+            -0.14,
+            true,
         );
     }
 }
@@ -1362,7 +1356,13 @@ pub fn button_with_corner(
 }
 
 pub fn button_sized(ui: &mut egui::Ui, text: &str, tone: Tone, size: egui::Vec2) -> egui::Response {
-    button_with_corner(ui, text, tone, size, CornerRadius::same(metrics::CONTROL_RADIUS))
+    button_with_corner(
+        ui,
+        text,
+        tone,
+        size,
+        CornerRadius::same(metrics::CONTROL_RADIUS),
+    )
 }
 
 pub fn square_button_sized(
@@ -1375,7 +1375,12 @@ pub fn square_button_sized(
 }
 
 pub fn square_button(ui: &mut egui::Ui, text: &str, tone: Tone) -> egui::Response {
-    square_button_sized(ui, text, tone, egui::vec2(metrics::BUTTON_W, metrics::BUTTON_H))
+    square_button_sized(
+        ui,
+        text,
+        tone,
+        egui::vec2(metrics::BUTTON_W, metrics::BUTTON_H),
+    )
 }
 
 pub fn square_primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
