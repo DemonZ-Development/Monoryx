@@ -1717,16 +1717,36 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
     if should_fetch {
         let ctx = ctx.clone();
         let target_uuid = uuid.to_string();
-        tokio::spawn(async move {
-            let result = fetch_player_skin_head(&clean_uuid).await;
-            if let Some(cimg) = result {
-                if let Ok(mut lock) = AVATAR_DECODED.lock() {
-                    let map = lock.get_or_insert_with(HashMap::new);
-                    map.insert(target_uuid, cimg);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let result = fetch_player_skin_head(&clean_uuid).await;
+                if let Some(cimg) = result {
+                    if let Ok(mut lock) = AVATAR_DECODED.lock() {
+                        let map = lock.get_or_insert_with(HashMap::new);
+                        map.insert(target_uuid, cimg);
+                    }
+                    ctx.request_repaint();
                 }
-                ctx.request_repaint();
-            }
-        });
+            });
+        } else {
+            let _ = std::thread::Builder::new()
+                .name("avatar-fetch".to_string())
+                .spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        let result = rt.block_on(fetch_player_skin_head(&clean_uuid));
+                        if let Some(cimg) = result {
+                            if let Ok(mut lock) = AVATAR_DECODED.lock() {
+                                let map = lock.get_or_insert_with(HashMap::new);
+                                map.insert(target_uuid, cimg);
+                            }
+                            ctx.request_repaint();
+                        }
+                    }
+                });
+        }
     }
 }
 
@@ -2899,6 +2919,26 @@ mod tests {
         assert!(
             compact_h < standard_h,
             "compact {compact_h} must be less than standard {standard_h}"
+        );
+    }
+
+    #[test]
+    fn draw_avatar_without_ambient_tokio_runtime_does_not_panic() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(22.0, 22.0));
+                    draw_avatar(ui.painter(), rect, "Player", "4566e69f-c907-48ee-8d71-d7ba5aa00d20");
+                });
+            },
         );
     }
 }
