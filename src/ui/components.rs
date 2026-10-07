@@ -192,12 +192,19 @@ pub fn provider_card(ui: &mut egui::Ui, name: &str, detail: &str, status: &str) 
 }
 pub fn hero_card_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let p = crate::ui::theme::palette(ui.ctx());
+    let is_halloween =
+        crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween;
     let corner = CornerRadius::same(14);
+    let border_stroke = if is_halloween {
+        Stroke::new(1.0_f32, p.border.lerp_to_gamma(p.accent, 0.35))
+    } else {
+        Stroke::new(1.0_f32, p.border)
+    };
     let frame = egui::Frame::new()
         .fill(p.elevated)
-        .stroke(Stroke::new(1.0_f32, p.border))
+        .stroke(border_stroke)
         .corner_radius(corner)
-        .inner_margin(egui::Margin::same(20))
+        .inner_margin(egui::Margin::same(24))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui);
@@ -220,7 +227,31 @@ fn gloss_highlight(ui: &egui::Ui, rect: egui::Rect) {
 
 fn halloween_accent(ui: &egui::Ui, rect: egui::Rect) {
     if crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween {
+        if rect.width() < 120.0 || rect.height() < 80.0 {
+            return;
+        }
         draw_spiderweb(ui.painter(), rect);
+        draw_small_pumpkin(
+            ui.painter(),
+            rect.left_top() + egui::vec2(22.0, 4.0),
+            18.0,
+            -0.12,
+            true,
+        );
+        draw_small_pumpkin(
+            ui.painter(),
+            rect.right_bottom() + egui::vec2(-36.0, -6.0),
+            19.0,
+            0.12,
+            true,
+        );
+        draw_small_pumpkin(
+            ui.painter(),
+            rect.right_bottom() + egui::vec2(-16.0, -4.0),
+            14.0,
+            -0.10,
+            false,
+        );
     }
 }
 
@@ -421,6 +452,20 @@ pub fn draw_small_pumpkin(
     let stem_top = center + rot(egui::vec2(0.8, -half_h - stem_h));
     let stem_base = center + rot(egui::vec2(-0.4, -half_h + 0.6));
 
+    let outline_color = Color32::from_rgb(32, 16, 10);
+    let outline_width = (size * 0.06).clamp(0.8, 1.4);
+
+    let left_center = center + rot(egui::vec2(-half_w * 0.42, 0.0));
+    let right_center = center + rot(egui::vec2(half_w * 0.42, 0.0));
+
+    painter.circle_filled(left_center, half_h * 0.90 + outline_width, outline_color);
+    painter.circle_filled(right_center, half_h * 0.90 + outline_width, outline_color);
+    painter.circle_filled(center, half_h * 0.98 + outline_width, outline_color);
+
+    painter.line_segment(
+        [stem_base, stem_top],
+        Stroke::new(stem_w + outline_width * 1.5, outline_color),
+    );
     painter.line_segment(
         [stem_base, stem_top],
         Stroke::new(stem_w, Color32::from_rgb(62, 85, 38)),
@@ -428,9 +473,6 @@ pub fn draw_small_pumpkin(
 
     let side_color = Color32::from_rgb(215, 92, 18);
     let mid_color = Color32::from_rgb(248, 124, 26);
-
-    let left_center = center + rot(egui::vec2(-half_w * 0.42, 0.0));
-    let right_center = center + rot(egui::vec2(half_w * 0.42, 0.0));
 
     painter.circle_filled(left_center, half_h * 0.90, side_color);
     painter.circle_filled(right_center, half_h * 0.90, side_color);
@@ -964,7 +1006,7 @@ pub fn play_hero_split_button(
             widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
             widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.accent);
             widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, p.accent_hover);
-            let launch_corner = egui::CornerRadius::same(crate::ui::theme::metrics::CONTROL_RADIUS);
+            let launch_corner = egui::CornerRadius::ZERO;
             widgets.inactive.corner_radius = launch_corner;
             widgets.hovered.corner_radius = launch_corner;
             widgets.active.corner_radius = launch_corner;
