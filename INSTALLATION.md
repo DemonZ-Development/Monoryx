@@ -1,8 +1,8 @@
 # MONORYX Installation Guide & Tutorials
 
-Welcome to **MONORYX** — a fast, lightweight Minecraft Java Edition launcher built for high performance, isolated instances, offline & free Microsoft authentication, direct companion updates, and built-in Modrinth & CurseForge integration.
+MONORYX is a lightweight native Minecraft Java Edition launcher built with Rust and egui. It features isolated instance management, offline and Microsoft authentication, companion-assisted updates, and integrated Modrinth and CurseForge catalogs.
 
-> 📢 **Release Notes**: To see what is new in the current release, check out [CHANGELOG.md](CHANGELOG.md).
+> See [CHANGELOG.md](CHANGELOG.md) for full release details.
 
 ---
 
@@ -10,17 +10,20 @@ Welcome to **MONORYX** — a fast, lightweight Minecraft Java Edition launcher b
 
 1. [Installing MONORYX](#installing-monoryx)
    - [Method A: Windows Installation Wizard (Recommended)](#method-a-windows-installation-wizard-recommended)
-   - [Method B: Portable Zip (No Install Required)](#method-b-portable-zip-no-install-required)
-   - [Method C: macOS Disk Image (.dmg)](#method-c-macos-disk-image-dmg)
-   - [Method D: Building from Source](#method-d-building-from-source)
+   - [Method B: Portable Zip (Windows)](#method-b-portable-zip-windows)
+   - [Method C: macOS Disk Image (.dmg) & Universal Binaries](#method-c-macos-disk-image-dmg--universal-binaries)
+   - [Method D: Linux (Installer Script & Tarball)](#method-d-linux-installer-script--tarball)
+   - [Method E: Building from Source](#method-e-building-from-source)
 2. [First Launch & Onboarding](#first-launch--onboarding)
 3. [Tutorials](#tutorials)
    - [Tutorial 1: Creating Your First Minecraft Instance](#tutorial-1-creating-your-first-minecraft-instance)
    - [Tutorial 2: Discovering & Installing Mods (Modrinth & CurseForge)](#tutorial-2-discovering--installing-mods-modrinth--curseforge)
-   - [Tutorial 3: Free Microsoft Login & Azure Setup](#tutorial-3-free-microsoft-login--azure-setup)
+   - [Tutorial 3: Microsoft Authentication & Offline Profiles](#tutorial-3-microsoft-authentication--offline-profiles)
    - [Tutorial 4: Companion Updater (`monoryx-updater`)](#tutorial-4-companion-updater-monoryx-updater)
-   - [Tutorial 5: Performance Optimization & Eco Mode](#tutorial-5-performance-optimization--eco-mode)
-   - [Tutorial 6: Worlds, Snapshots & Backups](#tutorial-6-worlds-snapshots--backups)
+   - [Tutorial 5: Performance Optimization, Memory & Eco Mode](#tutorial-5-performance-optimization-memory--eco-mode)
+   - [Tutorial 6: Worlds, Compression & Safe Restore](#tutorial-6-worlds-compression--safe-restore)
+   - [Tutorial 7: Screenshot Viewer & Filmstrip Gallery](#tutorial-7-screenshot-viewer--filmstrip-gallery)
+   - [Tutorial 8: Theming & Command Palette](#tutorial-8-theming--command-palette)
 4. [Troubleshooting & FAQ](#troubleshooting--faq)
 
 ---
@@ -29,41 +32,41 @@ Welcome to **MONORYX** — a fast, lightweight Minecraft Java Edition launcher b
 
 ### Method A: Windows Installation Wizard (Recommended)
 
-The Windows Setup Wizard installs MONORYX cleanly, sets up desktop and start menu shortcuts, and bundles the atomic companion updater.
+The Windows Setup Wizard installs MONORYX, registers Start Menu shortcuts, sets uninstaller entries, and bundles the companion updater.
 
 #### 1. Download the Installer
-Head to the [official MONORYX website](https://demonz.org/projects/monoryx) and download `MONORYX-Setup-1.5.0.exe`.
+Download `MONORYX-Setup-1.5.0.exe` from the [GitHub Releases page](https://github.com/DemonZ-Development/Monoryx/releases/tag/v1.5.0) or the [official project page](https://demonz.org/projects/monoryx).
 
 ![Releases Page](./assets/instalation-guide/Screenshot%202026-09-29%20110323.png)
 
 #### 2. Open Downloads & Launch Setup
-Open File Explorer, go to your **Downloads** folder, and double-click `MONORYX-Setup-1.5.0.exe`.
+Navigate to your **Downloads** folder and open `MONORYX-Setup-1.5.0.exe`.
 
 ![Downloads Folder](./assets/instalation-guide/Screenshot%202026-09-29%20110659.png)
 
-#### 3. Windows SmartScreen Prompt
-If Windows displays "Windows protected your PC" because the installer is an open-source release without an expensive corporate certificate:
+#### 3. Windows SmartScreen
+If Windows SmartScreen prompts "Windows protected your PC":
 - Click **More info**.
 
 ![SmartScreen More Info](./assets/instalation-guide/Screenshot%202026-09-29%20110706.png)
 
-- Click **Run anyway** to start the setup wizard.
+- Click **Run anyway**.
 
 ![SmartScreen Run Anyway](./assets/instalation-guide/Screenshot%202026-09-29%20110712.png)
 
 #### 4. Choose Installation Scope
-- **Only for me** (Recommended): Installs into `%LOCALAPPDATA%\Programs\MONORYX` without needing administrator rights.
-- **For all users**: Installs into `C:\Program Files\MONORYX`.
+- **Only for me** (Default): Installs to `%LOCALAPPDATA%\Programs\MONORYX` without administrator privileges.
+- **For all users**: Installs system-wide to `C:\Program Files\MONORYX`.
 
 ![Install Scope](./assets/instalation-guide/Screenshot%202026-09-29%20110722.png)
 
 #### 5. License Agreement
-Review and accept the Apache 2.0 open-source license agreement.
+Review and accept the Apache 2.0 license.
 
 ![License Agreement](./assets/instalation-guide/Screenshot%202026-09-29%20110748.png)
 
 #### 6. Destination Location & Shortcuts
-Select the destination folder (default recommended) and configure your Start Menu folder and shortcut preferences.
+Select the destination directory and configure your shortcut preferences.
 
 ![Destination Directory](./assets/instalation-guide/Screenshot%202026-09-29%20110755.png)
 
@@ -71,78 +74,106 @@ Select the destination folder (default recommended) and configure your Start Men
 
 ![Additional Tasks](./assets/instalation-guide/Screenshot%202026-09-29%20110809.png)
 
-#### 7. Install & Complete
-Review your chosen settings and click **Install**. The files and `monoryx-updater.exe` companion will be installed in seconds.
+#### 7. Complete Installation
+Click **Install**. Setup copies the runtime files, writes shortcuts, and sets up `monoryx-updater.exe`.
 
 ![Ready to Install](./assets/instalation-guide/Screenshot%202026-09-29%20110818.png)
 
 ![Installation Progress](./assets/instalation-guide/Screenshot%202026-09-29%20110825.png)
 
-### Method B: Portable Zip (No Install Required)
+---
 
-For USB drives or isolated development environments:
+### Method B: Portable Zip (Windows)
 
-1. Download `monoryx-v1.5.0-windows-x64.zip` from the [official website](https://demonz.org/projects/monoryx).
-2. Extract the archive into any preferred folder (e.g. `C:\Games\MONORYX` or `D:\PortableApps\MONORYX`).
-3. Ensure both `monoryx.exe` and `monoryx-updater.exe` reside in the same directory.
-4. Launch `monoryx.exe` directly. All configurations and instances are saved portably or in user profile data.
+For portable USB installations or isolated folders:
 
-### Method C: macOS Disk Image (.dmg)
+1. Download `monoryx-v1.5.0-windows-x64.zip`.
+2. Extract the archive into your preferred directory (such as `D:\Games\MONORYX`).
+3. Keep `monoryx.exe` and `monoryx-updater.exe` in the same directory so companion updates function properly.
+4. Launch `monoryx.exe`. Production builds run with `#![windows_subsystem = "windows"]`, so no background command prompt window opens.
 
-For macOS 11.0 or newer on Apple Silicon or Intel:
+---
 
-1. Download `monoryx-v1.5.0-macos-universal.dmg` from the [official website](https://demonz.org/projects/monoryx).
-2. Double-click the downloaded `.dmg` file to mount it.
-3. Drag **MONORYX** into the **Applications** folder shortcut.
-4. Open your **Applications** folder and launch **MONORYX**.
-5. If macOS displays an unverified developer prompt on first launch, right-click `MONORYX.app` in Finder and select **Open**, or run:
+### Method C: macOS Disk Image (.dmg) & Universal Binaries
+
+MONORYX provides universal binaries supporting both Apple Silicon (M1/M2/M3/M4) and Intel x86_64 architectures on macOS 11.0+.
+
+1. Download `monoryx-v1.5.0-macos-universal.dmg` (or architecture tarballs `monoryx-v1.5.0-macos-arm64.tar.gz` / `monoryx-v1.5.0-macos-x64.tar.gz`).
+2. Double-click the `.dmg` file to mount it.
+3. Drag **MONORYX** into your **Applications** folder.
+4. If Gatekeeper prompts about an unnotarized binary on first launch, right-click `MONORYX.app` in Finder and select **Open**, or clear the quarantine flag via Terminal:
    ```bash
    xattr -cr /Applications/MONORYX.app
    ```
 
-### Method D: Building from Source
+---
 
-If you prefer compiling directly from source on Windows, Linux, or macOS:
+### Method D: Linux (Installer Script & Tarball)
+
+#### Using the Shell Installer Script
+1. Download `monoryx-installer-linux.sh`.
+2. Make the script executable and run it:
+   ```bash
+   chmod +x monoryx-installer-linux.sh
+   ./monoryx-installer-linux.sh
+   ```
+   The installer extracts the binary to `~/.local/bin/monoryx`, registers a desktop launcher entry at `~/.local/share/applications/monoryx.desktop`, and installs the application icon.
+
+#### Using the Tarball Directly
+1. Download `monoryx-v1.5.0-linux-x64.tar.gz`.
+2. Extract the archive:
+   ```bash
+   tar -xzf monoryx-v1.5.0-linux-x64.tar.gz -C ~/.local/bin/
+   chmod +x ~/.local/bin/monoryx
+   ```
+3. Required system libraries (installed via your package manager):
+   - **Debian / Ubuntu**: `sudo apt install libasound2 libudev1 libdbus-1-3 libx11-6 libxcursor1 libxi6 libxrandr2 libwayland-client0 libxkbcommon0`
+   - **Fedora**: `sudo dnf install alsa-lib systemd-libs dbus-libs libX11 libXcursor libXi libXrandr wayland-client libxkbcommon`
+   - **Arch Linux**: `sudo pacman -S alsa-lib systemd-libs dbus libx11 libxcursor libxi libxrandr wayland libxkbcommon`
+
+---
+
+### Method E: Building from Source
+
+To compile the latest release directly from source:
 
 #### Prerequisites
-- **Rust Toolchain**: Stable Rust 1.88+ (install via [rustup.rs](https://rustup.rs/)).
-- **C Compiler (Windows GNU only)**: If using the `x86_64-pc-windows-gnu` target, install MinGW-w64 via `winget install BrechtSanders.WinLibs.POSIX.UCRT`.
-- **Java**: Java 8, 17, or 21 (or allow MONORYX to automatically download managed Temurin runtimes).
+- **Rust**: Rust 1.88+ (`rustup default stable`)
+- **System build tools**:
+  - Windows: MSVC C++ Build Tools or WinLibs UCRT.
+  - Linux: `gcc`, `pkg-config`, `libasound2-dev`, `libudev-dev`, `libdbus-1-dev`.
+  - macOS: Xcode Command Line Tools (`xcode-select --install`).
 
-#### Build & Run
+#### Build Steps
 ```bash
-# Clone the repository
 git clone https://github.com/DemonZ-Development/Monoryx.git
 cd Monoryx
-
-# Compile both launcher and updater binaries
 cargo build --release --bins
-
-# The compiled binaries will be available at:
-# target/release/monoryx.exe
-# target/release/monoryx-updater.exe
 ```
+The compiled binaries are placed in `target/release/monoryx` and `target/release/monoryx-updater`.
 
 ---
 
 ## First Launch & Onboarding
 
-When starting MONORYX for the first time, you are greeted with the Onboarding Wizard:
+When starting MONORYX for the first time, a compact three-step onboarding modal guides you through initial setup:
 
 ![Onboarding Welcome](./assets/instalation-guide/Screenshot%202026-09-29%20111129.png)
 
-1. **Profile Identity**:
-   Choose your player name. MONORYX supports both offline player profiles and free Microsoft accounts. Your profile automatically generates a lightweight procedural avatar featuring cute anime-style cat ears and blush cheeks.
+1. **Step 1: Introduction**:
+   Overview of isolated instance storage and offline-first design. Click **Continue**.
+
+2. **Step 2: Account & Player Identity**:
+   Set up your primary profile. You can enter an offline nickname or click **Microsoft Login** to authenticate via the OAuth device code flow.
 
 ![Profile Setup](./assets/instalation-guide/Screenshot%202026-09-29%20111149.png)
 
-2. **Launcher Defaults**:
-   Select your preferred theme (Dark, Midnight, Solarized, Monokai, Nord, etc.) and parallel download concurrency (up to 16 simultaneous threads).
+3. **Step 3: Runtime Defaults**:
+   Select your preferred memory allocation (Automatic detection or custom megabytes) and pick your preferred GPU (Integrated vs Dedicated). Text contrast in dropdowns ensures selected items remain clear.
 
 ![Theme Selection](./assets/instalation-guide/Screenshot%202026-09-29%20111157.png)
 
-3. **Complete & Ready**:
-   Click Finish to jump straight into the Home dashboard.
+4. Click **Finish Setup** to save configuration and open the Home view.
 
 ![Onboarding Complete](./assets/instalation-guide/Screenshot%202026-09-29%20111203.png)
 
@@ -152,109 +183,114 @@ When starting MONORYX for the first time, you are greeted with the Onboarding Wi
 
 ### Tutorial 1: Creating Your First Minecraft Instance
 
-MONORYX keeps each instance strictly isolated from others, meaning mods, config files, worlds, and resource packs from one instance never contaminate another.
+Instances in MONORYX are isolated directories. Mod lists, configuration files, world saves, and shader settings never interfere across instances.
 
-1. Navigate to the **Instances** tab from the left sidebar navigation.
-2. Click **Create Instance** at the top right.
-3. Choose:
-   - **Instance Name**: e.g., `Survival Fabric 1.21.1`.
-   - **Minecraft Version**: Pick any release from `1.0` through the latest snapshot or release (`1.21.4`).
-   - **Mod Loader**:
-     - `Vanilla`: Pure unmodified Minecraft.
-     - `Fabric`: Ultra-fast, modern, lightweight modding.
-     - `NeoForge`: Modern successor to Forge with high modpack compatibility.
-     - `Forge`: Traditional mod loader for historic or classic modpacks.
-     - `Quilt`: Advanced modular loader compatible with Fabric mods.
-4. Click **Create**.
-5. Hit **Play**. Missing client jars, assets, natives, and libraries are downloaded concurrently with SHA-1 integrity checks.
+1. Navigate to **Instances** in the sidebar.
+2. Click **+ New instance** in the header.
+3. Configure instance attributes:
+   - **Name**: e.g. `Fabric Survival 1.20.1`
+   - **Version**: Any official release, snapshot, beta, or alpha.
+   - **Loader**: `Vanilla`, `Fabric`, `NeoForge`, `Forge`, or `Quilt`.
+4. Click **Create instance**.
+5. Return to **Home**. Your active instance appears in the central hero card with square action buttons: `Play Minecraft`, `Mods & packs`, `Worlds & backups`, and `Instance settings`.
+6. Clicking **Play Minecraft** downloads required game jars, libraries, and assets with parallel SHA-1 verification.
 
 ---
 
 ### Tutorial 2: Discovering & Installing Mods (Modrinth & CurseForge)
 
-MONORYX features native search and one-click installation for both **Modrinth** and **CurseForge**.
+MONORYX searches both Modrinth and CurseForge catalogs with unified one-click installation.
 
-1. Select your target instance from the top bar or Home page.
+1. Select your target instance on **Home** or in the top navigation.
 2. Click **Discover** in the sidebar.
-3. Choose your content category: **Mods**, **Modpacks**, **Resource Packs**, or **Shaders**.
-4. Switch **Source** between **Modrinth** and **CurseForge**:
-   - **Modrinth**: Free, unauthenticated public search with automatic dependency resolution.
-   - **CurseForge**: Connects directly via MONORYX Services out of the box, with optional custom API key support in **Settings** to search millions of mods hosted on CurseForge.
-5. Filter by compatible Minecraft version and loader with one click.
-6. Click **Install**. MONORYX downloads the correct `.jar` file directly into your instance's `mods` folder and verifies checksums.
-7. Go to **Library** to enable, disable, or update installed mods at any time.
+3. Switch catalog sources between **Modrinth** and **CurseForge**. The search field dynamically updates its placeholder to reflect the selected source.
+4. Select content type: **Mods**, **Modpacks**, **Resource packs**, or **Shader packs**.
+5. Use version and loader pills to filter compatible entries.
+6. Click an item to view project details in a floating modal dialog.
+7. Click **Install**. If instance core assets are still downloading, MONORYX alerts you before proceeding.
+8. Go to **Library** to enable, disable, or inspect dependency hierarchies in the compact mod list view.
 
 ---
 
-### Tutorial 3: Free Microsoft Login & Azure Setup
+### Tutorial 3: Microsoft Authentication & Offline Profiles
 
-MONORYX includes full Microsoft authentication using Microsoft's standard **OAuth 2.0 Device Code Flow**. This lets you authenticate safely with your existing Microsoft account without paying any extra fees.
+MONORYX supports verified Microsoft accounts alongside offline profiles:
 
-#### Logging In with Device Code Flow
-1. Click **Accounts** in the left sidebar.
-2. Under **Microsoft Account**, click **Login with Microsoft**.
-3. MONORYX generates a unique verification code and provides a link to `https://microsoft.com/devicelogin`.
-4. Click **Copy Code & Open Browser**.
-5. Paste the code into Microsoft's login portal, sign in with your Microsoft account, and approve the app.
-6. MONORYX completes the Xbox Live, XSTS, and Minecraft Java service token exchange automatically, loading your verified player name and UUID.
+#### Microsoft Login via Device Code Flow
+1. Open **Accounts** in the sidebar.
+2. Click **Add Account** -> **Microsoft Login**.
+3. MONORYX displays an eight-character code and opens `https://microsoft.com/devicelogin`.
+4. Enter the code in your browser and authorize your Microsoft account.
+5. MONORYX exchanges the authentication token for Minecraft services, loads your Xbox gamertag, and fetches your player skin head avatar.
 
-#### Using Your Own Free Azure App Registration (Optional)
-If you want to use your own Azure app registration:
-1. Go to [portal.azure.com](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade).
-2. Click **New registration**.
-3. Name it `MONORYX Launcher`, set account type to **Personal Microsoft accounts only**.
-4. In **Authentication**, add a platform for **Mobile and desktop applications** and enable `https://login.microsoftonline.com/common/oauth2/nativeclient`.
-5. Under **Advanced settings**, set **Allow public client flows** to **Yes**.
-6. Copy the **Application (client) ID**.
-7. In MONORYX, go to **Accounts** -> **Advanced Client Settings (Optional)** and paste your Client ID.
+#### Advanced Compatibility Settings
+Technical RFC4122 specifications, offline MD5 hash derivation, and SkinsRestorer options are grouped inside the collapsible **Advanced compatibility** section at the bottom of the Accounts page to keep the interface clear.
 
 ---
 
 ### Tutorial 4: Companion Updater (`monoryx-updater`)
 
-MONORYX checks the [official update API](https://demonz.org/api) using the installed version and platform. It compares versions locally, so older releases and beta releases on stable installations do not trigger an update.
+The standalone companion binary handles atomic executable swapping:
 
-1. Open **Settings** and check for updates. Available updates include release notes from the official API.
-2. On Windows, click **Download Update**. The launcher requests the exact version through the official download endpoint and verifies the executable's size and SHA-256 checksum. Checksums come from the API or the selected release's checksum files; installation stops if verification fails or no checksum is available.
-3. Click **Restart to apply update**. Binary updates use `monoryx-updater.exe` to wait for the launcher to exit, replace the executable, keep a `.old` backup, and relaunch. Setup packages run the installer in silent mode.
-4. On Linux and macOS, **Download Update** opens the [official website](https://demonz.org/projects/monoryx), where you can choose the package for your platform.
-
----
-
-### Tutorial 5: Performance Optimization & Eco Mode
-
-MONORYX is built in native Rust without Electron or Chromium overhead, keeping idle RAM under 50 MB.
-
-- **Eco Mode**:
-  - Enable **Eco Mode** on instances or globally in Settings.
-  - Automatically caps memory allocations during casual play and suspends GUI animations when Minecraft is active.
-- **When Game Starts**:
-  - In Settings -> Launcher, set "When game starts" to **Close / Hide**. This frees launcher GPU and CPU resources entirely while Minecraft is running.
-- **JVM Flags Preset**:
-  - Recommended Aikar-tuned G1GC arguments are provided out-of-the-box for silky smooth frame times and minimal garbage-collection stutter.
-- **Dedicated GPU Preference**:
-  - On laptops with dual GPUs (Intel/AMD integrated + NVIDIA/AMD dedicated), MONORYX configures Windows High Performance GPU preference to ensure Minecraft runs on your dedicated card.
+1. Open **Settings** -> **Launcher** and click **Check for updates**.
+2. When a newer version is detected, release notes and hash verification details are displayed.
+3. Click **Download Update**. MONORYX downloads the binary to a temporary file and verifies the SHA-256 hash.
+4. Click **Restart to update**. MONORYX launches `monoryx-updater`, exits cleanly, swaps the executable, archives a backup, and relaunches the updated launcher.
 
 ---
 
-### Tutorial 6: Worlds, Snapshots & Backups
+### Tutorial 5: Performance Optimization, Memory & Eco Mode
 
-Never lose your survival progress:
+MONORYX operates natively without Electron or Chromium runtimes, maintaining a lightweight background memory footprint:
 
-1. Go to the **Worlds** page in the sidebar.
-2. Select any world from your active instance.
-3. Click **Back Up World**. MONORYX creates a compressed timestamped archive in your instance's backup folder.
-4. If a world is corrupted or you want to revert changes, click **Restore**. MONORYX restores the world as a separate, safe copy so your current world is never accidentally destroyed.
+- **Eco Mode**: Enable Eco Mode on specific instances or globally in Settings. Eco Mode limits memory consumption during casual play and pauses background repaint loops when the Minecraft client window is focused.
+- **Hide When Game Starts**: In **Settings** -> **Launcher**, configure the launcher to minimize or hide while Minecraft is running to release GPU resources.
+- **Dedicated GPU Preference**: On dual-GPU laptops (Intel/AMD integrated + NVIDIA/AMD dedicated), MONORYX instructs Windows to assign the high-performance dedicated graphics adapter to Java.
+
+---
+
+### Tutorial 6: Worlds, Compression & Safe Restore
+
+The dedicated Worlds manager provides backup and directory inspection tools:
+
+1. Click **Worlds & Files** in the sidebar or **Worlds & backups** on the Home hero card.
+2. Select any world from the active instance.
+3. Choose a backup compression level:
+   - **Fast**: Quick archival with minimal CPU usage.
+   - **Maximum**: Balanced compression.
+   - **Smallest**: Maximum deflation for minimal disk space.
+4. Click **Back Up World**. MONORYX writes a timestamped ZIP archive into the instance backups directory.
+5. To recover a previous state, click **Restore as copy**. MONORYX restores the backup into a new world folder without overwriting existing data.
+
+---
+
+### Tutorial 7: Screenshot Viewer & Filmstrip Gallery
+
+1. Click **Screenshots** in the sidebar, or click any preview thumbnail on the Home page filmstrip.
+2. View full-resolution screenshots with `Previous` and `Next` navigation controls.
+3. Click **Open in Explorer** / **Reveal in Finder** to access the source PNG file directly on disk.
+
+---
+
+### Tutorial 8: Theming & Command Palette
+
+- **Themes**: Go to **Settings** -> **Appearance** to toggle between themes:
+  - **Halloween (Spooky)**: Silhouetted vector backdrop (haunted castle, glowing full moon, flying bats, pine forest), pumpkin corner accents, spiderweb cards, and glowing orange primary buttons.
+  - **Dark / Light / Gloss / High Contrast**: Clean modern aesthetics tailored for readability and contrast.
+- **Command Palette**: Press `Ctrl+K` (or `Cmd+K` on macOS) anywhere in the application to open the quick launcher palette for instant page navigation, instance switching, and settings access.
 
 ---
 
 ## Troubleshooting & FAQ
 
-#### Q: Minecraft fails to launch or reports missing Java?
-Go to **Settings** -> **Java & GPU**. Click **Detect Installed Runtimes** or select **Install Managed Temurin JRE** to let MONORYX configure the correct Java version automatically.
+#### Q: Missing Java runtime or game fails to start?
+Open **Settings** -> **Java & Runtime**. Click **Auto-detect runtimes** or choose **Install Managed Temurin JRE** to download the appropriate Java 8, 17, or 21 runtime automatically.
 
-#### Q: Do I need a CurseForge API key?
-No. CurseForge search works automatically via MONORYX Services with no setup required. If you prefer to use your own personal developer key, you can enter it in **Settings** -> **Launcher** under **CurseForge Integration**.
+#### Q: Missing glyphs or unreadable CJK characters?
+MONORYX caches system fallback fonts (`Segoe UI`, `Malgun Gothic`, `Microsoft YaHei`, `MS Gothic` on Windows, and platform equivalents on macOS and Linux) at startup. Non-Latin and CJK text render properly across all interfaces.
 
-#### Q: Can I play offline without internet?
-Yes! MONORYX has full first-class offline support. Simply create an offline profile in **Accounts** and play any installed instance anytime without network connectivity.
+#### Q: Does CurseForge require an API key?
+No. CurseForge searches and mod downloads route through official endpoints out of the box. You can supply an optional custom developer key in **Settings** -> **Launcher** if desired.
+
+#### Q: Can I run MONORYX completely offline?
+Yes. Create an offline profile in **Accounts** to launch any previously installed instance without an active internet connection.
