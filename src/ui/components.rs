@@ -1731,12 +1731,15 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
 }
 
 async fn fetch_player_skin_head(clean_uuid: &str) -> Option<egui::ColorImage> {
+    let parsed_uuid = uuid::Uuid::parse_str(clean_uuid).ok()?;
+    let hex_uuid = parsed_uuid.simple().to_string();
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
         .build()
         .ok()?;
 
-    let url = format!("https://sessionserver.mojang.com/session/minecraft/profile/{clean_uuid}");
+    let url = format!("https://sessionserver.mojang.com/session/minecraft/profile/{hex_uuid}");
     let response = client.get(&url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
@@ -1754,9 +1757,18 @@ async fn fetch_player_skin_head(clean_uuid: &str) -> Option<egui::ColorImage> {
         .decode(value)
         .ok()?;
     let textures: Value = serde_json::from_slice(&decoded).ok()?;
-    let skin_url = textures["textures"]["SKIN"]["url"].as_str()?;
+    let raw_skin_url = textures["textures"]["SKIN"]["url"].as_str()?;
+    let skin_url = if let Some(stripped) = raw_skin_url.strip_prefix("http://") {
+        format!("https://{stripped}")
+    } else {
+        raw_skin_url.to_string()
+    };
 
-    let response = client.get(skin_url).send().await.ok()?;
+    if !skin_url.starts_with("https://textures.minecraft.net/") {
+        return None;
+    }
+
+    let response = client.get(&skin_url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
