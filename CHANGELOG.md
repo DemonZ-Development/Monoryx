@@ -1,3 +1,22 @@
+# MONORYX 1.5.1
+
+Quick patch fixing a startup crash after signing into Microsoft, switching Microsoft login to our official Azure Application registration, and adding build timeouts to CI.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Authentication & Profiles
+
+- **Official Azure Application Registration**: Swapped out the placeholder client ID for our official Monoryx Azure Application ID (`e6fe0b23-f185-4bbb-a6e1-7e72ed727a6f`). Microsoft device logins now display **MONORYX** rather than Prism Launcher.
+- **Startup Crash Fix for Microsoft Accounts**: Fixed a crash that closed the launcher a split second after opening when an active Microsoft account was present. The avatar image fetcher now safely checks for an active Tokio runtime handle before dispatching tasks, preventing thread panics on the UI thread.
+
+## Build Pipelines & CI
+
+- **Workflow Timeouts**: Added a 15-minute cap to CI test jobs so hung package mirrors cannot run for hours.
+- **Workflow Concurrency**: Pushing fresh commits now cancels older in-flight test runs automatically to save runner minutes.
+- **Resilient Package Downloads**: Linux package steps now use retry and timeout flags to avoid stalling on dead mirrors.
+
+---
+
 # MONORYX 1.5.0
 
 Major UI overhaul, seasonal Halloween theme with procedural artwork, comprehensive world backup and screenshot viewer suites, dual-source Discover architecture, streamlined onboarding, and memory optimizations.

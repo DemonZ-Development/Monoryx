@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/Release-v1.5.0-success.svg)](https://demonz.org/projects/monoryx)
+[![Version](https://img.shields.io/badge/Release-v1.5.1-success.svg)](https://demonz.org/projects/monoryx)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-informational.svg)](https://demonz.org/projects/monoryx)
 
 [**Download MONORYX**](https://demonz.org/projects/monoryx) • [**Installation Guide**](INSTALLATION.md) • [**Changelog**](CHANGELOG.md) • [**Marketplace Overview**](MARKETPLACE.md) • [**Issue Tracker**](https://github.com/DemonZ-Development/Monoryx/issues)
@@ -78,21 +78,21 @@ MONORYX is a desktop launcher for Minecraft: Java Edition written in Rust, `egui
 
 ### Windows
 
-1. Download `MONORYX-Setup-1.5.0.exe` or the portable zip archive from the [official website](https://demonz.org/projects/monoryx).
+1. Download `MONORYX-Setup-1.5.1.exe` or the portable zip archive from the [official website](https://demonz.org/projects/monoryx).
 2. Run the installer or extract the zip archive.
 3. Open MONORYX, set your username or log in with Microsoft, and select your memory limit.
 4. Click **Create Instance**, choose your Minecraft version and loader, then click **Play**.
 
 ### macOS
 
-1. Download `monoryx-v1.5.0-macos-universal.dmg` for Intel or Apple Silicon Macs.
+1. Download `monoryx-v1.5.1-macos-universal.dmg` for Intel or Apple Silicon Macs.
 2. Open the `.dmg` and drag `MONORYX.app` to your Applications folder.
 3. Launch MONORYX from Applications or Spotlight.
 
 ### Linux
 
-1. Download `monoryx-v1.5.0-linux-x64.tar.gz`.
-2. Extract the archive: `tar -xzf monoryx-v1.5.0-linux-x64.tar.gz`.
+1. Download `monoryx-v1.5.1-linux-x64.tar.gz`.
+2. Extract the archive: `tar -xzf monoryx-v1.5.1-linux-x64.tar.gz`.
 3. Run the executable: `./monoryx`.
 
 For step-by-step setup guides and platform notes, refer to [INSTALLATION.md](INSTALLATION.md).

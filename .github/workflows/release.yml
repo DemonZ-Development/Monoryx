@@ -12,6 +12,7 @@ jobs:
   test:
     name: Format, Lint and Test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: true
       matrix:
@@ -25,8 +26,8 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=20 libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -37,6 +38,7 @@ jobs:
   build-windows:
     needs: [test]
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,13 +50,13 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.0" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.1" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.0" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.1" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
           Copy-Item target\release\monoryx-updater.exe dist\
@@ -74,20 +76,21 @@ jobs:
   build-linux:
     needs: [test]
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=20 libasound2-dev libudev-dev libdbus-1-dev pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libwayland-dev libxkbcommon-dev
       - name: Build release binary
         run: cargo build --release
       - name: Package Linux assets
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.5.0"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.5.1"; fi
           mkdir -p dist/package
           cp target/release/monoryx dist/package/
           chmod +x dist/package/monoryx
@@ -111,6 +114,7 @@ jobs:
   build-macos:
     needs: [test]
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -127,7 +131,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.5.0"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.5.1"; fi
           chmod +x installer/macos/package-macos.sh
           installer/macos/package-macos.sh "$VERSION" target/universal dist
           mkdir -p dist/arch
@@ -152,6 +156,7 @@ jobs:
   publish-release:
     needs: [test, build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Download all artifacts
@@ -164,7 +169,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.5.0"; fi
+          if [ -z "$TAG" ]; then TAG="v1.5.1"; fi
           awk -v version="${TAG#v}" '
             $0 == "# MONORYX " version { keep=1 }
             keep && /^# MONORYX / && $0 != "# MONORYX " version { exit }

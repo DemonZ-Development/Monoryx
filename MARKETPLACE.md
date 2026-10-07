@@ -6,7 +6,7 @@
 
 ### Minecraft, without the clutter. Native Rust performance, sandboxed instances, and dual-source mod discovery.
 
-[![Release](https://img.shields.io/badge/Release-v1.5.0-success.svg)](https://demonz.org/projects/monoryx)
+[![Release](https://img.shields.io/badge/Release-v1.5.1-success.svg)](https://demonz.org/projects/monoryx)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational.svg)](https://demonz.org/projects/monoryx)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Source](https://img.shields.io/badge/GitHub-DemonZ--Development%2FMonoryx-black.svg)](https://github.com/DemonZ-Development/Monoryx)
@@ -118,18 +118,18 @@ Browse in-game screenshots from your selected instance in a full-size viewer wit
 ## Installation
 
 ### Windows
-1. Download `MONORYX-Setup-1.5.0.exe` from [demonz.org/projects/monoryx](https://demonz.org/projects/monoryx).
+1. Download `MONORYX-Setup-1.5.1.exe` from [demonz.org/projects/monoryx](https://demonz.org/projects/monoryx).
 2. Run the installer or extract the portable ZIP archive to your desired location.
 3. Launch MONORYX, set your profile name, and click **Play**.
 
 ### macOS
-1. Download `monoryx-v1.5.0-macos-universal.dmg`.
+1. Download `monoryx-v1.5.1-macos-universal.dmg`.
 2. Open the disk image and drag `MONORYX.app` to your Applications folder.
 3. Launch the app from Applications or Spotlight.
 
 ### Linux
-1. Download `monoryx-v1.5.0-linux-x64.tar.gz`.
-2. Extract the archive: `tar -xzf monoryx-v1.5.0-linux-x64.tar.gz`.
+1. Download `monoryx-v1.5.1-linux-x64.tar.gz`.
+2. Extract the archive: `tar -xzf monoryx-v1.5.1-linux-x64.tar.gz`.
 3. Run `./monoryx` from terminal or desktop shortcut.
 
 ---
