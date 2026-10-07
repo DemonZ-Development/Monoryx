@@ -19,7 +19,7 @@ pub enum Block {
     Table(Vec<Vec<Vec<Span>>>),
 }
 
-const INLINE_SCAN_ALLOWANCE: usize = 8 * 1024 * 1024;
+const INLINE_SCAN_ALLOWANCE: usize = 512 * 1024;
 const INLINE_SCAN_WINDOW: usize = 4096;
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
 const MAX_BLOCKS: usize = 2000;

@@ -323,8 +323,23 @@ pub fn show(state: &mut AppState, ctx: &egui::Context) {
     ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label.cmp(&b.1.label)));
     let visible = ranked.len().min(9);
 
+    let full_screen = ctx.screen_rect();
+    let backdrop_clicked = egui::Area::new(egui::Id::new("command-palette-backdrop"))
+        .order(egui::Order::Middle)
+        .fixed_pos(full_screen.min)
+        .interactable(true)
+        .show(ctx, |ui| {
+            ui.allocate_rect(full_screen, egui::Sense::click())
+                .clicked()
+        })
+        .inner;
+    if backdrop_clicked {
+        dismiss = true;
+    }
+
     egui::Window::new("command_palette")
         .id(egui::Id::new("command-palette-window"))
+        .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)
         .title_bar(false)

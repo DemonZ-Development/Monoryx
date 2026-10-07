@@ -1346,8 +1346,47 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                 {
                     state.set_page(Page::Settings);
                 }
-                if crate::ui::components::button(ui, "Search", crate::ui::components::Tone::Ghost)
-                    .on_hover_text("Command palette (Ctrl+K)")
+                let search_btn_size = egui::vec2(54.0, 20.0);
+                let (search_rect, search_click) =
+                    ui.allocate_exact_size(search_btn_size, egui::Sense::click());
+                let search_hovered = search_click.hovered();
+                let pill_corner = CornerRadius::same(metrics::CONTROL_RADIUS);
+                let search_bg = if search_hovered {
+                    theme.hover
+                } else {
+                    theme.elevated2
+                };
+                ui.painter().rect(
+                    search_rect,
+                    pill_corner,
+                    search_bg,
+                    Stroke::new(
+                        1.0_f32,
+                        if search_hovered {
+                            theme.border.lerp_to_gamma(TEXT, 0.25)
+                        } else {
+                            theme.border
+                        },
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+                if search_hovered {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                ui.painter().text(
+                    search_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Ctrl+K",
+                    egui::FontId::proportional(type_scale::MICRO),
+                    if search_hovered {
+                        Color32::WHITE
+                    } else {
+                        TEXT2
+                    },
+                );
+                crate::ui::components::focus_ring(ui, &search_click, "Command palette");
+                if search_click
+                    .on_hover_text("Open command palette (Ctrl+K)")
                     .clicked()
                 {
                     state.command_palette_open = true;

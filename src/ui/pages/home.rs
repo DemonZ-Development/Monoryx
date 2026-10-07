@@ -447,15 +447,18 @@ fn render_instance_banner_card(
         egui::Sense::click(),
     );
 
-    let theme = crate::ui::theme::current_theme(ui.ctx());
     let fill = if resp.hovered() {
         p.elevated.lerp_to_gamma(p.hover, 0.5)
     } else {
         p.elevated
     };
     let border_stroke = Stroke::new(
-        if is_selected { 1.5_f32 } else { 1.0_f32 },
-        if is_selected { p.accent } else { p.border },
+        1.0_f32,
+        if is_selected {
+            p.border.lerp_to_gamma(p.accent, 0.40)
+        } else {
+            p.border
+        },
     );
 
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
@@ -506,22 +509,14 @@ fn render_instance_banner_card(
         .rect_stroke(rect, card_corner, border_stroke, egui::StrokeKind::Inside);
 
     if is_selected {
-        let badge_text = if theme == crate::config::ThemeKind::Halloween {
-            "✓ Selected 🎃"
-        } else {
-            "✓ Selected"
-        };
-        let badge_w = if theme == crate::config::ThemeKind::Halloween {
-            96.0
-        } else {
-            76.0
-        };
+        let badge_text = "• Selected";
+        let badge_w = 68.0;
         let badge_rect = egui::Rect::from_min_size(
             banner_rect.left_top() + egui::vec2(6.0, 6.0),
-            egui::vec2(badge_w, 20.0),
+            egui::vec2(badge_w, 18.0),
         );
         ui.painter()
-            .rect_filled(badge_rect, pill_corner, Color32::from_black_alpha(200));
+            .rect_filled(badge_rect, pill_corner, Color32::from_black_alpha(180));
         ui.painter().text(
             badge_rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -684,7 +679,14 @@ fn render_instance_list_row(
     } else {
         p.elevated
     };
-    let border_stroke = Stroke::new(1.0_f32, p.border);
+    let border_stroke = Stroke::new(
+        1.0_f32,
+        if is_selected {
+            p.border.lerp_to_gamma(p.accent, 0.40)
+        } else {
+            p.border
+        },
+    );
     let card_corner = CornerRadius::same(metrics::CARD_RADIUS);
     let thumb_corner = CornerRadius::same(6);
     let btn_corner = CornerRadius::same(metrics::CONTROL_RADIUS);

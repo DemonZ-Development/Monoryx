@@ -233,27 +233,6 @@ fn gloss_highlight(ui: &egui::Ui, rect: egui::Rect) {
 fn halloween_accent(ui: &egui::Ui, rect: egui::Rect) {
     if crate::ui::theme::current_theme(ui.ctx()) == crate::config::ThemeKind::Halloween {
         draw_spiderweb(ui.painter(), rect);
-        draw_small_pumpkin(
-            ui.painter(),
-            rect.left_top() + egui::vec2(16.0, 4.0),
-            22.0,
-            -0.20,
-            true,
-        );
-        draw_small_pumpkin(
-            ui.painter(),
-            rect.right_bottom() + egui::vec2(-12.0, -8.0),
-            20.0,
-            0.18,
-            true,
-        );
-        draw_small_pumpkin(
-            ui.painter(),
-            rect.right_bottom() + egui::vec2(6.0, -1.0),
-            15.0,
-            -0.14,
-            true,
-        );
     }
 }
 
@@ -262,11 +241,11 @@ pub fn draw_spiderweb(painter: &egui::Painter, rect: egui::Rect) {
         return;
     }
     let origin = rect.right_top();
-    let web_color = Color32::from_rgba_unmultiplied(255, 145, 50, 42);
+    let web_color = Color32::from_rgba_unmultiplied(255, 140, 45, 18);
     let stroke = Stroke::new(1.0_f32, web_color);
 
     let angles: [f32; 5] = [0.0, 0.38, 0.785, 1.18, 1.57];
-    let lengths: [f32; 5] = [54.0, 50.0, 56.0, 50.0, 54.0];
+    let lengths: [f32; 5] = [36.0, 32.0, 38.0, 32.0, 36.0];
     let mut spokes = Vec::with_capacity(5);
     for (angle, len) in angles.iter().zip(lengths.iter()) {
         let pt = origin + egui::vec2(-len * angle.cos(), len * angle.sin());
@@ -529,8 +508,8 @@ pub fn draw_halloween_shell_artwork(painter: &egui::Painter, rect: egui::Rect) {
     if rect.width() < 300.0 || rect.height() < 200.0 {
         return;
     }
-    let anchor_x = rect.right();
-    let anchor_y = rect.top();
+    let anchor_x = rect.right() + 8.0;
+    let anchor_y = rect.top() - 26.0;
 
     let mountain_pts = vec![
         egui::pos2(anchor_x - 440.0, anchor_y + 92.0),
@@ -570,7 +549,7 @@ pub fn draw_halloween_shell_artwork(painter: &egui::Painter, rect: egui::Rect) {
     }
 
     let moon_center = egui::pos2(anchor_x - 105.0, anchor_y + 36.0);
-    painter.circle_filled(moon_center, 23.0, Color32::from_rgb(224, 106, 26));
+    painter.circle_filled(moon_center, 21.0, Color32::from_rgb(224, 106, 26));
 
     painter.circle_filled(
         moon_center + egui::vec2(-6.5, -3.5),
