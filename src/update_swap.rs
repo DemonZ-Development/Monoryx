@@ -31,6 +31,7 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
     unsafe {
         let handle = windows_sys::Win32::System::Threading::OpenProcess(0x00100000, 0, pid);
         if handle.is_null() {
+            std::thread::sleep(Duration::from_millis(200));
             return true;
         }
         let result = windows_sys::Win32::System::Threading::WaitForSingleObject(
@@ -38,7 +39,12 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
             timeout.as_millis().min(u32::MAX as u128) as u32,
         );
         windows_sys::Win32::Foundation::CloseHandle(handle);
-        result == 0
+        if result == 0 {
+            std::thread::sleep(Duration::from_millis(200));
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -60,19 +66,44 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
     }
 }
 
-fn backup_path_for(target: &Path) -> PathBuf {
+fn unique_backup_path_for(target: &Path) -> PathBuf {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
     target.with_file_name(format!(
-        "{}.old",
-        target.file_name().unwrap_or_default().to_string_lossy()
+        "{}.old.{}.{}",
+        target.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id(),
+        timestamp
     ))
 }
 
+fn clean_stale_backups(target: &Path) {
+    let Some(parent) = target.parent() else {
+        return;
+    };
+    let Some(file_name) = target.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    let prefix = format!("{file_name}.old");
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                if name.starts_with(&prefix) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+}
+
 fn retry(mut operation: impl FnMut() -> Result<()>) -> Result<()> {
-    for attempt in 0..25 {
+    for attempt in 0..50 {
         match operation() {
             Ok(()) => return Ok(()),
-            Err(error) if attempt == 24 => return Err(error),
-            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+            Err(error) if attempt == 49 => return Err(error),
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
         }
     }
     unreachable!()
@@ -112,29 +143,26 @@ fn apply_with_launch(
             .as_file()
             .set_permissions(std::fs::Permissions::from_mode(0o755))?;
     }
-    let backup = backup_path_for(target);
+    let backup = unique_backup_path_for(target);
     let had_target = target.exists();
     if had_target {
-        if backup.exists() {
-            std::fs::remove_file(&backup)?;
-        }
-        retry(|| std::fs::rename(target, &backup))?;
-    } else if backup.exists() {
-        return Err(Error::new(
-            ErrorKind::AlreadyExists,
-            format!(
-                "A previous update backup needs recovery: {}",
-                backup.display()
-            ),
-        ));
+        retry(|| std::fs::rename(target, &backup))
+            .map_err(|e| Error::other(format!("renaming target to backup failed: {e}")))?;
     }
-    let result = staged
+    let persisted = staged
         .persist(target)
-        .map_err(|error| error.error)
-        .and_then(|_| launch(target));
+        .map_err(|error| Error::other(format!("persisting staged file failed: {}", error.error)));
+    let result = match persisted {
+        Ok(file) => {
+            drop(file);
+            launch(target)
+                .map_err(|e| Error::other(format!("relaunching updated executable failed: {e}")))
+        }
+        Err(error) => Err(error),
+    };
     if let Err(error) = result {
         if target.exists() {
-            retry(|| std::fs::remove_file(target))?;
+            let _ = retry(|| std::fs::remove_file(target));
         }
         if had_target {
             retry(|| std::fs::rename(&backup, target)).map_err(|restore| {
@@ -147,10 +175,26 @@ fn apply_with_launch(
         return Err(error);
     }
     if had_target {
-        std::fs::remove_file(backup)?;
+        let _ = retry(|| std::fs::remove_file(&backup));
     }
-    std::fs::remove_file(source)?;
+    let _ = retry(|| std::fs::remove_file(source));
+    clean_stale_backups(target);
     Ok(())
+}
+
+fn spawn_with_retry(path: &Path) -> Result<()> {
+    let mut cmd = std::process::Command::new(path);
+    if let Some(parent) = path.parent() {
+        cmd.current_dir(parent);
+    }
+    for attempt in 0..50 {
+        match cmd.spawn() {
+            Ok(_) => return Ok(()),
+            Err(error) if attempt == 49 => return Err(error),
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    unreachable!()
 }
 
 pub fn run() -> Result<()> {
@@ -163,7 +207,7 @@ pub fn run() -> Result<()> {
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Missing --target-dest"))?;
     if args
         .wait_pid
-        .is_some_and(|pid| !wait_for_process_exit(pid, Duration::from_secs(25)))
+        .is_some_and(|pid| !wait_for_process_exit(pid, Duration::from_secs(30)))
     {
         return Err(Error::new(
             ErrorKind::TimedOut,
@@ -172,7 +216,7 @@ pub fn run() -> Result<()> {
     }
     apply_with_launch(&source, &target, |path| {
         if args.relaunch {
-            std::process::Command::new(path).spawn()?;
+            spawn_with_retry(path)?;
         }
         Ok(())
     })
@@ -245,6 +289,12 @@ mod tests {
         })
         .unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
-        assert!(!source.exists() && !backup_path_for(&target).exists());
+        assert!(!source.exists());
+        let stale = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".old"))
+            .count();
+        assert_eq!(stale, 0);
     }
 }

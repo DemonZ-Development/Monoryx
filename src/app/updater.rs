@@ -450,7 +450,8 @@ pub fn apply_update_and_restart(update_path: &std::path::Path) -> std::io::Resul
     };
 
     let mut cmd = std::process::Command::new(&updater_exe);
-    cmd.arg("--update-source")
+    cmd.current_dir(current_dir)
+        .arg("--update-source")
         .arg(update_path)
         .arg("--target-dest")
         .arg(&current_exe)

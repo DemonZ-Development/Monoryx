@@ -97,7 +97,11 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                                     )
                                     .clicked()
                                 {
-                                    let _ = crate::app::updater::apply_update_and_restart(&path);
+                                    if let Err(error) =
+                                        crate::app::updater::apply_update_and_restart(&path)
+                                    {
+                                        state.fail(format!("Could not apply update: {error}"));
+                                    }
                                 }
                             } else {
                                 if ui
