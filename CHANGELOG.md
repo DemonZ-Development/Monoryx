@@ -1,3 +1,19 @@
+# MONORYX 1.5.2
+
+Patch release resolving Windows in-place update swap failures, file locking conflicts during companion launcher restarts, and improving update process recovery.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Updater & System Reliability
+
+- **Windows File Lock Resolution**: Resolved an issue on Windows where in-app updates failed to restart into the new version. The atomic file replacement now drops active file write descriptors before spawning the updated executable, eliminating Windows sharing violations (`ERROR_SHARING_VIOLATION` / OS Error 32).
+- **Process Execution Resilience**: Added retry handling with backoff when launching the updated binary to accommodate transient antivirus PE file inspections and disk flush delays.
+- **Collision-Free Update Backups**: Switched from static backup filenames to process- and timestamp-unique backup paths, avoiding `ERROR_ACCESS_DENIED` errors on NTFS file systems when replacing previous versions.
+- **Kernel Image Unmap Grace Period**: Added a brief delay after the parent launcher process exits to ensure the Windows kernel has completely unmapped previous binary sections before in-place file replacement begins.
+- **Updater Diagnostic Logging**: Added localized error logging (`monoryx-updater.log`) to track file swap operations and surfaced background updater launch errors directly to the launcher UI status banner.
+
+---
+
 # MONORYX 1.5.1
 
 Quick patch fixing a startup crash after signing into Microsoft, switching Microsoft login to our official Azure Application registration, and adding build timeouts to CI.
