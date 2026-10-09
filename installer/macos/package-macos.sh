@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-1.5.2}"
+VERSION="${1:-1.5.3}"
 BIN_DIR="${2:-target/release}"
 OUTPUT_DIR="${3:-dist}"
 

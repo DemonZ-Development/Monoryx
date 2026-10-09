@@ -50,13 +50,13 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.2" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.3" }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.2" }
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.3" }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
           Copy-Item target\release\monoryx-updater.exe dist\
@@ -90,7 +90,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.5.2"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.5.3"; fi
           mkdir -p dist/package
           cp target/release/monoryx dist/package/
           chmod +x dist/package/monoryx
@@ -131,7 +131,7 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.5.2"; fi
+          if [ -z "$VERSION" ]; then VERSION="1.5.3"; fi
           chmod +x installer/macos/package-macos.sh
           installer/macos/package-macos.sh "$VERSION" target/universal dist
           mkdir -p dist/arch
@@ -169,7 +169,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.5.2"; fi
+          if [ -z "$TAG" ]; then TAG="v1.5.3"; fi
           awk -v version="${TAG#v}" '
             $0 == "# MONORYX " version { keep=1 }
             keep && /^# MONORYX / && $0 != "# MONORYX " version { exit }

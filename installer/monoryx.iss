@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.5.2"
+  #define AppVersion "1.5.3"
 #endif
 #define AppName "MONORYX"
 #define AppPublisher "DemonZDevelopment"
@@ -79,6 +79,16 @@ var
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := '';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if (CurStep = ssPostInstall) and WizardSilent then
+  begin
+    Exec(ExpandConstant('{app}\{#AppExe}'), '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ResultCode);
+  end;
 end;
 
 function TreeSize(const Root: String): Int64;

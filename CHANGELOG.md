@@ -1,3 +1,16 @@
+# MONORYX 1.5.3
+
+Patch release ensuring silent Windows installer updates automatically relaunch Monoryx upon completion.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Windows Installer & Updater
+
+- **Silent Update Relaunch**: Resolved an issue where in-app updates downloaded via silent installer execution (`/VERYSILENT`) completed on disk without restarting the launcher. Inno Setup now triggers an automatic application restart in post-installation phase during silent installs, ensuring the new version opens immediately after clicking Restart.
+- **Update Workflow Continuity**: Streamlined the update path for existing installations so in-app update checks transition smoothly into the updated release.
+
+---
+
 # MONORYX 1.5.2
 
 Patch release resolving Windows in-place update swap failures, file locking conflicts during companion launcher restarts, and improving update process recovery.

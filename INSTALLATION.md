@@ -35,12 +35,12 @@ MONORYX is a lightweight native Minecraft Java Edition launcher built with Rust 
 The Windows Setup Wizard installs MONORYX, registers Start Menu shortcuts, sets uninstaller entries, and bundles the companion updater.
 
 #### 1. Download the Installer
-Download `MONORYX-Setup-1.5.2.exe` from the [GitHub Releases page](https://github.com/DemonZ-Development/Monoryx/releases/tag/v1.5.2) or the [official project page](https://demonz.org/projects/monoryx).
+Download `MONORYX-Setup-1.5.3.exe` from the [GitHub Releases page](https://github.com/DemonZ-Development/Monoryx/releases/tag/v1.5.3) or the [official project page](https://demonz.org/projects/monoryx).
 
 ![Releases Page](./assets/instalation-guide/Screenshot%202026-09-29%20110323.png)
 
 #### 2. Open Downloads & Launch Setup
-Navigate to your **Downloads** folder and open `MONORYX-Setup-1.5.2.exe`.
+Navigate to your **Downloads** folder and open `MONORYX-Setup-1.5.3.exe`.
 
 ![Downloads Folder](./assets/instalation-guide/Screenshot%202026-09-29%20110659.png)
 
@@ -87,7 +87,7 @@ Click **Install**. Setup copies the runtime files, writes shortcuts, and sets up
 
 For portable USB installations or isolated folders:
 
-1. Download `monoryx-v1.5.2-windows-x64.zip`.
+1. Download `monoryx-v1.5.3-windows-x64.zip`.
 2. Extract the archive into your preferred directory (such as `D:\Games\MONORYX`).
 3. Keep `monoryx.exe` and `monoryx-updater.exe` in the same directory so companion updates function properly.
 4. Launch `monoryx.exe`. Production builds run with `#![windows_subsystem = "windows"]`, so no background command prompt window opens.
@@ -98,7 +98,7 @@ For portable USB installations or isolated folders:
 
 MONORYX provides universal binaries supporting both Apple Silicon (M1/M2/M3/M4) and Intel x86_64 architectures on macOS 11.0+.
 
-1. Download `monoryx-v1.5.2-macos-universal.dmg` (or architecture tarballs `monoryx-v1.5.2-macos-arm64.tar.gz` / `monoryx-v1.5.2-macos-x64.tar.gz`).
+1. Download `monoryx-v1.5.3-macos-universal.dmg` (or architecture tarballs `monoryx-v1.5.3-macos-arm64.tar.gz` / `monoryx-v1.5.3-macos-x64.tar.gz`).
 2. Double-click the `.dmg` file to mount it.
 3. Drag **MONORYX** into your **Applications** folder.
 4. If Gatekeeper prompts about an unnotarized binary on first launch, right-click `MONORYX.app` in Finder and select **Open**, or clear the quarantine flag via Terminal:
@@ -120,10 +120,10 @@ MONORYX provides universal binaries supporting both Apple Silicon (M1/M2/M3/M4) 
    The installer extracts the binary to `~/.local/bin/monoryx`, registers a desktop launcher entry at `~/.local/share/applications/monoryx.desktop`, and installs the application icon.
 
 #### Using the Tarball Directly
-1. Download `monoryx-v1.5.2-linux-x64.tar.gz`.
+1. Download `monoryx-v1.5.3-linux-x64.tar.gz`.
 2. Extract the archive:
    ```bash
-   tar -xzf monoryx-v1.5.2-linux-x64.tar.gz -C ~/.local/bin/
+   tar -xzf monoryx-v1.5.3-linux-x64.tar.gz -C ~/.local/bin/
    chmod +x ~/.local/bin/monoryx
    ```
 3. Required system libraries (installed via your package manager):
