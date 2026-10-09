@@ -1,3 +1,15 @@
+# MONORYX 1.5.4
+
+Patch release restoring Microsoft authentication using an approved Azure client registration ID.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Authentication & Profiles
+
+- **Microsoft Account Login**: Restored the default Microsoft OAuth client identifier to an approved application registration (`c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb`). This resolves the 403 Forbidden error during token exchange with Mojang services (`login_with_xbox`), allowing out-of-the-box Microsoft logins without requiring manual client configuration in Settings.
+
+---
+
 # MONORYX 1.5.3
 
 Patch release ensuring silent Windows installer updates automatically relaunch Monoryx upon completion.
