@@ -55,11 +55,6 @@ impl LoaderKind {
             Self::Forge,
         ]
     }
-
-    #[must_use]
-    pub const fn mods_dir_name(self) -> &'static str {
-        "mods"
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -72,11 +72,13 @@ impl InstanceManager {
         let cfg = InstanceConfig::new(name, minecraft_version, loader, loader_version);
         cfg.validate()?;
         let dir = self.instance_dir(&cfg.id);
-        std::fs::create_dir_all(dir.join("game"))?;
-        for sub in GAME_SUBDIRS {
-            std::fs::create_dir_all(dir.join("game").join(sub))?;
+        let result = (|| {
+            self.ensure_game_dirs(&cfg.id)?;
+            self.save(&cfg)
+        })();
+        if let Err(error) = result {
+            return Err(self.rollback_creation(&dir, error));
         }
-        self.save(&cfg)?;
         Ok(cfg)
     }
 
@@ -110,15 +112,34 @@ impl InstanceManager {
         copy.last_played_at = None;
         copy.total_plays = 0;
         copy.play_time_secs = 0;
+        copy.validate()?;
         let dst_dir = self.instance_dir(&copy.id);
-        std::fs::create_dir_all(&dst_dir)?;
-
-        let src_game = self.game_dir(id);
-        if src_game.exists() {
-            crate::utils::fs::copy_dir_recursive(&src_game, &self.game_dir(&copy.id))?;
+        let result = (|| {
+            self.ensure_game_dirs(&copy.id)?;
+            let src_game = self.game_dir(id);
+            if src_game.exists() {
+                crate::utils::fs::copy_dir_recursive(&src_game, &self.game_dir(&copy.id))?;
+            }
+            let src_content = self.instance_dir(id).join("content.json");
+            if src_content.exists() {
+                std::fs::copy(src_content, dst_dir.join("content.json"))?;
+            }
+            self.save(&copy)
+        })();
+        if let Err(error) = result {
+            return Err(self.rollback_creation(&dst_dir, error));
         }
-        self.save(&copy)?;
         Ok(copy)
+    }
+
+    fn rollback_creation(&self, dir: &Path, error: MonoryxError) -> MonoryxError {
+        match crate::utils::fs::remove_dir_inside_root(self.paths.root(), dir) {
+            Ok(()) => error,
+            Err(cleanup) => MonoryxError::Instance(format!(
+                "{error}; could not remove incomplete instance at {}: {cleanup}",
+                dir.display()
+            )),
+        }
     }
 
     pub fn delete(&self, id: &str, delete_files: bool) -> Result<()> {
@@ -449,6 +470,75 @@ mod tests {
         let d2 = m.duplicate(&c.id, "B".into()).unwrap();
         assert_ne!(c.id, d2.id);
         assert_eq!(m.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn duplicate_preserves_game_files_and_installed_content_metadata() {
+        let (_dir, manager) = manager();
+        let mut original = manager
+            .create(
+                "Original".into(),
+                "1.21.1".into(),
+                LoaderKind::Fabric,
+                "0.16.9".into(),
+            )
+            .unwrap();
+        original.total_plays = 5;
+        original.play_time_secs = 600;
+        original.last_played_at = Some(chrono::Utc::now().to_rfc3339());
+        manager.save(&original).unwrap();
+        let original_content = manager.instance_dir(&original.id).join("content.json");
+        let metadata = r#"{"entries":[{"file_name":"fixture.jar","kind":"mod","project_id":"fixture","project_slug":"fixture-mod","project_title":"Fixture Mod","version_id":"version","version_number":"1.0","file_hash_sha512":null,"file_hash_sha1":null,"size":4,"enabled":false,"installed_at":"2026-10-09T00:00:00Z","loader":"fabric","game_version":"1.21.1"}]}"#;
+        std::fs::write(&original_content, metadata).unwrap();
+        let disabled = manager.disabled_dir(&original.id).join("mods");
+        std::fs::create_dir_all(&disabled).unwrap();
+        std::fs::write(disabled.join("fixture.jar.disabled"), b"test").unwrap();
+        let duplicate = manager.duplicate(&original.id, "Duplicate".into()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(manager.instance_dir(&duplicate.id).join("content.json"))
+                .unwrap(),
+            metadata
+        );
+        assert_eq!(
+            std::fs::read(
+                manager
+                    .disabled_dir(&duplicate.id)
+                    .join("mods/fixture.jar.disabled")
+            )
+            .unwrap(),
+            b"test"
+        );
+        assert_eq!(duplicate.total_plays, 0);
+        assert_eq!(duplicate.play_time_secs, 0);
+        assert_eq!(duplicate.last_played_at, None);
+    }
+
+    #[test]
+    fn failed_duplicate_removes_its_partial_directory() {
+        let (_dir, manager) = manager();
+        let original = manager
+            .create(
+                "Original".into(),
+                "1.21.1".into(),
+                LoaderKind::Vanilla,
+                String::new(),
+            )
+            .unwrap();
+        std::fs::write(
+            manager.game_dir(&original.id).join("options.txt"),
+            b"settings",
+        )
+        .unwrap();
+        std::fs::create_dir(manager.instance_dir(&original.id).join("content.json")).unwrap();
+        assert!(manager.duplicate(&original.id, "Duplicate".into()).is_err());
+        assert_eq!(
+            std::fs::read_dir(manager.paths.instances_dir())
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(manager.list().unwrap().len(), 1);
+        assert!(manager.game_dir(&original.id).join("options.txt").exists());
     }
 
     #[test]

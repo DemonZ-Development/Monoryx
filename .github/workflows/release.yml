@@ -4,11 +4,58 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Existing release version (defaults to Cargo.toml)
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release version and tag
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          package_version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
+          version = os.environ.get("REQUESTED_VERSION", "").strip().removeprefix("v") or package_version
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
+              raise SystemExit("Invalid release version")
+          if version != package_version:
+              raise SystemExit("Release version must match Cargo.toml")
+          tag = f"v{version}"
+          if os.environ["GITHUB_EVENT_NAME"] == "push" and os.environ["GITHUB_REF_NAME"] != tag:
+              raise SystemExit("Release tag must match Cargo.toml")
+          try:
+              tag_commit = subprocess.check_output(["git", "rev-parse", f"refs/tags/{tag}^{{commit}}"], text=True).strip()
+              head_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          except subprocess.CalledProcessError:
+              raise SystemExit("Create the release tag before running this workflow")
+          if tag_commit != head_commit:
+              raise SystemExit("Run this workflow from the release tag's commit")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\ntag={tag}\n")
+          PY
+
   test:
     name: Format, Lint and Test
     runs-on: ${{ matrix.os }}
@@ -36,9 +83,11 @@ jobs:
         run: cargo test --locked --all-targets --all-features
 
   build-windows:
-    needs: [test]
+    needs: [test, resolve-version]
     runs-on: windows-latest
     timeout-minutes: 25
+    env:
+      MONORYX_VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -49,14 +98,12 @@ jobs:
       - name: Compile Inno Setup Installer
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.4" }
+          $version = $env:MONORYX_VERSION
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\monoryx.iss
       - name: Package Windows Zip
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = "1.5.4" }
+          $version = $env:MONORYX_VERSION
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item installer\dist\*.exe dist\
           Copy-Item target\release\monoryx-updater.exe dist\
@@ -74,9 +121,11 @@ jobs:
           path: dist/*
 
   build-linux:
-    needs: [test]
+    needs: [test, resolve-version]
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      MONORYX_VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -88,9 +137,7 @@ jobs:
         run: cargo build --release
       - name: Package Linux assets
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.5.4"; fi
+          VERSION="$MONORYX_VERSION"
           mkdir -p dist/package
           cp target/release/monoryx dist/package/
           chmod +x dist/package/monoryx
@@ -112,9 +159,11 @@ jobs:
             dist/*.sh
 
   build-macos:
-    needs: [test]
+    needs: [test, resolve-version]
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      MONORYX_VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -129,9 +178,7 @@ jobs:
           lipo -create -output target/universal/monoryx-updater target/aarch64-apple-darwin/release/monoryx-updater target/x86_64-apple-darwin/release/monoryx-updater
       - name: Package macOS Application (.dmg and .tar.gz)
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.5.4"; fi
+          VERSION="$MONORYX_VERSION"
           chmod +x installer/macos/package-macos.sh
           installer/macos/package-macos.sh "$VERSION" target/universal dist
           mkdir -p dist/arch
@@ -154,7 +201,7 @@ jobs:
             dist/*.tar.gz
 
   publish-release:
-    needs: [test, build-windows, build-linux, build-macos]
+    needs: [test, resolve-version, build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -167,9 +214,9 @@ jobs:
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MONORYX_TAG: ${{ needs.resolve-version.outputs.tag }}
         run: |
-          TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v1.5.4"; fi
+          TAG="$MONORYX_TAG"
           awk -v version="${TAG#v}" '
             $0 == "# MONORYX " version { keep=1 }
             keep && /^# MONORYX / && $0 != "# MONORYX " version { exit }

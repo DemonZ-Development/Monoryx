@@ -225,6 +225,8 @@ pub struct AppState {
     hierarchy_generation: u64,
     hierarchy_pending: bool,
     pending_pack_exports: std::collections::HashSet<String>,
+    pending_instance_duplicates: std::collections::HashSet<String>,
+    pending_modpack_imports: std::collections::VecDeque<std::path::PathBuf>,
     pub pending_content_delete: Option<(String, ContentKind, String, String)>,
     pub updates: Vec<UpdateInfo>,
     pub updates_loading: bool,
@@ -451,6 +453,8 @@ impl AppState {
             hierarchy_generation: 0,
             hierarchy_pending: false,
             pending_pack_exports: std::collections::HashSet::new(),
+            pending_instance_duplicates: std::collections::HashSet::new(),
+            pending_modpack_imports: std::collections::VecDeque::new(),
             pending_content_delete: None,
             updates: Vec::new(),
             updates_loading: false,
@@ -1263,22 +1267,78 @@ impl AppState {
     }
 
     pub fn export_pack(&mut self, config: crate::instance::config::InstanceConfig) {
+        self.export_instance(config, false);
+    }
+
+    pub fn export_instance(&mut self, config: InstanceConfig, choose_destination: bool) {
         if !self.pending_pack_exports.insert(config.id.clone()) {
             return;
         }
         let instance_dir = self.instances.instance_dir(&config.id);
-        let entries = self.library_entries.clone();
         let id = config.id.clone();
         let tx = self.tx.clone();
         let ctx = self.egui_ctx.clone();
+        self.notify("Preparing instance export...");
         self.runtime.spawn(async move {
-            let result = tokio::task::spawn_blocking(move || {
-                crate::instance::export::export_quick_zip(&instance_dir, &config, &entries)
-            })
+            let result = tokio::task::spawn_blocking(
+                move || -> crate::error::Result<Option<std::path::PathBuf>> {
+                    let entries = crate::content::ContentStore::for_instance(&instance_dir)
+                        .load()
+                        .entries;
+                    if choose_destination {
+                        let Some(path) = rfd::FileDialog::new()
+                            .set_file_name(format!("{}-export.zip", config.name))
+                            .add_filter("MONORYX export", &["zip"])
+                            .save_file()
+                        else {
+                            return Ok(None);
+                        };
+                        let metadata = entries
+                            .into_iter()
+                            .map(|entry| (entry.file_name, (entry.project_id, entry.version_id)))
+                            .collect();
+                        crate::instance::export::export_instance(
+                            &instance_dir,
+                            &config,
+                            &path,
+                            true,
+                            &metadata,
+                        )?;
+                        Ok(Some(path))
+                    } else {
+                        crate::instance::export::export_quick_zip(&instance_dir, &config, &entries)
+                            .map(Some)
+                    }
+                },
+            )
             .await
             .map_err(|error| error.to_string())
             .and_then(|result| result.map_err(|error| error.user_message()));
             let _ = tx.send(AppEvent::PackExported(id, result));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn duplicate_instance(&mut self, config: InstanceConfig) {
+        if !self.pending_instance_duplicates.insert(config.id.clone()) {
+            return;
+        }
+        let manager = self.instances.clone();
+        let id = config.id.clone();
+        let tx = self.tx.clone();
+        let ctx = self.egui_ctx.clone();
+        self.notify("Duplicating instance...");
+        self.runtime.spawn(async move {
+            let source = id.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                manager
+                    .duplicate(&source, format!("{} Copy", config.name))
+                    .map(|copy| copy.id)
+                    .map_err(|error| error.user_message())
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+            let _ = tx.send(AppEvent::InstanceDuplicated(id, result));
             ctx.request_repaint();
         });
     }
@@ -1288,6 +1348,13 @@ impl AppState {
         while let Ok(ev) = self.rx.try_recv() {
             dirty = true;
             self.handle_event(ev, ctx);
+        }
+        if self.page != Page::Onboarding && self.config.completed_onboarding {
+            while let Some(path) = self.pending_modpack_imports.pop_front() {
+                crate::app::tasks::install_pack_file(self, path);
+                self.set_page(Page::Downloads);
+                dirty = true;
+            }
         }
         if dirty {
             ctx.request_repaint();
@@ -1321,14 +1388,30 @@ impl AppState {
             AppEvent::PackExported(id, result) => {
                 self.pending_pack_exports.remove(&id);
                 match result {
-                    Ok(path) => {
+                    Ok(Some(path)) => {
                         self.notify(format!(
                             "Exported pack: {}",
                             path.file_name().unwrap_or_default().to_string_lossy()
                         ));
                         let _ = open::that_detached(path.parent().unwrap_or(&path));
                     }
+                    Ok(None) => {}
                     Err(error) => self.fail(error),
+                }
+            }
+            AppEvent::InstanceDuplicated(id, result) => {
+                self.pending_instance_duplicates.remove(&id);
+                match result {
+                    Ok(_) => {
+                        self.refresh_instances();
+                        self.notify("Instance duplicated");
+                    }
+                    Err(error) => self.fail(error),
+                }
+            }
+            AppEvent::OpenModpack(path) => {
+                if !self.pending_modpack_imports.contains(&path) {
+                    self.pending_modpack_imports.push_back(path);
                 }
             }
             AppEvent::Notice(m) => self.notify(m),
@@ -2943,6 +3026,70 @@ fn read_local_image(
 #[cfg(test)]
 mod background_tests {
     use super::*;
+
+    #[test]
+    fn startup_packs_wait_for_onboarding_and_start_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        state.page = Page::Onboarding;
+        state.config.completed_onboarding = false;
+        let path = dir.path().join("missing.mrpack");
+        state.handle_event(AppEvent::OpenModpack(path.clone()), &ctx);
+        state.handle_event(AppEvent::OpenModpack(path), &ctx);
+        state.poll_events(&ctx);
+        assert_eq!(state.pending_modpack_imports.len(), 1);
+        assert!(state.operations.is_empty());
+        state.config.completed_onboarding = true;
+        state.page = Page::Home;
+        state.poll_events(&ctx);
+        assert!(state.pending_modpack_imports.is_empty());
+        assert_eq!(state.operations.len(), 1);
+        assert_eq!(state.page, Page::Downloads);
+    }
+
+    #[test]
+    fn duplicate_completes_through_events_and_ignores_repeated_clicks() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, MonoryxPaths::new(dir.path().into()));
+        let config = state
+            .instances
+            .create(
+                "Original".into(),
+                "1.21.1".into(),
+                LoaderKind::Vanilla,
+                String::new(),
+            )
+            .unwrap();
+        std::fs::write(
+            state.instances.game_dir(&config.id).join("options.txt"),
+            b"settings",
+        )
+        .unwrap();
+        state.duplicate_instance(config.clone());
+        state.duplicate_instance(config.clone());
+        assert_eq!(state.pending_instance_duplicates.len(), 1);
+        let event = state
+            .rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(event, AppEvent::InstanceDuplicated(_, Ok(_))));
+        state.handle_event(event, &ctx);
+        assert!(state.pending_instance_duplicates.is_empty());
+        assert_eq!(state.instance_list.len(), 2);
+        let copy = state
+            .instance_list
+            .iter()
+            .find(|instance| instance.id != config.id)
+            .unwrap();
+        assert_eq!(
+            std::fs::read(state.instances.game_dir(&copy.id).join("options.txt")).unwrap(),
+            b"settings"
+        );
+    }
 
     #[test]
     fn readiness_is_cached_and_tracks_installed_client_jars() {

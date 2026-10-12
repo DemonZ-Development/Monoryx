@@ -58,7 +58,14 @@ pub fn create_and_install(
     loader: LoaderKind,
     loader_version: String,
 ) {
-    match state.instances.create(name, mc, loader, loader_version) {
+    match create_instance_with_defaults(
+        &state.instances,
+        &state.config.memory,
+        name,
+        mc,
+        loader,
+        loader_version,
+    ) {
         Ok(cfg) => {
             state.refresh_instances();
             state.selected_instance = Some(cfg.id.clone());
@@ -67,6 +74,47 @@ pub fn create_and_install(
         }
         Err(error) => state.fail(error.user_message()),
     }
+}
+
+fn create_instance_with_defaults(
+    manager: &crate::instance::manager::InstanceManager,
+    memory: &crate::config::MemoryDefaults,
+    name: String,
+    minecraft_version: String,
+    loader: LoaderKind,
+    loader_version: String,
+) -> crate::error::Result<crate::instance::config::InstanceConfig> {
+    crate::utils::system::validate_memory(memory.min_mb, memory.max_mb)
+        .map_err(crate::error::MonoryxError::InvalidConfig)?;
+    let config = manager.create(name, minecraft_version, loader, loader_version)?;
+    save_new_instance_defaults(manager, memory, config)
+}
+
+fn save_new_instance_defaults(
+    manager: &crate::instance::manager::InstanceManager,
+    memory: &crate::config::MemoryDefaults,
+    mut config: crate::instance::config::InstanceConfig,
+) -> crate::error::Result<crate::instance::config::InstanceConfig> {
+    config.memory_min_mb = memory.min_mb;
+    config.memory_max_mb = memory.max_mb;
+    if let Err(error) = manager.save(&config) {
+        if let Err(cleanup) = manager.delete(&config.id, true) {
+            return Err(crate::error::MonoryxError::Instance(format!(
+                "{error}; failed to remove incomplete instance: {cleanup}"
+            )));
+        }
+        return Err(error);
+    }
+    Ok(config)
+}
+
+fn configure_new_pack(
+    manager: &crate::instance::manager::InstanceManager,
+    memory: &crate::config::MemoryDefaults,
+    id: String,
+) -> crate::error::Result<String> {
+    let config = manager.get(&id)?;
+    save_new_instance_defaults(manager, memory, config).map(|config| config.id)
 }
 
 pub async fn install_instance_inner(
@@ -939,7 +987,9 @@ pub fn install_pack_file(state: &mut AppState, path: std::path::PathBuf) {
     let dm = state.dm.clone();
     let paths = state.paths.clone();
     let instances = state.instances.clone();
+    let memory = state.config.memory.clone();
     let tx = state.tx.clone();
+    let ctx = state.egui_ctx.clone();
     let slots = state.install_slots.clone();
     state.runtime.spawn(async move {
         let Ok(_permit) = slots.acquire_owned().await else {
@@ -954,9 +1004,10 @@ pub fn install_pack_file(state: &mut AppState, path: std::path::PathBuf) {
         let r =
             crate::modrinth::modpack::install_mrpack(&dm, &paths, &instances, &path, None, None)
                 .await
-                .map(|rep| rep.instance_id)
+                .and_then(|rep| configure_new_pack(&instances, &memory, rep.instance_id))
                 .map_err(|e| e.user_message());
         let _ = tx.send(AppEvent::PackInstallDone(op_id, r));
+        ctx.request_repaint();
     });
 }
 
@@ -974,6 +1025,7 @@ pub fn install_modpack(state: &mut AppState, slug: String, title: String) {
     let mr = state.mr.clone();
     let paths = state.paths.clone();
     let instances = state.instances.clone();
+    let memory = state.config.memory.clone();
     let tx = state.tx.clone();
     let ctx = state.egui_ctx.clone();
     let slots = state.install_slots.clone();
@@ -1028,7 +1080,8 @@ pub fn install_modpack(state: &mut AppState, slug: String, title: String) {
             .await
             .map_err(|e| e.user_message())?;
             let _ = tokio::fs::remove_file(&dest).await;
-            Ok(rep.instance_id)
+            configure_new_pack(&instances, &memory, rep.instance_id)
+                .map_err(|error| error.user_message())
         }
         .await;
         let _ = tx.send(AppEvent::PackInstallDone(op_id, res));
@@ -1360,4 +1413,81 @@ pub fn start_microsoft_login(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod instance_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn new_instances_use_saved_defaults_without_changing_existing_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = crate::instance::manager::InstanceManager::new(
+            crate::storage::paths::MonoryxPaths::new(dir.path().into()),
+        );
+        let mut existing = manager
+            .create(
+                "Existing".into(),
+                "1.21.1".into(),
+                LoaderKind::Vanilla,
+                String::new(),
+            )
+            .unwrap();
+        existing.memory_min_mb = 512;
+        existing.memory_max_mb = 3072;
+        manager.save(&existing).unwrap();
+        let memory = crate::config::MemoryDefaults {
+            min_mb: 1024,
+            max_mb: 8192,
+        };
+        let created = create_instance_with_defaults(
+            &manager,
+            &memory,
+            "New".into(),
+            "1.21.1".into(),
+            LoaderKind::Vanilla,
+            String::new(),
+        )
+        .unwrap();
+        let saved = manager.get(&created.id).unwrap();
+        assert_eq!((saved.memory_min_mb, saved.memory_max_mb), (1024, 8192));
+        let unchanged = manager.get(&existing.id).unwrap();
+        assert_eq!(
+            (unchanged.memory_min_mb, unchanged.memory_max_mb),
+            (512, 3072)
+        );
+    }
+
+    #[test]
+    fn invalid_defaults_leave_no_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = crate::instance::manager::InstanceManager::new(
+            crate::storage::paths::MonoryxPaths::new(dir.path().into()),
+        );
+        let memory = crate::config::MemoryDefaults {
+            min_mb: 4096,
+            max_mb: 1024,
+        };
+        assert!(create_instance_with_defaults(
+            &manager,
+            &memory,
+            "Invalid".into(),
+            "1.21.1".into(),
+            LoaderKind::Vanilla,
+            String::new(),
+        )
+        .is_err());
+        assert!(manager.list().unwrap().is_empty());
+        let imported = manager
+            .create(
+                "Imported".into(),
+                "1.21.1".into(),
+                LoaderKind::Vanilla,
+                String::new(),
+            )
+            .unwrap();
+        let path = manager.instance_dir(&imported.id);
+        assert!(configure_new_pack(&manager, &memory, imported.id).is_err());
+        assert!(!path.exists());
+    }
 }

@@ -173,10 +173,6 @@ pub const HOVER: Color32 = Color32::from_rgb(36, 40, 49);
 pub const ACCENT: Color32 = Color32::from_rgb(238, 240, 244);
 pub const ACCENT_HOVER: Color32 = Color32::from_rgb(252, 253, 255);
 
-pub const ECO_MODE: Color32 = Color32::from_rgb(205, 210, 218);
-pub const ECO_MODE_HOVER: Color32 = Color32::from_rgb(235, 238, 245);
-pub const ECO_MODE_BG: Color32 = Color32::from_rgb(23, 24, 29);
-
 pub const TEXT: Color32 = Color32::from_rgb(243, 244, 247);
 
 pub const TEXT2: Color32 = Color32::from_rgb(156, 163, 175);
@@ -185,7 +181,6 @@ pub const MUTED: Color32 = Color32::from_rgb(156, 163, 175);
 
 pub const TEXT_DISABLED: Color32 = Color32::from_rgb(75, 80, 92);
 
-pub const SELECTED: Color32 = ACCENT;
 pub const SELECTED_FG: Color32 = Color32::from_rgb(15, 16, 20);
 
 pub const DANGER: Color32 = Color32::from_rgb(235, 87, 87);
@@ -275,10 +270,6 @@ pub fn apply_selected_theme(ctx: &egui::Context, theme: ThemeKind) {
         egui::FontId::new(type_scale::TITLE, egui::FontFamily::Proportional),
     );
     ctx.set_style(style);
-}
-
-pub fn apply_monochrome(ctx: &egui::Context) {
-    apply_theme(ctx);
 }
 
 pub fn wordmark(ui: &mut egui::Ui) {

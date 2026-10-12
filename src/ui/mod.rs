@@ -7,4 +7,3 @@ pub mod palette;
 mod review;
 pub mod shell;
 pub mod theme;
-pub use theme::apply_monochrome;

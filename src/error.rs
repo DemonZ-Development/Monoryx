@@ -68,9 +68,6 @@ pub enum MonoryxError {
 
     #[error("Authentication error: {0}")]
     Auth(String),
-
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
 }
 
 impl MonoryxError {

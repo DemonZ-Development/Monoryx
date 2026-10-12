@@ -280,16 +280,6 @@ impl ContentStore {
         Ok(())
     }
 
-    pub fn project_ids(&self) -> Vec<String> {
-        self.load()
-            .entries
-            .into_iter()
-            .filter_map(|e| e.project_id)
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect()
-    }
-
     pub fn id_to_name(&self) -> HashMap<String, String> {
         let mut m = HashMap::new();
         for e in self.load().entries {

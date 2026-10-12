@@ -174,16 +174,8 @@ pub fn show(state: &mut AppState, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 }
                 ui.menu_button("More", |ui| {
                     if ui.button("Duplicate").clicked() {
-                        match state
-                            .instances
-                            .duplicate(&inst.id, format!("{} Copy", inst.name))
-                        {
-                            Ok(_) => {
-                                state.refresh_instances();
-                                state.notify("Instance duplicated");
-                            }
-                            Err(e) => state.fail(e.user_message()),
-                        }
+                        state.duplicate_instance(inst.clone());
+                        ui.close();
                     }
                     if ui.button("Open folder").clicked() {
                         let _ = open::that(state.instances.game_dir(&inst.id));

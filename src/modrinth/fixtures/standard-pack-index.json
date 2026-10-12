@@ -1,0 +1,33 @@
+{
+  "formatVersion": 1,
+  "game": "minecraft",
+  "versionId": "1.0.0",
+  "name": "Standard Format Pack",
+  "summary": "A fixture using the published Modrinth modpack format.",
+  "dependencies": {
+    "minecraft": "1.21.1",
+    "fabric-loader": "0.16.9"
+  },
+  "files": [
+    {
+      "path": "mods/fixture.jar",
+      "hashes": {
+        "sha1": "b9f0f72e8a91515455e8542b43b183697f215fc3",
+        "sha512": "d7604c34f714f3ffd9fc8302d4f2f722adc06ee3a6a81a8ce6a709ed4f8992bab2fe23e5a42b34ae6ebac74b9f1f1096b08290d38d01cf48ec94e6b1830a7f4e"
+      },
+      "env": { "client": "required", "server": "required" },
+      "downloads": ["https://cdn.modrinth.com/data/fixture/versions/1.0.0/fixture.jar"],
+      "fileSize": 11
+    },
+    {
+      "path": "mods/server.jar",
+      "hashes": {
+        "sha1": "b9f0f72e8a91515455e8542b43b183697f215fc3",
+        "sha512": "d7604c34f714f3ffd9fc8302d4f2f722adc06ee3a6a81a8ce6a709ed4f8992bab2fe23e5a42b34ae6ebac74b9f1f1096b08290d38d01cf48ec94e6b1830a7f4e"
+      },
+      "env": { "client": "unsupported", "server": "required" },
+      "downloads": ["https://cdn.modrinth.com/data/fixture/versions/1.0.0/server.jar"],
+      "fileSize": 11
+    }
+  ]
+}

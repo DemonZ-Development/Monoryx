@@ -973,57 +973,6 @@ pub fn draw_halloween_sidebar_artwork(painter: &egui::Painter, rect: egui::Rect)
     );
 }
 
-pub fn play_hero_split_button(
-    ui: &mut egui::Ui,
-    text: &str,
-    menu: impl FnOnce(&mut egui::Ui),
-) -> egui::Response {
-    let total_w = ui.available_width();
-    let split_w = 40.0_f32;
-    let main_w = (total_w - split_w - 4.0).max(120.0);
-    let p = crate::ui::theme::palette(ui.ctx());
-    let mut play_resp = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let resp = button_sized(ui, text, Tone::Primary, egui::vec2(main_w, 44.0));
-        play_resp = Some(resp);
-        ui.scope(|ui| {
-            let widgets = &mut ui.style_mut().visuals.widgets;
-            widgets.inactive.bg_fill = p.accent;
-            widgets.inactive.weak_bg_fill = p.accent;
-            widgets.hovered.bg_fill = p.accent_hover;
-            widgets.hovered.weak_bg_fill = p.accent_hover;
-            widgets.active.bg_fill = p.accent_hover;
-            widgets.active.weak_bg_fill = p.accent_hover;
-            widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
-            widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
-            widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, p.accent_text);
-            widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.accent);
-            widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, p.accent_hover);
-            let launch_corner = egui::CornerRadius::ZERO;
-            widgets.inactive.corner_radius = launch_corner;
-            widgets.hovered.corner_radius = launch_corner;
-            widgets.active.corner_radius = launch_corner;
-            ui.style_mut().spacing.button_padding = egui::vec2(12.0, 10.0);
-            ui.style_mut().spacing.interact_size = egui::vec2(split_w, 44.0);
-            let menu_resp = ui.menu_button("", menu);
-            let r = menu_resp.response.rect;
-            let c = r.center();
-            let stroke = egui::Stroke::new(1.8_f32, p.accent_text);
-            let p1 = c + egui::vec2(-5.5, -3.0);
-            let p2 = c + egui::vec2(0.0, 3.5);
-            let p3 = c + egui::vec2(5.5, -3.0);
-            ui.painter().line_segment([p1, p2], stroke);
-            ui.painter().line_segment([p2, p3], stroke);
-            ui.painter().circle_filled(p1, 0.9, p.accent_text);
-            ui.painter().circle_filled(p2, 0.9, p.accent_text);
-            ui.painter().circle_filled(p3, 0.9, p.accent_text);
-            menu_resp.response.on_hover_text("Launch options");
-        });
-    });
-    play_resp.unwrap()
-}
-
 pub fn draw_instance_banner_fallback(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -1052,20 +1001,6 @@ pub fn badge(ui: &mut egui::Ui, text: &str) {
 
 pub fn content_primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     button(ui, text, Tone::Primary)
-}
-
-pub fn action_button_with_feedback(ui: &mut egui::Ui, text: &str, busy: bool) -> egui::Response {
-    if !busy {
-        return button(ui, text, Tone::Primary);
-    }
-    let p = crate::ui::theme::palette(ui.ctx());
-    ui.add_enabled(
-        false,
-        egui::Button::new(RichText::new(text).size(type_scale::BODY))
-            .min_size(egui::vec2(220.0, metrics::BUTTON_H))
-            .fill(p.accent),
-    )
-    .on_hover_cursor(egui::CursorIcon::Wait)
 }
 
 pub fn compact_action_button_with_feedback(
@@ -1424,10 +1359,6 @@ pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
 pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     button(ui, text, Tone::Secondary)
-}
-
-pub fn action_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    secondary_button(ui, text)
 }
 
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {

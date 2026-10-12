@@ -17,24 +17,6 @@ pub fn total_memory_mb() -> u64 {
 }
 
 #[must_use]
-pub fn available_memory_mb() -> u64 {
-    #[cfg(target_os = "windows")]
-    {
-        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-        let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
-        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
-            return status.ullAvailPhys / 1024 / 1024;
-        }
-    }
-    let mut sys = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_memory(sysinfo::MemoryRefreshKind::everything()),
-    );
-    sys.refresh_memory();
-    sys.available_memory() / 1024 / 1024
-}
-
-#[must_use]
 pub fn default_max_memory_mb() -> u64 {
     let total = total_memory_mb();
     if total == 0 {
@@ -217,56 +199,47 @@ pub enum SingleInstanceStatus {
 }
 
 #[cfg(target_os = "windows")]
-pub fn try_acquire_single_instance() -> SingleInstanceStatus {
-    if !find_monoryx_windows(None).is_empty() {
+pub fn try_acquire_single_instance(packs: &[std::path::PathBuf]) -> SingleInstanceStatus {
+    let ports = version_instance_ports(env!("CARGO_PKG_VERSION"));
+    for port in ports {
+        if crate::startup::forward_request(port, packs) {
+            return SingleInstanceStatus::AlreadyRunning;
+        }
+    }
+    if packs.is_empty() && !find_monoryx_windows(None).is_empty() {
         restore_any_running_monoryx_window();
         return SingleInstanceStatus::AlreadyRunning;
     }
-    for port in version_instance_ports(env!("CARGO_PKG_VERSION")) {
+    for port in ports {
         if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) {
             let _ = listener.set_nonblocking(true);
             return SingleInstanceStatus::Primary(listener);
+        }
+        if crate::startup::forward_request(port, packs) {
+            return SingleInstanceStatus::AlreadyRunning;
         }
     }
     SingleInstanceStatus::Standalone
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn try_acquire_single_instance() -> SingleInstanceStatus {
-    match std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT)) {
-        Ok(listener) => {
-            let _ = listener.set_nonblocking(true);
-            SingleInstanceStatus::Primary(listener)
-        }
-        Err(_) => {
-            if let Ok(mut stream) = std::net::TcpStream::connect_timeout(
-                &std::net::SocketAddr::from(([127, 0, 0, 1], SINGLE_INSTANCE_PORT)),
-                std::time::Duration::from_millis(600),
-            ) {
-                use std::io::{Read, Write};
-                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(600)));
-                let _ = stream.write_all(b"MONORYX_RESTORE\n");
-                let _ = stream.flush();
-                let mut buf = [0u8; 32];
-                if let Ok(n) = stream.read(&mut buf) {
-                    if let Ok(resp) = std::str::from_utf8(&buf[..n]) {
-                        if resp.contains("MONORYX_ACK") {
-                            return SingleInstanceStatus::AlreadyRunning;
-                        }
-                    }
-                }
-            }
-
-            if let Ok(listener) =
-                std::net::TcpListener::bind(("127.0.0.1", SINGLE_INSTANCE_PORT_FALLBACK))
-            {
-                let _ = listener.set_nonblocking(true);
-                return SingleInstanceStatus::Primary(listener);
-            }
-
-            SingleInstanceStatus::Standalone
+pub fn try_acquire_single_instance(packs: &[std::path::PathBuf]) -> SingleInstanceStatus {
+    let ports = [SINGLE_INSTANCE_PORT, SINGLE_INSTANCE_PORT_FALLBACK];
+    for port in ports {
+        if crate::startup::forward_request(port, packs) {
+            return SingleInstanceStatus::AlreadyRunning;
         }
     }
+    for port in ports {
+        if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            let _ = listener.set_nonblocking(true);
+            return SingleInstanceStatus::Primary(listener);
+        }
+        if crate::startup::forward_request(port, packs) {
+            return SingleInstanceStatus::AlreadyRunning;
+        }
+    }
+    SingleInstanceStatus::Standalone
 }
 
 #[cfg(target_os = "windows")]

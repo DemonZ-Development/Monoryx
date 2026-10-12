@@ -59,28 +59,6 @@ pub fn sha512_bytes(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
-pub fn verify_file(path: &Path, algo: &str, expected: &str) -> Result<()> {
-    let expected = expected.to_lowercase();
-    let actual = match algo {
-        "sha1" => sha1_file(path)?,
-        "sha256" => sha256_file(path)?,
-        "sha512" => sha512_file(path)?,
-        other => {
-            return Err(MonoryxError::Download(format!(
-                "unsupported hash algorithm: {other}"
-            )));
-        }
-    };
-    if actual.to_lowercase() != expected {
-        return Err(MonoryxError::HashMismatch {
-            file: path.display().to_string(),
-            expected,
-            actual,
-        });
-    }
-    Ok(())
-}
-
 pub fn verify_bytes(bytes: &[u8], algo: &str, expected: &str) -> Result<()> {
     let expected = expected.to_lowercase();
     let actual = match algo {

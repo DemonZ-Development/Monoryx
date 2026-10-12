@@ -1,3 +1,17 @@
+# MONORYX 1.5.5
+
+- Fixed standard Modrinth modpack fields, client override ordering, and cleanup after failed imports.
+- Opening a `.mrpack` file now imports it in the launcher, including when the launcher is already running.
+- Downloads targeting the same file now wait for each other and reuse verified completed files. Cancellation waits for pending disk work before releasing files for retries or import cleanup. Download speed uses the current reporting interval.
+- Metadata responses now enforce size limits while streaming, including responses without a content length.
+- New instances and Modrinth packs use the saved RAM defaults. Existing instance settings remain intact.
+- Instance duplication preserves content metadata and removes incomplete copies after a failure.
+- Instance duplication and export run in the background to keep the interface responsive.
+- Manual release builds validate the package version and existing tag before packaging assets.
+- Removed unused dependencies, imports, and obsolete helper code.
+
+---
+
 # MONORYX 1.5.4
 
 Patch release restoring Microsoft authentication using an approved Azure client registration ID.

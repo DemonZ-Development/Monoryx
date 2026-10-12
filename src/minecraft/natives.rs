@@ -66,32 +66,26 @@ fn extract_one_jar(jar: &Path, excludes: &[String], out_dir: &Path) -> Result<us
     Ok(count)
 }
 
-#[must_use]
-pub fn is_safe_entry_path(name: &str) -> bool {
-    if name.starts_with('/') || name.starts_with('\\') {
-        return false;
-    }
-    if name.contains("..") {
-        return false;
-    }
-
-    if name.len() >= 3 && name.as_bytes()[1] == b':' {
-        return false;
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn rejects_unsafe_entries() {
-        assert!(!is_safe_entry_path("/abs/path.so"));
-        assert!(!is_safe_entry_path("../../evil.so"));
-        assert!(!is_safe_entry_path("a/../../b.so"));
-        assert!(!is_safe_entry_path("C:/evil.dll"));
-        assert!(is_safe_entry_path("META-INF/MANIFEST.MF"));
-        assert!(is_safe_entry_path("windows/x64/lwjgl.dll"));
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("natives.jar");
+        let out = dir.path().join("out");
+        let file = std::fs::File::create(&jar).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file("../escape.dll", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut archive, b"native").unwrap();
+        archive.finish().unwrap();
+        assert!(matches!(
+            extract_natives(&[(jar, Vec::new())], &out),
+            Err(MonoryxError::UnsafePath(_))
+        ));
+        assert!(!dir.path().join("escape.dll").exists());
     }
 }

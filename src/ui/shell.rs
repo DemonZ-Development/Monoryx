@@ -673,23 +673,7 @@ fn show_edit_dialog(state: &mut AppState, ui: &mut egui::Ui) {
             state.set_page(Page::Library);
         }
         if crate::ui::components::secondary_button(ui, "Export").clicked() {
-            if let Some(p) = rfd::FileDialog::new()
-                .set_file_name(format!("{}-export.zip", cfg.name))
-                .save_file()
-            {
-                let dir = state.instances.instance_dir(&cfg.id);
-                let meta: std::collections::HashMap<String, (Option<String>, Option<String>)> =
-                    crate::content::ContentStore::for_instance(&dir)
-                        .load()
-                        .entries
-                        .into_iter()
-                        .map(|entry| (entry.file_name, (entry.project_id, entry.version_id)))
-                        .collect();
-                match crate::instance::export::export_instance(&dir, &cfg, &p, true, &meta) {
-                    Ok(()) => state.notify("Instance exported"),
-                    Err(e) => state.fail(e.user_message()),
-                }
-            }
+            state.export_instance(cfg.clone(), true);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if crate::ui::components::primary_button(ui, "Save changes").clicked() {

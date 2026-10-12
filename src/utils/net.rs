@@ -1,4 +1,5 @@
 use crate::error::{MonoryxError, Result};
+use futures::StreamExt as _;
 use std::time::Duration;
 
 pub const MONORYX_USER_AGENT: &str = concat!("monoryx/", env!("CARGO_PKG_VERSION"));
@@ -24,14 +25,35 @@ pub fn create_client() -> Result<reqwest::Client> {
 pub const MAX_TEXT_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_JSON_BODY_BYTES: usize = 32 * 1024 * 1024;
 
-pub async fn read_capped_text(response: reqwest::Response, limit: usize) -> Result<String> {
-    let body = response.bytes().await?;
-    if body.len() > limit {
+async fn read_capped_bytes(response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
         return Err(MonoryxError::Download(format!(
             "Response body exceeded the {limit} byte limit"
         )));
     }
-    String::from_utf8(body.to_vec())
+    let capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0);
+    let mut body = Vec::with_capacity(capacity);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if chunk.len() > limit.saturating_sub(body.len()) {
+            return Err(MonoryxError::Download(format!(
+                "Response body exceeded the {limit} byte limit"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+pub async fn read_capped_text(response: reqwest::Response, limit: usize) -> Result<String> {
+    String::from_utf8(read_capped_bytes(response, limit).await?)
         .map_err(|_| MonoryxError::Download("Response body was not valid UTF-8".to_string()))
 }
 
@@ -48,7 +70,9 @@ pub async fn get_json_with_retry<T: serde::de::DeserializeOwned>(
             )));
         }
     }
-    Ok(serde_json::from_slice(&response.bytes().await?)?)
+    Ok(serde_json::from_slice(
+        &read_capped_bytes(response, MAX_JSON_BODY_BYTES).await?,
+    )?)
 }
 
 pub async fn get_text_with_retry(client: &reqwest::Client, url: &str) -> Result<String> {
@@ -140,6 +164,96 @@ mod tests {
             }
         });
         (url, task)
+    }
+
+    async fn serve_streamed(chunked: bool, size: usize) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/metadata", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            let mut received = 0;
+            loop {
+                assert!(received < buffer.len());
+                let count = stream.read(&mut buffer[received..]).await.unwrap();
+                assert!(count > 0);
+                received += count;
+                if buffer[..received]
+                    .windows(4)
+                    .any(|bytes| bytes == b"\r\n\r\n")
+                {
+                    break;
+                }
+            }
+            let headers = if chunked {
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            } else {
+                "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
+            };
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            let chunk = vec![b' '; 64 * 1024];
+            let mut remaining = size;
+            while remaining > 0 {
+                let length = remaining.min(chunk.len());
+                if chunked
+                    && stream
+                        .write_all(format!("{length:x}\r\n").as_bytes())
+                        .await
+                        .is_err()
+                {
+                    return;
+                }
+                if stream.write_all(&chunk[..length]).await.is_err() {
+                    return;
+                }
+                if chunked && stream.write_all(b"\r\n").await.is_err() {
+                    return;
+                }
+                remaining -= length;
+            }
+            if chunked {
+                let _ = stream.write_all(b"0\r\n\r\n").await;
+            }
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn text_caps_actual_bytes_with_chunked_or_unknown_length_responses() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        for chunked in [true, false] {
+            let (url, task) = serve_streamed(chunked, 17).await;
+            let response = client.get(&url).send().await.unwrap();
+            assert_eq!(response.content_length(), None);
+            assert!(matches!(read_capped_text(response, 16).await,
+                Err(MonoryxError::Download(message)) if message.contains("16 byte limit")));
+            task.await.unwrap();
+            let (url, task) = serve_streamed(chunked, 16).await;
+            let response = client.get(&url).send().await.unwrap();
+            assert_eq!(
+                read_capped_text(response, 16).await.unwrap(),
+                " ".repeat(16)
+            );
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn json_caps_actual_bytes_with_chunked_or_unknown_length_responses() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        for chunked in [true, false] {
+            let (url, task) = serve_streamed(chunked, MAX_JSON_BODY_BYTES + 1).await;
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                get_json_with_retry::<serde_json::Value>(&client, &url, None),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(result,
+                Err(MonoryxError::Download(message)) if message.contains("byte limit")));
+            task.await.unwrap();
+        }
     }
 
     #[tokio::test]

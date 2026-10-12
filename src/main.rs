@@ -15,6 +15,7 @@ pub mod loaders;
 pub mod minecraft;
 pub mod modrinth;
 pub mod nexeu;
+mod startup;
 pub mod storage;
 pub mod ui;
 mod update_swap;
@@ -45,7 +46,8 @@ fn main() -> eframe::Result<()> {
     init_logging();
     tracing::info!("MONORYX {} starting", env!("CARGO_PKG_VERSION"));
 
-    let single_instance = match crate::utils::system::try_acquire_single_instance() {
+    let startup_packs = crate::startup::modpack_arguments(std::env::args_os().skip(1));
+    let single_instance = match crate::utils::system::try_acquire_single_instance(&startup_packs) {
         crate::utils::system::SingleInstanceStatus::Primary(l) => Some(l),
         crate::utils::system::SingleInstanceStatus::AlreadyRunning => {
             #[cfg(target_os = "windows")]
@@ -90,6 +92,12 @@ fn main() -> eframe::Result<()> {
             crate::ui::theme::apply_theme(&cc.egui_ctx);
             let state = AppState::new(cc);
 
+            for path in startup_packs {
+                let _ = state
+                    .tx
+                    .send(crate::app::events::AppEvent::OpenModpack(path));
+            }
+
             #[cfg(target_os = "windows")]
             crate::utils::system::ensure_window_positioned(start_max, !start_max);
 
@@ -98,25 +106,7 @@ fn main() -> eframe::Result<()> {
                 let ctx = cc.egui_ctx.clone();
                 std::thread::Builder::new()
                     .name("monoryx-single-instance".to_string())
-                    .spawn(move || {
-                        let _ = listener.set_nonblocking(false);
-                        while let Ok((mut stream, _)) = listener.accept() {
-                            use std::io::{Read, Write};
-                            let mut buf = [0u8; 64];
-                            if let Ok(n) = stream.read(&mut buf) {
-                                if let Ok(msg) = std::str::from_utf8(&buf[..n]) {
-                                    if msg.contains("RESTORE") {
-                                        let _ = stream.write_all(b"MONORYX_ACK\n");
-                                        let _ = stream.flush();
-                                        crate::utils::system::show_window_for_current_process(true);
-                                        let _ =
-                                            tx.send(crate::app::events::AppEvent::RestoreWindow);
-                                        ctx.request_repaint();
-                                    }
-                                }
-                            }
-                        }
-                    })
+                    .spawn(move || crate::startup::serve_requests(listener, tx, ctx))
                     .ok();
             }
 
