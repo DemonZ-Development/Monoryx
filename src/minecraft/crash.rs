@@ -935,7 +935,7 @@ Details:
              [CHAT]: player said the word accessToken in chat\n"
         );
         let cleaned = redact_sensitive(&raw);
-        for secret in [
+        for token_sample in [
             jwt,
             xbl,
             "M.R3_BAY.longsecretrefreshvalue",
@@ -944,8 +944,8 @@ Details:
             "eyJhbGciOiJIUzI1NiJ9.bodypart.signature",
         ] {
             assert!(
-                !cleaned.contains(secret),
-                "secret survived redaction: {secret}"
+                !cleaned.contains(token_sample),
+                "token pattern survived redaction"
             );
         }
         assert!(cleaned.contains(REDACTED));

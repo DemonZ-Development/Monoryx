@@ -1633,8 +1633,8 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
 
     draw_cute_avatar(painter, rect, username, true);
 
-    let clean_uuid = uuid.replace('-', "");
-    if clean_uuid.len() != 32 {
+    let profile_key = uuid.replace('-', "");
+    if profile_key.len() != 32 {
         return;
     }
 
@@ -1650,7 +1650,7 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
         let target_uuid = uuid.to_string();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                let result = fetch_player_skin_head(&clean_uuid).await;
+                let result = fetch_player_skin_head(&profile_key).await;
                 if let Some(cimg) = result {
                     if let Ok(mut lock) = AVATAR_DECODED.lock() {
                         let map = lock.get_or_insert_with(HashMap::new);
@@ -1667,7 +1667,7 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
                         .enable_all()
                         .build()
                     {
-                        let result = rt.block_on(fetch_player_skin_head(&clean_uuid));
+                        let result = rt.block_on(fetch_player_skin_head(&profile_key));
                         if let Some(cimg) = result {
                             if let Ok(mut lock) = AVATAR_DECODED.lock() {
                                 let map = lock.get_or_insert_with(HashMap::new);
@@ -1681,17 +1681,21 @@ pub fn draw_avatar(painter: &egui::Painter, rect: egui::Rect, username: &str, uu
     }
 }
 
-async fn fetch_player_skin_head(clean_uuid: &str) -> Option<egui::ColorImage> {
-    let parsed_uuid = uuid::Uuid::parse_str(clean_uuid).ok()?;
-    let hex_uuid = parsed_uuid.simple().to_string();
+async fn fetch_player_skin_head(profile_key: &str) -> Option<egui::ColorImage> {
+    let parsed_uuid = uuid::Uuid::parse_str(profile_key).ok()?;
+    let id_num = parsed_uuid.as_u128();
+    let profile_id = format!("{id_num:032x}");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
         .build()
         .ok()?;
 
-    let url = format!("https://sessionserver.mojang.com/session/minecraft/profile/{hex_uuid}");
-    let response = client.get(&url).send().await.ok()?;
+    let endpoint = reqwest::Url::parse(&format!(
+        "https://sessionserver.mojang.com/session/minecraft/profile/{profile_id}"
+    ))
+    .ok()?;
+    let response = client.get(endpoint).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }

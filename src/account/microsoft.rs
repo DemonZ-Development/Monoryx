@@ -1,7 +1,7 @@
 use crate::error::{MonoryxError, Result};
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
+pub const DEFAULT_CLIENT_ID: &str = "e6fe0b23-f185-4bbb-a6e1-7e72ed727a6f";
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MicrosoftProfile {
