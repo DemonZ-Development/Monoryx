@@ -5,6 +5,7 @@
 - Hardened avatar profile request dispatch and resolved CodeQL static analysis security alerts.
 - Added an optional top bar navigation layout with quick play, instance switching, global search, and a live status strip. Enable it in Settings, from the header menu, or with `/topbar`.
 - Fixed a missing glyph in the sidebar account badge.
+- Screenshot and image previews now decode by streaming from disk instead of loading the whole file into memory first, and idle network connections are released sooner.
 
 ---
 

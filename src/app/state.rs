@@ -2974,6 +2974,45 @@ async fn fetch_image_bytes(
     Ok(bytes)
 }
 
+fn check_image_dimensions(
+    width: u32,
+    height: u32,
+    max_width: u32,
+) -> std::result::Result<(), String> {
+    let pixel_limit = if max_width <= 128 {
+        4_000_000
+    } else {
+        12_000_000
+    };
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > pixel_limit {
+        return Err("Image dimensions are too large to display.".to_string());
+    }
+    Ok(())
+}
+
+fn limited_decoder<R: std::io::BufRead + std::io::Seek>(
+    mut reader: image::ImageReader<R>,
+) -> image::ImageReader<R> {
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+}
+
+fn decode_scaled<R: std::io::BufRead + std::io::Seek>(
+    reader: image::ImageReader<R>,
+    max_width: u32,
+    max_height: u32,
+) -> std::result::Result<DecodedImage, String> {
+    let image = reader.decode().map_err(|error| error.to_string())?;
+    let rgba = image.thumbnail(max_width, max_height).to_rgba8();
+    Ok(DecodedImage {
+        width: rgba.width() as usize,
+        height: rgba.height() as usize,
+        pixels: rgba.into_raw(),
+    })
+}
+
 fn decode_image(
     bytes: Vec<u8>,
     max_width: u32,
@@ -2985,27 +3024,11 @@ fn decode_image(
     let (width, height) = reader
         .into_dimensions()
         .map_err(|error| error.to_string())?;
-    let pixel_limit = if max_width <= 128 {
-        4_000_000
-    } else {
-        12_000_000
-    };
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > pixel_limit {
-        return Err("Image dimensions are too large to display.".to_string());
-    }
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+    check_image_dimensions(width, height, max_width)?;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| error.to_string())?;
-    let mut limits = image::Limits::default();
-    limits.max_alloc = Some(64 * 1024 * 1024);
-    reader.limits(limits);
-    let image = reader.decode().map_err(|error| error.to_string())?;
-    let rgba = image.thumbnail(max_width, max_height).to_rgba8();
-    Ok(DecodedImage {
-        width: rgba.width() as usize,
-        height: rgba.height() as usize,
-        pixels: rgba.into_raw(),
-    })
+    decode_scaled(limited_decoder(reader), max_width, max_height)
 }
 
 fn read_local_image(
@@ -3019,8 +3042,19 @@ fn read_local_image(
     if size > 50_000_000 {
         return Err("Image file is too large to display.".to_string());
     }
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    decode_image(bytes, max_width, max_height)
+    let reader = image::ImageReader::open(path)
+        .map_err(|error| error.to_string())?
+        .with_guessed_format()
+        .map_err(|error| error.to_string())?;
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|error| error.to_string())?;
+    check_image_dimensions(width, height, max_width)?;
+    let reader = image::ImageReader::open(path)
+        .map_err(|error| error.to_string())?
+        .with_guessed_format()
+        .map_err(|error| error.to_string())?;
+    decode_scaled(limited_decoder(reader), max_width, max_height)
 }
 
 #[cfg(test)]
@@ -3246,6 +3280,20 @@ mod background_tests {
         );
         assert!(state.thumbnails.is_empty());
         assert!(state.screenshot_full_image.is_none());
+    }
+
+    #[test]
+    fn local_image_decodes_stream_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("screenshot.png");
+        image::RgbaImage::from_pixel(640, 360, image::Rgba([32, 64, 96, 255]))
+            .save(&path)
+            .unwrap();
+        let decoded = read_local_image(&path, 480, 270).unwrap();
+        assert_eq!(decoded.width, 480);
+        assert_eq!(decoded.height, 270);
+        assert_eq!(decoded.pixels.len(), 480 * 270 * 4);
+        assert!(read_local_image(&dir.path().join("missing.png"), 480, 270).is_err());
     }
 
     #[test]

@@ -17,7 +17,8 @@ pub fn create_client() -> Result<reqwest::Client> {
         .user_agent(MONORYX_USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
-        .pool_max_idle_per_host(8)
+        .pool_max_idle_per_host(4)
+        .pool_idle_timeout(Duration::from_secs(90))
         .build()?;
     Ok(client)
 }
