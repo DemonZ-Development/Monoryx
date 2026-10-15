@@ -265,6 +265,54 @@ fn review_home_worlds_crash_and_discord_layouts() {
             ThemeKind::Halloween,
             false,
         ),
+        (
+            "topbar-home-wide",
+            Page::Home,
+            1536,
+            816,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "topbar-home-halloween",
+            Page::Home,
+            1536,
+            816,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "topbar-discover-wide",
+            Page::Discover,
+            1536,
+            816,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "topbar-library-small",
+            Page::Library,
+            850,
+            650,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
+            "topbar-instances-tight",
+            Page::Instances,
+            850,
+            560,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
+            "topbar-downloads-active",
+            Page::Downloads,
+            1024,
+            650,
+            ThemeKind::Monochrome,
+            false,
+        ),
     ] {
         let is_halloween = label == "home-halloween";
         let ctx = egui::Context::default();
@@ -329,6 +377,9 @@ fn review_home_worlds_crash_and_discord_layouts() {
             Some(crate::account::offline::OfflineProfile::new("PreviewPlayer").unwrap())
         };
         state.config.theme = theme;
+        if label.starts_with("topbar-") {
+            state.config.ui_layout = crate::config::UiLayout::Topbar;
+        }
         crate::ui::theme::apply_selected_theme(&ctx, theme);
         state.selected_instance = Some(first.id.clone());
         state
@@ -530,7 +581,7 @@ fn review_home_worlds_crash_and_discord_layouts() {
                 "mod-install".into(),
                 crate::app::state::RetryAction::Game(first.id.clone()),
             );
-            if label == "downloads-active" {
+            if label.ends_with("downloads-active") {
                 let id = format!("game:{}", first.id);
                 state.start_operation(
                     &id,

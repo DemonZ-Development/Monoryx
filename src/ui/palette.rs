@@ -93,6 +93,22 @@ fn commands(state: &AppState) -> Vec<Command> {
             }),
         });
     }
+    for layout in crate::config::UiLayout::all() {
+        let slash: &'static str = match layout {
+            crate::config::UiLayout::Sidebar => "/sidebar",
+            crate::config::UiLayout::Topbar => "/topbar",
+        };
+        list.push(Command {
+            label: format!("Layout: {}", layout.label()),
+            hint: String::new(),
+            slash,
+            group: "Layout",
+            run: act(move |state: &mut AppState| {
+                state.config.ui_layout = layout;
+                state.save_config();
+            }),
+        });
+    }
     if has_instance {
         list.push(Command {
             label: "Repair game files".into(),
@@ -486,5 +502,12 @@ mod tests {
         assert!(rank_command("boost", "Toggle Eco mode (Boost)", "/boost").is_some());
         assert!(rank_command("/", "Toggle Eco mode (Boost)", "/boost").is_some());
         assert!(rank_command("/halloween", "Theme: Halloween", "/halloween").is_some());
+    }
+
+    #[test]
+    fn slash_layout_commands_match() {
+        assert!(rank_command("/topbar", "Layout: Top bar", "/topbar").is_some());
+        assert!(rank_command("/sidebar", "Layout: Sidebar", "/sidebar").is_some());
+        assert!(rank_command("layout", "Layout: Top bar", "/topbar").is_some());
     }
 }

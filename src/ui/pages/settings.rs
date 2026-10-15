@@ -1,5 +1,5 @@
 use crate::app::state::AppState;
-use crate::config::{CloseAction, GpuPreference, ThemeKind};
+use crate::config::{CloseAction, GpuPreference, ThemeKind, UiLayout};
 use crate::ui::components::{
     badge, badge_accent, badge_boost, card_frame, field_label, page_header, tab_button,
 };
@@ -604,6 +604,7 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
 
 fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     let previous = state.config.theme;
+    let previous_layout = state.config.ui_layout;
     card_frame(ui, |ui| {
         ui.label(RichText::new("Theme").size(16.0).strong().color(TEXT));
         ui.label(RichText::new("Choose a launcher color palette.").color(TEXT2));
@@ -633,6 +634,44 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
         save_settings(
             state,
             format!("{} theme selected", state.config.theme.label()),
+        );
+    }
+
+    card_frame(ui, |ui| {
+        ui.label(
+            RichText::new("Navigation layout")
+                .size(16.0)
+                .strong()
+                .color(TEXT),
+        );
+        ui.label(
+            RichText::new("Choose where the launcher keeps its main navigation.").color(TEXT2),
+        );
+        ui.add_space(10.0);
+        ui.horizontal_wrapped(|ui| {
+            let btn_corner = CornerRadius::same(8);
+            let p = crate::ui::theme::palette(ui.ctx());
+            for layout in UiLayout::all() {
+                let selected = state.config.ui_layout == layout;
+                let button =
+                    egui::Button::new(RichText::new(layout.label()).strong().color(p.accent))
+                        .fill(p.elevated)
+                        .stroke(Stroke::new(
+                            if selected { 2.0_f32 } else { 1.0_f32 },
+                            p.accent,
+                        ))
+                        .corner_radius(btn_corner)
+                        .min_size(egui::vec2(120.0, 46.0));
+                if ui.add(button).on_hover_text(layout.hint()).clicked() {
+                    state.config.ui_layout = layout;
+                }
+            }
+        });
+    });
+    if state.config.ui_layout != previous_layout {
+        save_settings(
+            state,
+            format!("{} navigation enabled", state.config.ui_layout.label()),
         );
     }
 }

@@ -86,6 +86,34 @@ impl ThemeKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UiLayout {
+    #[default]
+    Sidebar,
+    Topbar,
+}
+
+impl UiLayout {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Sidebar => "Sidebar",
+            Self::Topbar => "Top bar",
+        }
+    }
+
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::Sidebar => "Classic vertical navigation with every page one click away.",
+            Self::Topbar => "Compact header with quick play, global search, and a status strip.",
+        }
+    }
+
+    pub const fn all() -> [Self; 2] {
+        [Self::Sidebar, Self::Topbar]
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryDefaults {
     #[serde(default = "crate::utils::system::default_min_memory_mb")]
@@ -340,6 +368,8 @@ pub struct LauncherConfig {
     #[serde(default)]
     pub theme: ThemeKind,
     #[serde(default)]
+    pub ui_layout: UiLayout,
+    #[serde(default)]
     pub profile: Option<OfflineProfile>,
     #[serde(default)]
     pub close_action: CloseAction,
@@ -415,6 +445,7 @@ impl Default for LauncherConfig {
         Self {
             credentials_id: None,
             theme: ThemeKind::default(),
+            ui_layout: UiLayout::default(),
             discord: crate::discord::Settings::default(),
             profile: None,
             close_action: CloseAction::Hide,
@@ -829,6 +860,30 @@ mod tests {
                 .start_maximized
         );
         assert_eq!(LauncherConfig::default().window_width, 1280.0);
+    }
+
+    #[test]
+    fn ui_layout_roundtrip_and_default() {
+        assert_eq!(UiLayout::default(), UiLayout::Sidebar);
+        assert_eq!(LauncherConfig::default().ui_layout, UiLayout::Sidebar);
+
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("config.toml");
+        let config = LauncherConfig {
+            ui_layout: UiLayout::Topbar,
+            ..Default::default()
+        };
+        config.save(&path).unwrap();
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert_eq!(loaded.ui_layout, UiLayout::Topbar);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("ui_layout = \"topbar\""));
+
+        assert_eq!(
+            toml::from_str::<LauncherConfig>("").unwrap().ui_layout,
+            UiLayout::Sidebar
+        );
+        assert_eq!(UiLayout::all().len(), 2);
     }
 
     #[test]
