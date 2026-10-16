@@ -645,7 +645,10 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
                 .color(TEXT),
         );
         ui.label(
-            RichText::new("Choose where the launcher keeps its main navigation.").color(TEXT2),
+            RichText::new(
+                "The top bar is the new default — switch to the classic sidebar anytime.",
+            )
+            .color(TEXT2),
         );
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {

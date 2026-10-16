@@ -89,8 +89,8 @@ impl ThemeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiLayout {
-    #[default]
     Sidebar,
+    #[default]
     Topbar,
 }
 
@@ -864,24 +864,24 @@ mod tests {
 
     #[test]
     fn ui_layout_roundtrip_and_default() {
-        assert_eq!(UiLayout::default(), UiLayout::Sidebar);
-        assert_eq!(LauncherConfig::default().ui_layout, UiLayout::Sidebar);
+        assert_eq!(UiLayout::default(), UiLayout::Topbar);
+        assert_eq!(LauncherConfig::default().ui_layout, UiLayout::Topbar);
 
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("config.toml");
         let config = LauncherConfig {
-            ui_layout: UiLayout::Topbar,
+            ui_layout: UiLayout::Sidebar,
             ..Default::default()
         };
         config.save(&path).unwrap();
         let loaded = LauncherConfig::load(&path).unwrap();
-        assert_eq!(loaded.ui_layout, UiLayout::Topbar);
+        assert_eq!(loaded.ui_layout, UiLayout::Sidebar);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("ui_layout = \"topbar\""));
+        assert!(text.contains("ui_layout = \"sidebar\""));
 
         assert_eq!(
             toml::from_str::<LauncherConfig>("").unwrap().ui_layout,
-            UiLayout::Sidebar
+            UiLayout::Topbar
         );
         assert_eq!(UiLayout::all().len(), 2);
     }

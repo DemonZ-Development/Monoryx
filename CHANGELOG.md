@@ -1,12 +1,12 @@
 # MONORYX 1.6.0
 
-Optional top bar navigation layout, a refreshed launch flow, and lower memory use while browsing screenshots.
+New top bar navigation enabled by default, a refreshed launch flow, and lower memory use while browsing screenshots.
 
 > See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
 
 ## Navigation & Interface
 
-- **Optional Top Bar Layout:** Added an alternative horizontal navigation layout with quick play, instance switching, global search, account and activity shortcuts, and a live status strip. Switch anytime from Settings, the header menu, or the `/topbar` command.
+- **Top Bar Navigation:** The launcher now defaults to a horizontal top bar with adaptive page tabs, quick play, instance switching, global search, account and activity shortcuts, and a live status strip. The classic sidebar remains available in Settings, the header menu, or via the `/sidebar` command.
 - **Sidebar Account Badge:** Fixed the account badge chevron rendering as a missing glyph.
 
 ## Performance & Memory

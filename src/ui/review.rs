@@ -379,6 +379,8 @@ fn review_home_worlds_crash_and_discord_layouts() {
         state.config.theme = theme;
         if label.starts_with("topbar-") {
             state.config.ui_layout = crate::config::UiLayout::Topbar;
+        } else {
+            state.config.ui_layout = crate::config::UiLayout::Sidebar;
         }
         crate::ui::theme::apply_selected_theme(&ctx, theme);
         state.selected_instance = Some(first.id.clone());

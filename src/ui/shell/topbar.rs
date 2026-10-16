@@ -18,13 +18,7 @@ pub(super) fn show(state: &mut AppState, ctx: &egui::Context, theme: Palette) {
                 ui.add_space(12.0);
                 play_button(state, ctx, ui, theme);
                 ui.add_space(12.0);
-                for page in [Page::Home, Page::Instances, Page::Discover, Page::Library] {
-                    if nav_tab(state, ctx, ui, page, theme).clicked() {
-                        state.set_page(page);
-                    }
-                }
-                ui.add_space(4.0);
-                more_menu(state, ui, theme);
+                nav_tabs(state, ctx, ui, theme);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     account_chip(state, ctx, ui, theme);
                     ui.add_space(4.0);
@@ -209,6 +203,47 @@ fn play_button(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, the
     });
 }
 
+fn nav_tabs(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, theme: Palette) {
+    let window_width = ctx.available_rect().width();
+    let search_width = if window_width >= 1180.0 { 216.0 } else { 0.0 };
+    let account_width = if window_width >= 1020.0 { 150.0 } else { 34.0 };
+    let right_cluster = search_width + account_width + 30.0 + 64.0;
+    let font = egui::FontId::new(13.0, egui::FontFamily::Proportional);
+    let more_width = ui
+        .painter()
+        .layout_no_wrap("More ⏷".to_string(), font.clone(), TEXT2)
+        .size()
+        .x
+        + 30.0;
+    let spacing = ui.spacing().item_spacing.x;
+    let mut budget = ui.available_width() - right_cluster - more_width - spacing;
+    let mut hidden: Vec<Page> = Vec::new();
+    for page in Page::all() {
+        if !hidden.is_empty() {
+            hidden.push(page);
+            continue;
+        }
+        let tab_width = ui
+            .painter()
+            .layout_no_wrap(page.label().to_string(), font.clone(), TEXT)
+            .size()
+            .x
+            + 22.0
+            + spacing;
+        if tab_width > budget {
+            hidden.push(page);
+            continue;
+        }
+        budget -= tab_width;
+        if nav_tab(state, ctx, ui, page, theme).clicked() {
+            state.set_page(page);
+        }
+    }
+    if !hidden.is_empty() {
+        more_menu(state, ui, theme, &hidden);
+    }
+}
+
 fn nav_tab(
     state: &AppState,
     ctx: &egui::Context,
@@ -260,23 +295,14 @@ fn nav_tab(
     response.on_hover_text(super::page_tooltip(page))
 }
 
-fn more_menu(state: &mut AppState, ui: &mut egui::Ui, theme: Palette) {
-    let secondary = [
-        Page::Worlds,
-        Page::Screenshots,
-        Page::Downloads,
-        Page::Nexeu,
-        Page::Accounts,
-        Page::Logs,
-        Page::Settings,
-    ];
-    let on_secondary = secondary.contains(&state.page);
-    let title_color = if on_secondary { theme.accent } else { TEXT2 };
+fn more_menu(state: &mut AppState, ui: &mut egui::Ui, theme: Palette, hidden: &[Page]) {
+    let on_hidden = hidden.contains(&state.page);
+    let title_color = if on_hidden { theme.accent } else { TEXT2 };
     ui.menu_button(
         RichText::new("More ⏷").size(13.0).color(title_color),
         |ui| {
             ui.set_min_width(216.0);
-            for page in secondary {
+            for &page in hidden {
                 let selected = state.page == page;
                 let label = format!("{}  {}", super::page_icon(page), page.label());
                 if ui.selectable_label(selected, label).clicked() {
