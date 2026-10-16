@@ -1,11 +1,26 @@
+# MONORYX 1.6.0
+
+Optional top bar navigation layout, a refreshed launch flow, and lower memory use while browsing screenshots.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Navigation & Interface
+
+- **Optional Top Bar Layout:** Added an alternative horizontal navigation layout with quick play, instance switching, global search, account and activity shortcuts, and a live status strip. Switch anytime from Settings, the header menu, or the `/topbar` command.
+- **Sidebar Account Badge:** Fixed the account badge chevron rendering as a missing glyph.
+
+## Performance & Memory
+
+- **Streamed Image Decoding:** Screenshot and image previews now decode directly from disk instead of loading the entire file into memory first.
+- **Connection Pooling:** Idle network connections are released sooner with a tighter keep-alive cap.
+
+---
+
 # MONORYX 1.5.6
 
 - Switched default Microsoft OAuth registration to the official Monoryx Azure Application ID (`e6fe0b23-f185-4bbb-a6e1-7e72ed727a6f`) following official approval and allow-listing by Mojang Enforcement.
 - Microsoft device code logins now display MONORYX on account consent screens.
 - Hardened avatar profile request dispatch and resolved CodeQL static analysis security alerts.
-- Added an optional top bar navigation layout with quick play, instance switching, global search, and a live status strip. Enable it in Settings, from the header menu, or with `/topbar`.
-- Fixed a missing glyph in the sidebar account badge.
-- Screenshot and image previews now decode by streaming from disk instead of loading the whole file into memory first, and idle network connections are released sooner.
 
 ---
 
