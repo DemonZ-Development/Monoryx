@@ -109,9 +109,14 @@ pub(super) mod backend {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
-    thread_local! {
-        pub static FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    #[expect(clippy::missing_const_for_thread_local)]
+    mod fail_flag {
+        std::thread_local! {
+            pub static FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
     }
+
+    pub use self::fail_flag::FAIL;
 
     fn values() -> &'static Mutex<HashMap<String, String>> {
         static VALUES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();

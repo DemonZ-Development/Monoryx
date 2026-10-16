@@ -330,13 +330,7 @@ fn activity_bell(state: &mut AppState, ui: &mut egui::Ui, theme: Palette) {
 }
 
 fn account_chip(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, theme: Palette) {
-    let account = state.config.active_account_ref().map(|account| {
-        (
-            account.username().to_string(),
-            account.uuid(),
-            account.is_offline(),
-        )
-    });
+    let account = super::AccountView::from_state(state);
     let show_name = ctx.available_rect().width() >= 1020.0;
     let width = if show_name { 150.0 } else { 34.0 };
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
@@ -344,7 +338,7 @@ fn account_chip(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, th
         ui.painter()
             .rect_filled(rect, CornerRadius::same(8), theme.hover);
     }
-    let Some((username, uuid, offline)) = account else {
+    let Some(account) = account else {
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -365,16 +359,26 @@ fn account_chip(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, th
         egui::pos2(rect.left() + 17.0, rect.center().y),
         egui::vec2(22.0, 22.0),
     );
-    if offline {
-        crate::ui::components::draw_cute_avatar(ui.painter(), avatar_rect, &username, false);
+    if account.offline {
+        crate::ui::components::draw_cute_avatar(
+            ui.painter(),
+            avatar_rect,
+            &account.username,
+            false,
+        );
     } else {
-        crate::ui::components::draw_avatar(ui.painter(), avatar_rect, &username, &uuid.to_string());
+        crate::ui::components::draw_avatar(
+            ui.painter(),
+            avatar_rect,
+            &account.username,
+            &account.uuid.to_string(),
+        );
     }
     if show_name {
         ui.painter().text(
             egui::pos2(rect.left() + 34.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            crate::ui::components::elide(&username, 12),
+            crate::ui::components::elide(&account.username, 12),
             egui::FontId::new(type_scale::LABEL, egui::FontFamily::Proportional),
             TEXT,
         );
@@ -393,8 +397,8 @@ fn account_chip(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, th
     if response
         .on_hover_text(format!(
             "Active account: {} ({})",
-            username,
-            if offline { "Offline" } else { "Microsoft" }
+            account.username,
+            account.kind_label()
         ))
         .clicked()
     {

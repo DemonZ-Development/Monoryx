@@ -179,21 +179,8 @@ fn status_card(state: &mut AppState, ui: &mut egui::Ui, theme: crate::ui::theme:
         });
 }
 
-struct SidebarAccount {
-    username: String,
-    uuid: uuid::Uuid,
-    offline: bool,
-}
-
 fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
-    let account = state
-        .config
-        .active_account_ref()
-        .map(|account| SidebarAccount {
-            username: account.username().to_string(),
-            uuid: account.uuid(),
-            offline: account.is_offline(),
-        });
+    let account = super::AccountView::from_state(state);
     let has_update = state.launcher_update.as_ref().is_some_and(|u| u.has_update);
     let version = env!("CARGO_PKG_VERSION").to_string();
     let theme = crate::ui::theme::palette(ui.ctx());
@@ -261,11 +248,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                         ui.painter().text(
                             badge.right_center(),
                             egui::Align2::RIGHT_CENTER,
-                            if acc.offline {
-                                "Offline ⏷"
-                            } else {
-                                "Microsoft ⏷"
-                            },
+                            format!("{} ⏷", acc.kind_label()),
                             egui::FontId::proportional(type_scale::MICRO),
                             if acc.offline {
                                 MUTED
@@ -287,7 +270,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
                 .on_hover_text(format!(
                     "Active account: {} ({})\nClick to manage in Accounts",
                     acc.username.as_str(),
-                    if acc.offline { "Offline" } else { "Microsoft" }
+                    acc.kind_label()
                 ))
                 .clicked()
             {

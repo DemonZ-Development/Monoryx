@@ -337,7 +337,6 @@ fn handle_overlays(state: &mut AppState, ctx: &egui::Context) {
         if close {
             state.screenshot_viewer = None;
             state.screenshot_full_image = None;
-            state.screenshot_full_image = None;
         } else if let Some(path) = next {
             state.open_screenshot(&path);
         }
@@ -979,6 +978,31 @@ pub(super) fn page_tooltip(page: Page) -> &'static str {
         Page::Onboarding => "Setup",
     }
 }
+
+pub(super) struct AccountView {
+    pub username: String,
+    pub uuid: uuid::Uuid,
+    pub offline: bool,
+}
+
+impl AccountView {
+    pub(super) fn from_state(state: &AppState) -> Option<Self> {
+        state.config.active_account_ref().map(|account| Self {
+            username: account.username().to_string(),
+            uuid: account.uuid(),
+            offline: account.is_offline(),
+        })
+    }
+
+    pub(super) fn kind_label(&self) -> &'static str {
+        if self.offline {
+            "Offline"
+        } else {
+            "Microsoft"
+        }
+    }
+}
+
 fn show_crash_dialog(state: &mut AppState, ctx: &egui::Context) {
     use crate::minecraft::diagnostics::NextStep;
     use crate::ui::components::{card_frame, primary_button, secondary_button};

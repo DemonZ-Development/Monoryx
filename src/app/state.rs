@@ -3013,22 +3013,36 @@ fn decode_scaled<R: std::io::BufRead + std::io::Seek>(
     })
 }
 
+fn decode_checked_reader<R, F>(
+    make_reader: F,
+    max_width: u32,
+    max_height: u32,
+) -> std::result::Result<DecodedImage, String>
+where
+    R: std::io::BufRead + std::io::Seek,
+    F: Fn() -> std::result::Result<image::ImageReader<R>, String>,
+{
+    let (width, height) = make_reader()?
+        .into_dimensions()
+        .map_err(|error| error.to_string())?;
+    check_image_dimensions(width, height, max_width)?;
+    decode_scaled(limited_decoder(make_reader()?), max_width, max_height)
+}
+
 fn decode_image(
     bytes: Vec<u8>,
     max_width: u32,
     max_height: u32,
 ) -> std::result::Result<DecodedImage, String> {
-    let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .map_err(|error| error.to_string())?;
-    let (width, height) = reader
-        .into_dimensions()
-        .map_err(|error| error.to_string())?;
-    check_image_dimensions(width, height, max_width)?;
-    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|error| error.to_string())?;
-    decode_scaled(limited_decoder(reader), max_width, max_height)
+    decode_checked_reader(
+        || {
+            image::ImageReader::new(std::io::Cursor::new(bytes.as_slice()))
+                .with_guessed_format()
+                .map_err(|error| error.to_string())
+        },
+        max_width,
+        max_height,
+    )
 }
 
 fn read_local_image(
@@ -3042,19 +3056,16 @@ fn read_local_image(
     if size > 50_000_000 {
         return Err("Image file is too large to display.".to_string());
     }
-    let reader = image::ImageReader::open(path)
-        .map_err(|error| error.to_string())?
-        .with_guessed_format()
-        .map_err(|error| error.to_string())?;
-    let (width, height) = reader
-        .into_dimensions()
-        .map_err(|error| error.to_string())?;
-    check_image_dimensions(width, height, max_width)?;
-    let reader = image::ImageReader::open(path)
-        .map_err(|error| error.to_string())?
-        .with_guessed_format()
-        .map_err(|error| error.to_string())?;
-    decode_scaled(limited_decoder(reader), max_width, max_height)
+    decode_checked_reader(
+        || {
+            image::ImageReader::open(path)
+                .map_err(|error| error.to_string())?
+                .with_guessed_format()
+                .map_err(|error| error.to_string())
+        },
+        max_width,
+        max_height,
+    )
 }
 
 #[cfg(test)]
