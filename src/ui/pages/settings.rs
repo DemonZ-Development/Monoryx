@@ -394,6 +394,10 @@ fn launcher_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::U
             "Remember last selected instance",
         );
         ui.checkbox(
+            &mut state.config.resume_last_page,
+            "Resume last page on launch",
+        );
+        ui.checkbox(
             &mut state.show_snapshots,
             "Show Minecraft snapshots and experimental releases",
         );
@@ -1752,6 +1756,7 @@ fn preferences_signature(state: &AppState) -> u64 {
         state.config.gpu_preference as u8,
         state.config.start_maximized,
         state.config.remember_instance,
+        state.config.resume_last_page,
         state.show_snapshots,
         state.config.parallel_downloads,
         state.config.window_width.to_bits(),

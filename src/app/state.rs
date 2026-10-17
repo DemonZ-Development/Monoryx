@@ -370,8 +370,10 @@ impl AppState {
             .expect("tokio runtime");
         let page = if config.is_first_run() {
             Page::Onboarding
-        } else {
+        } else if config.resume_last_page {
             Page::from_page_str(&config.last_page)
+        } else {
+            Page::Home
         };
         let instance_list = instances.list().unwrap_or_default();
         let mut selected_instance = config.selected_instance.clone();

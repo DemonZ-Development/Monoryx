@@ -380,6 +380,8 @@ pub struct LauncherConfig {
     #[serde(default = "default_last_page")]
     pub last_page: String,
     #[serde(default)]
+    pub resume_last_page: bool,
+    #[serde(default)]
     pub memory: MemoryDefaults,
     #[serde(default)]
     pub java: JavaDefaults,
@@ -452,6 +454,7 @@ impl Default for LauncherConfig {
             remember_instance: true,
             selected_instance: None,
             last_page: "home".to_string(),
+            resume_last_page: false,
             memory: MemoryDefaults::default(),
             java: JavaDefaults {
                 mode: "automatic".to_string(),
@@ -729,6 +732,22 @@ mod tests {
                 |file| file.file_name().to_string_lossy().contains("corrupt-")
                     && std::fs::read(file.path()).unwrap() == b"broken = ["
             ));
+    }
+
+    #[test]
+    fn resume_last_page_defaults_off_and_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        assert!(!LauncherConfig::default().resume_last_page);
+        let config = LauncherConfig {
+            resume_last_page: true,
+            last_page: "instances".into(),
+            ..Default::default()
+        };
+        config.save(&path).unwrap();
+        let loaded = LauncherConfig::load(&path).unwrap();
+        assert!(loaded.resume_last_page);
+        assert_eq!(loaded.last_page, "instances");
     }
 
     #[test]

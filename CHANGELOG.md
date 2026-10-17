@@ -7,6 +7,7 @@ New top bar navigation enabled by default, a refreshed launch flow, and lower me
 ## Navigation & Interface
 
 - **Top Bar Navigation:** The launcher now defaults to a horizontal top bar with adaptive page tabs, quick play, instance switching, global search, account and activity shortcuts, and a live status strip. The classic sidebar remains available in Settings, the header menu, or via the `/sidebar` command.
+- **Startup Page:** MONORYX opens on Home by default; enable "Resume last page on launch" in Settings → Launcher to pick up where you left off.
 - **Sidebar Account Badge:** Fixed the account badge chevron rendering as a missing glyph.
 - **Appearance Previews:** Theme and navigation layout options now show mini previews so you can pick colors and layout at a glance.
 - **Non-English Instance Names:** Instance names now count characters instead of bytes, so full Korean, Chinese, and Japanese names are accepted up to the 48-character limit.

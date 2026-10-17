@@ -218,6 +218,14 @@ fn review_home_worlds_crash_and_discord_layouts() {
             false,
         ),
         (
+            "settings-launcher",
+            Page::Settings,
+            1024,
+            880,
+            ThemeKind::Halloween,
+            false,
+        ),
+        (
             "settings-appearance",
             Page::Settings,
             1024,
