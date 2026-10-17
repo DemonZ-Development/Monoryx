@@ -667,7 +667,7 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
 
 fn theme_card(ui: &mut egui::Ui, theme: ThemeKind, selected: bool) -> egui::Response {
     let p = crate::ui::theme::palette_for(theme);
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(128.0, 74.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(112.0, 74.0), egui::Sense::click());
     let corner = CornerRadius::same(8);
     let painter = ui.painter();
     painter.rect_filled(rect, corner, p.elevated);
@@ -681,7 +681,7 @@ fn theme_card(ui: &mut egui::Ui, theme: ThemeKind, selected: bool) -> egui::Resp
         egui::StrokeKind::Inside,
     );
     let preview =
-        egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(112.0, 42.0));
+        egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(96.0, 42.0));
     painter.rect(
         preview,
         CornerRadius::same(6),
@@ -700,17 +700,17 @@ fn theme_card(ui: &mut egui::Ui, theme: ThemeKind, selected: bool) -> egui::Resp
         p.elevated,
     );
     painter.rect_filled(
-        egui::Rect::from_min_size(preview.min + egui::vec2(7.0, 18.0), egui::vec2(26.0, 8.0)),
+        egui::Rect::from_min_size(preview.min + egui::vec2(7.0, 18.0), egui::vec2(24.0, 8.0)),
         CornerRadius::same(4),
         p.accent,
     );
     painter.rect_filled(
-        egui::Rect::from_min_size(preview.min + egui::vec2(7.0, 30.0), egui::vec2(38.0, 4.0)),
+        egui::Rect::from_min_size(preview.min + egui::vec2(7.0, 30.0), egui::vec2(32.0, 4.0)),
         CornerRadius::same(2),
         p.hover,
     );
     painter.rect_filled(
-        egui::Rect::from_min_size(preview.min + egui::vec2(50.0, 30.0), egui::vec2(26.0, 4.0)),
+        egui::Rect::from_min_size(preview.min + egui::vec2(43.0, 30.0), egui::vec2(20.0, 4.0)),
         CornerRadius::same(2),
         p.hover,
     );

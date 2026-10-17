@@ -82,6 +82,14 @@ fn review_home_worlds_crash_and_discord_layouts() {
             false,
         ),
         (
+            "home-aurora",
+            Page::Home,
+            1280,
+            800,
+            ThemeKind::Aurora,
+            false,
+        ),
+        (
             "home-empty",
             Page::Home,
             1024,

@@ -301,9 +301,12 @@ The dedicated Worlds manager provides backup and directory inspection tools:
 
 ### Tutorial 8: Theming & Command Palette
 
-- **Themes**: Go to **Settings** -> **Appearance** to toggle between themes:
+- **Themes**: Go to **Settings** -> **Appearance** to toggle between themes, each shown with a live preview card:
+  - **Aurora**: Deep pine-teal night sky with a bright mint accent.
   - **Halloween (Spooky)**: Silhouetted vector backdrop (haunted castle, glowing full moon, flying bats, pine forest), pumpkin corner accents, spiderweb cards, and glowing orange primary buttons.
-  - **Dark / Light / Gloss / High Contrast**: Clean modern aesthetics tailored for readability and contrast.
+  - **Monochrome / Gloss / Soft pink / Soft brown**: Clean modern aesthetics tailored for readability and contrast.
+
+![Aurora Theme](./assets/screenshots/home-aurora.png)
 
 ![Halloween Spooky Theme](./assets/screenshots/home-halloween.png)
 

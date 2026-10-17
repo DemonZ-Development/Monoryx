@@ -33,7 +33,7 @@ Each instance runs in an isolated directory with its own mods, saves, configs, a
 - **Automated Java Provisioning**: Detects installed JREs on your system and downloads matched Adoptium Temurin runtimes for any Minecraft version.
 - **World Protection & Backups**: Safeguard worlds with one-click compressed ZIP backups and a restore-as-copy mechanism.
 - **Flexible Authentication**: Sign in via Microsoft OAuth device code flow (`microsoft.com/link`) for official online servers, or use offline profiles for singleplayer and LAN play.
-- **Handcrafted Themes**: Includes the seasonal Spooky (Halloween) theme with procedural vector artwork, alongside Gloss, High Contrast, Dark, and Light palettes.
+- **Handcrafted Themes**: Includes the seasonal Spooky (Halloween) theme with procedural vector artwork, alongside Monochrome, Gloss, Aurora, Soft pink, and Soft brown palettes.
 - **Native Windows Build**: Compiles as a Windows subsystem GUI executable without opening a console window.
 
 ---

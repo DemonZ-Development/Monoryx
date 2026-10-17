@@ -298,6 +298,7 @@ fn sidebar_footer(state: &mut AppState, ui: &mut egui::Ui) {
             let (theme_icon, theme_label) = match state.config.theme {
                 crate::config::ThemeKind::Monochrome => ("◐", "Mono"),
                 crate::config::ThemeKind::Gloss => ("✨", "Gloss"),
+                crate::config::ThemeKind::Aurora => ("🌌", "Aurora"),
                 crate::config::ThemeKind::Halloween => ("🎃", "Spooky"),
                 crate::config::ThemeKind::SoftPink => ("🌸", "Pink"),
                 crate::config::ThemeKind::SoftBrown => ("🍂", "Brown"),

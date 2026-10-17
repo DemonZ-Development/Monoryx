@@ -78,6 +78,7 @@ fn commands(state: &AppState) -> Vec<Command> {
         let (hint, slash): (&'static str, &'static str) = match theme {
             crate::config::ThemeKind::Monochrome => ("", "/monochrome"),
             crate::config::ThemeKind::Gloss => ("", "/gloss"),
+            crate::config::ThemeKind::Aurora => ("", "/aurora"),
             crate::config::ThemeKind::Halloween => ("🎃", "/halloween"),
             crate::config::ThemeKind::SoftPink => ("", "/softpink"),
             crate::config::ThemeKind::SoftBrown => ("", "/softbrown"),

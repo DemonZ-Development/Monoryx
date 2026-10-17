@@ -107,6 +107,16 @@ pub fn palette_for(theme: ThemeKind) -> Palette {
             accent_hover: Color32::from_rgb(215, 240, 255),
             accent_text: Color32::from_rgb(10, 23, 40),
         },
+        ThemeKind::Aurora => Palette {
+            bg: Color32::from_rgb(9, 17, 19),
+            elevated: Color32::from_rgb(17, 28, 31),
+            elevated2: Color32::from_rgb(25, 39, 43),
+            border: Color32::from_rgb(56, 82, 85),
+            hover: Color32::from_rgb(35, 53, 57),
+            accent: Color32::from_rgb(110, 231, 205),
+            accent_hover: Color32::from_rgb(167, 243, 227),
+            accent_text: Color32::from_rgb(5, 32, 28),
+        },
         ThemeKind::SoftPink => Palette {
             bg: Color32::from_rgb(30, 20, 30),
             elevated: Color32::from_rgb(44, 30, 44),

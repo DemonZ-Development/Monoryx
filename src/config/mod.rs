@@ -58,6 +58,7 @@ impl GpuPreference {
 pub enum ThemeKind {
     Monochrome,
     Gloss,
+    Aurora,
     #[default]
     Halloween,
     SoftPink,
@@ -69,16 +70,18 @@ impl ThemeKind {
         match self {
             Self::Monochrome => "Monochrome",
             Self::Gloss => "Gloss",
+            Self::Aurora => "Aurora",
             Self::Halloween => "Halloween",
             Self::SoftPink => "Soft pink",
             Self::SoftBrown => "Soft brown",
         }
     }
 
-    pub const fn all() -> [Self; 5] {
+    pub const fn all() -> [Self; 6] {
         [
             Self::Monochrome,
             Self::Gloss,
+            Self::Aurora,
             Self::Halloween,
             Self::SoftPink,
             Self::SoftBrown,
@@ -879,6 +882,13 @@ mod tests {
                 .start_maximized
         );
         assert_eq!(LauncherConfig::default().window_width, 1280.0);
+    }
+
+    #[test]
+    fn theme_options_include_aurora_without_changing_the_default() {
+        assert_eq!(ThemeKind::default(), ThemeKind::Halloween);
+        assert!(ThemeKind::all().contains(&ThemeKind::Aurora));
+        assert_eq!(ThemeKind::Aurora.label(), "Aurora");
     }
 
     #[test]
