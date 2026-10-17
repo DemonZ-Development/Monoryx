@@ -74,6 +74,14 @@ fn review_home_worlds_crash_and_discord_layouts() {
             false,
         ),
         (
+            "home-cjk",
+            Page::Home,
+            1100,
+            760,
+            ThemeKind::Monochrome,
+            false,
+        ),
+        (
             "home-empty",
             Page::Home,
             1024,
@@ -354,6 +362,10 @@ fn review_home_worlds_crash_and_discord_layouts() {
 
         if label == "home-long-name" {
             first.name = "Survival with friends - shaders and adventures".into();
+            manager.save(&first).unwrap();
+        }
+        if label == "home-cjk" {
+            first.name = "생존 서바이벌 • 中文世界 • サバイバル Ñandú".into();
             manager.save(&first).unwrap();
         }
         if label.contains("updates-small") {

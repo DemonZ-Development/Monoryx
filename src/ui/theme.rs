@@ -405,9 +405,9 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
         #[cfg(target_os = "windows")]
         let candidates = [
             r"C:\Windows\Fonts\malgun.ttf",
-            r"C:\Windows\Fonts\malgunsl.ttf",
             r"C:\Windows\Fonts\msyh.ttc",
             r"C:\Windows\Fonts\msgothic.ttc",
+            r"C:\Windows\Fonts\malgunsl.ttf",
             r"C:\Windows\Fonts\segoeui.ttf",
         ];
 
@@ -443,7 +443,6 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
             fonts.font_data.insert(name.clone(), font.into());
 
             loaded_fonts.push(name);
-            break;
         }
 
         #[cfg(target_os = "linux")]

@@ -17,7 +17,7 @@ pub fn validate_username(name: &str) -> Result<()> {
 
 pub fn validate_instance_name(name: &str) -> Result<()> {
     let t = name.trim();
-    if t.is_empty() || t.len() > 48 {
+    if t.is_empty() || t.chars().count() > 48 {
         return Err(MonoryxError::Instance(
             "Instance name must be 1-48 characters.".to_string(),
         ));
@@ -45,5 +45,14 @@ mod tests {
         assert!(validate_username("this_name_is_way_too_long").is_err());
         assert!(validate_username("bad-name!").is_err());
         assert!(validate_username("with space").is_err());
+    }
+
+    #[test]
+    fn instance_names_count_characters_not_bytes() {
+        assert!(validate_instance_name("한국어 日本語 中文").is_ok());
+        assert!(validate_instance_name(&"한".repeat(48)).is_ok());
+        assert!(validate_instance_name(&"한".repeat(49)).is_err());
+        assert!(validate_instance_name("   ").is_err());
+        assert!(validate_instance_name("bad/name").is_err());
     }
 }
