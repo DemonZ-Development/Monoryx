@@ -3,7 +3,7 @@ use crate::config::{CloseAction, GpuPreference, ThemeKind, UiLayout};
 use crate::ui::components::{
     badge, badge_accent, badge_boost, card_frame, field_label, page_header, tab_button,
 };
-use crate::ui::theme::{DANGER, INFO, MUTED, OK, TEXT, TEXT2, WARNING};
+use crate::ui::theme::{Palette, DANGER, INFO, MUTED, OK, TEXT, TEXT2, WARNING};
 use egui::{CornerRadius, RichText, Stroke};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -610,20 +610,9 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
         ui.label(RichText::new("Choose a launcher color palette.").color(TEXT2));
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
-            let btn_corner = CornerRadius::same(8);
             for theme in ThemeKind::all() {
-                let p = crate::ui::theme::palette_for(theme);
                 let selected = state.config.theme == theme;
-                let button =
-                    egui::Button::new(RichText::new(theme.label()).strong().color(p.accent))
-                        .fill(p.elevated)
-                        .stroke(Stroke::new(
-                            if selected { 2.0_f32 } else { 1.0_f32 },
-                            p.accent,
-                        ))
-                        .corner_radius(btn_corner)
-                        .min_size(egui::vec2(120.0, 46.0));
-                if ui.add(button).clicked() {
+                if theme_card(ui, theme, selected).clicked() {
                     state.config.theme = theme;
                 }
             }
@@ -652,20 +641,13 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
         );
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
-            let btn_corner = CornerRadius::same(8);
             let p = crate::ui::theme::palette(ui.ctx());
             for layout in UiLayout::all() {
                 let selected = state.config.ui_layout == layout;
-                let button =
-                    egui::Button::new(RichText::new(layout.label()).strong().color(p.accent))
-                        .fill(p.elevated)
-                        .stroke(Stroke::new(
-                            if selected { 2.0_f32 } else { 1.0_f32 },
-                            p.accent,
-                        ))
-                        .corner_radius(btn_corner)
-                        .min_size(egui::vec2(120.0, 46.0));
-                if ui.add(button).on_hover_text(layout.hint()).clicked() {
+                if layout_card(ui, p, layout, selected)
+                    .on_hover_text(layout.hint())
+                    .clicked()
+                {
                     state.config.ui_layout = layout;
                 }
             }
@@ -677,6 +659,209 @@ fn appearance_settings(state: &mut AppState, ctx: &egui::Context, ui: &mut egui:
             format!("{} navigation enabled", state.config.ui_layout.label()),
         );
     }
+}
+
+fn theme_card(ui: &mut egui::Ui, theme: ThemeKind, selected: bool) -> egui::Response {
+    let p = crate::ui::theme::palette_for(theme);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(128.0, 74.0), egui::Sense::click());
+    let corner = CornerRadius::same(8);
+    let painter = ui.painter();
+    painter.rect_filled(rect, corner, p.elevated);
+    if response.hovered() {
+        painter.rect_filled(rect, corner, p.accent.gamma_multiply(0.12));
+    }
+    painter.rect_stroke(
+        rect,
+        corner,
+        Stroke::new(if selected { 2.0_f32 } else { 1.0_f32 }, p.accent),
+        egui::StrokeKind::Inside,
+    );
+    let preview =
+        egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(112.0, 42.0));
+    painter.rect(
+        preview,
+        CornerRadius::same(6),
+        p.bg,
+        Stroke::new(1.0_f32, p.border),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_size(preview.min, egui::vec2(preview.width(), 12.0)),
+        CornerRadius {
+            nw: 6,
+            ne: 6,
+            sw: 0,
+            se: 0,
+        },
+        p.elevated,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_size(preview.min + egui::vec2(7.0, 18.0), egui::vec2(26.0, 8.0)),
+        CornerRadius::same(4),
+        p.accent,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_size(preview.min + egui::vec2(7.0, 30.0), egui::vec2(38.0, 4.0)),
+        CornerRadius::same(2),
+        p.hover,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_size(preview.min + egui::vec2(50.0, 30.0), egui::vec2(26.0, 4.0)),
+        CornerRadius::same(2),
+        p.hover,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.max.y - 11.0),
+        egui::Align2::CENTER_CENTER,
+        theme.label(),
+        egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        p.accent,
+    );
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    crate::ui::components::focus_ring(ui, &response, theme.label());
+    response
+}
+
+fn layout_card(ui: &mut egui::Ui, p: Palette, layout: UiLayout, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(128.0, 74.0), egui::Sense::click());
+    let corner = CornerRadius::same(8);
+    let painter = ui.painter();
+    painter.rect_filled(rect, corner, p.elevated);
+    if response.hovered() {
+        painter.rect_filled(rect, corner, p.accent.gamma_multiply(0.12));
+    }
+    painter.rect_stroke(
+        rect,
+        corner,
+        Stroke::new(if selected { 2.0_f32 } else { 1.0_f32 }, p.accent),
+        egui::StrokeKind::Inside,
+    );
+    let preview =
+        egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(112.0, 42.0));
+    painter.rect(
+        preview,
+        CornerRadius::same(6),
+        p.bg,
+        Stroke::new(1.0_f32, p.border),
+        egui::StrokeKind::Inside,
+    );
+    match layout {
+        UiLayout::Sidebar => {
+            painter.rect_filled(
+                egui::Rect::from_min_size(preview.min, egui::vec2(30.0, preview.height())),
+                CornerRadius {
+                    nw: 6,
+                    ne: 0,
+                    sw: 6,
+                    se: 0,
+                },
+                p.elevated,
+            );
+            for (index, y) in [8.0_f32, 18.0, 28.0].into_iter().enumerate() {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        preview.min + egui::vec2(6.0, y),
+                        egui::vec2(18.0, 5.0),
+                    ),
+                    CornerRadius::same(2),
+                    if index == 0 { p.accent } else { p.hover },
+                );
+            }
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    preview.min + egui::vec2(38.0, 8.0),
+                    egui::vec2(66.0, 26.0),
+                ),
+                CornerRadius::same(4),
+                p.elevated2,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    preview.min + egui::vec2(44.0, 14.0),
+                    egui::vec2(36.0, 4.0),
+                ),
+                CornerRadius::same(2),
+                p.hover,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    preview.min + egui::vec2(44.0, 22.0),
+                    egui::vec2(24.0, 4.0),
+                ),
+                CornerRadius::same(2),
+                p.hover,
+            );
+        }
+        UiLayout::Topbar => {
+            painter.rect_filled(
+                egui::Rect::from_min_size(preview.min, egui::vec2(preview.width(), 12.0)),
+                CornerRadius {
+                    nw: 6,
+                    ne: 6,
+                    sw: 0,
+                    se: 0,
+                },
+                p.elevated,
+            );
+            for (x, width, color) in [
+                (6.0_f32, 20.0_f32, p.accent),
+                (32.0, 14.0, p.hover),
+                (52.0, 14.0, p.hover),
+            ] {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        preview.min + egui::vec2(x, 3.5),
+                        egui::vec2(width, 5.0),
+                    ),
+                    CornerRadius::same(2),
+                    color,
+                );
+            }
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    preview.min + egui::vec2(8.0, 20.0),
+                    egui::vec2(96.0, 14.0),
+                ),
+                CornerRadius::same(4),
+                p.elevated2,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    preview.min + egui::vec2(14.0, 26.0),
+                    egui::vec2(40.0, 4.0),
+                ),
+                CornerRadius::same(2),
+                p.hover,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    preview.min + egui::vec2(0.0, 36.0),
+                    egui::vec2(preview.width(), 6.0),
+                ),
+                CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: 6,
+                    se: 6,
+                },
+                p.elevated,
+            );
+        }
+    }
+    painter.text(
+        egui::pos2(rect.center().x, rect.max.y - 11.0),
+        egui::Align2::CENTER_CENTER,
+        layout.label(),
+        egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        p.accent,
+    );
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    crate::ui::components::focus_ring(ui, &response, layout.label());
+    response
 }
 
 fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
