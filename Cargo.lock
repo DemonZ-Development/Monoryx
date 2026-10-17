@@ -2602,6 +2602,7 @@ dependencies = [
  "image",
  "keyring",
  "md5",
+ "memmap2",
  "open",
  "reqwest",
  "rfd",

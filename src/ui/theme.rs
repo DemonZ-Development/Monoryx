@@ -382,6 +382,16 @@ pub fn format_percent(fraction: f32) -> String {
     format!("{:.0}%", (fraction.clamp(0.0, 1.0) * 100.0).round())
 }
 
+fn font_data_from_file(path: &std::path::Path) -> Option<egui::FontData> {
+    if let Ok(file) = std::fs::File::open(path) {
+        if let Ok(mmap) = unsafe { memmap2::Mmap::map(&file) } {
+            let bytes: &'static [u8] = Box::leak(Box::new(mmap));
+            return Some(egui::FontData::from_static(bytes));
+        }
+    }
+    std::fs::read(path).ok().map(egui::FontData::from_owned)
+}
+
 fn install_system_fallback_fonts(ctx: &egui::Context) {
     let installed = egui::Id::new("system-fonts-installed");
     if ctx.data_mut(|data| data.get_temp::<bool>(installed).unwrap_or(false)) {
@@ -424,15 +434,13 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
                 continue;
             }
 
-            let Ok(data) = std::fs::read(path) else {
+            let Some(font) = font_data_from_file(path) else {
                 continue;
             };
 
             let name = format!("system_fallback_{}", loaded_fonts.len());
 
-            fonts
-                .font_data
-                .insert(name.clone(), egui::FontData::from_owned(data).into());
+            fonts.font_data.insert(name.clone(), font.into());
 
             loaded_fonts.push(name);
             break;
@@ -463,15 +471,13 @@ fn install_system_fallback_fonts(ctx: &egui::Context) {
                 continue;
             }
 
-            let Ok(data) = std::fs::read(path) else {
+            let Some(font) = font_data_from_file(path) else {
                 continue;
             };
 
             let name = format!("system_fallback_{}", loaded_fonts.len());
 
-            fonts
-                .font_data
-                .insert(name.clone(), egui::FontData::from_owned(data).into());
+            fonts.font_data.insert(name.clone(), font.into());
 
             loaded_fonts.push(name);
             break;

@@ -13,6 +13,7 @@ New top bar navigation enabled by default, a refreshed launch flow, and lower me
 
 - **Streamed Image Decoding:** Screenshot and image previews now decode directly from disk instead of loading the entire file into memory first.
 - **Connection Pooling:** Idle network connections are released sooner with a tighter keep-alive cap.
+- **Fallback Font Mapping:** System fallback fonts are now memory-mapped instead of being loaded and duplicated in memory.
 
 ---
 

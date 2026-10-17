@@ -55,6 +55,7 @@ image = "0.25"
 rfd = "0.15"
 tar = "0.4"
 flate2 = "1"
+memmap2 = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6.3", features = ["windows-native"] }
