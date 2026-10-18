@@ -109,7 +109,7 @@ pub(super) mod backend {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
-    #[expect(clippy::missing_const_for_thread_local)]
+    #[allow(clippy::missing_const_for_thread_local)]
     mod fail_flag {
         std::thread_local! {
             pub static FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
