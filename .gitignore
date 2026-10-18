@@ -3,3 +3,4 @@ installer/dist/
 dist/
 release/
 feedback-*/
+.idea/
