@@ -19,6 +19,10 @@ New top bar navigation enabled by default, a refreshed launch flow, and lower me
 - **Connection Pooling:** Idle network connections are released sooner with a tighter keep-alive cap.
 - **Fallback Font Mapping:** System fallback fonts are now memory-mapped and the full Korean, Chinese, and Japanese sets are installed, so non-English names render correctly without extra memory cost.
 
+## Reliability
+
+- **Update Checks Can't Hang:** Instance update checks now have a hard time limit plus a watchdog, so a stalled request can no longer leave "Checking compatible updates…" spinning forever. Affected checks are stopped and retried automatically.
+
 ---
 
 # MONORYX 1.5.6

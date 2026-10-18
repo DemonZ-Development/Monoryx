@@ -5,6 +5,11 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
+pub const UPDATE_CHECK_TASK_TIMEOUT: Duration = Duration::from_secs(240);
+const UPDATE_CHECK_WATCHDOG: Duration = Duration::from_secs(300);
+pub const UPDATE_CHECK_TIMEOUT_MESSAGE: &str =
+    "The update check took too long and was stopped. It will retry automatically.";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateTarget {
     pub id: String,
@@ -77,6 +82,7 @@ struct PendingCheck {
     target: UpdateTarget,
     automatic: bool,
     abort: tokio::task::AbortHandle,
+    started_at: Instant,
 }
 
 pub struct InstanceUpdateState {
@@ -171,11 +177,43 @@ impl AppState {
             {
                 self.instance_updates.cancel();
                 self.updates_loading = false;
+                tracing::debug!("automatic update check cancelled");
                 if self.loader_update_checking.as_deref() == Some(&cfg.id) {
                     self.loader_update_checking = None;
                 }
             }
             return;
+        }
+        if let Some(stale) = self
+            .instance_updates
+            .pending
+            .as_ref()
+            .filter(|pending| pending.started_at.elapsed() > UPDATE_CHECK_WATCHDOG)
+        {
+            let instance_id = stale.target.id.clone();
+            let target = stale.target.clone();
+            tracing::warn!(
+                "update check for {instance_id} produced no report within {}s and was abandoned",
+                UPDATE_CHECK_WATCHDOG.as_secs()
+            );
+            self.instance_updates.cancel();
+            self.updates_loading = false;
+            self.updates_error = UPDATE_CHECK_TIMEOUT_MESSAGE.into();
+            if self.loader_update_checking.as_deref() == Some(instance_id.as_str()) {
+                self.loader_update_checking = None;
+            }
+            self.instance_updates.cache.insert(
+                instance_id,
+                CachedCheck {
+                    target,
+                    report: InstanceUpdateReport {
+                        content: Err(UPDATE_CHECK_TIMEOUT_MESSAGE.into()),
+                        loader: Err(UPDATE_CHECK_TIMEOUT_MESSAGE.into()),
+                    },
+                    checked_at: Instant::now(),
+                    notified: None,
+                },
+            );
         }
         if self.instance_updates.pending.is_some()
             || self.edit_instance.is_some()
@@ -221,6 +259,10 @@ impl AppState {
         let target = UpdateTarget::from(&cfg);
         self.instance_updates.view = Some(target.clone());
         self.updates_instance = Some(cfg.id.clone());
+        tracing::info!(
+            "update check started for {} (generation {generation}, automatic {automatic})",
+            cfg.id
+        );
         self.updates_loading = true;
         self.updates_error.clear();
         if cfg.loader != LoaderKind::Vanilla && self.edit_instance.is_none() {
@@ -231,6 +273,7 @@ impl AppState {
             target,
             automatic,
             abort,
+            started_at: Instant::now(),
         });
         self.egui_ctx.request_repaint();
     }
@@ -248,6 +291,14 @@ impl AppState {
                 .as_ref()
                 .is_some_and(|pending| pending.target == target)
         {
+            tracing::debug!(
+                "update check report ignored: generation {generation} vs {}, pending {}",
+                self.instance_updates.generation,
+                self.instance_updates
+                    .pending
+                    .as_ref()
+                    .map_or("<none>", |pending| pending.target.id.as_str())
+            );
             return;
         }
         let automatic = self.instance_updates.pending.take().unwrap().automatic;
@@ -255,6 +306,7 @@ impl AppState {
             self.loader_update_checking = None;
         }
         self.updates_loading = false;
+        tracing::info!("update check finished for {}", target.id);
         let Some(cfg) = self
             .instance_list
             .iter()
@@ -429,6 +481,7 @@ mod tests {
                 .runtime
                 .spawn(std::future::pending::<()>())
                 .abort_handle(),
+            started_at: Instant::now(),
         });
         (state.instance_updates.generation, target)
     }
@@ -578,5 +631,24 @@ mod tests {
         assert!(state.instance_updates.pending.is_none());
         state.finish_instance_update_check(generation, target, available());
         assert!(state.instance_updates.cache.is_empty());
+    }
+
+    #[test]
+    fn a_wedged_update_check_is_abandoned_and_retried_later() {
+        let (_dir, mut state, cfg) = fixture();
+        state.poll_instance_updates();
+        assert!(state.instance_updates.view.is_some());
+        let (_, target) = pending(&mut state, &cfg, true);
+        state.instance_updates.pending.as_mut().unwrap().started_at = Instant::now()
+            .checked_sub(UPDATE_CHECK_WATCHDOG + Duration::from_secs(60))
+            .unwrap();
+        state.updates_loading = true;
+        state.poll_instance_updates();
+        assert!(!state.updates_loading);
+        assert!(state.instance_updates.pending.is_none());
+        let cached = &state.instance_updates.cache[&cfg.id];
+        assert_eq!(cached.target, target);
+        assert_eq!(cached.report.retry_interval(), Duration::from_secs(300));
+        assert!(cached.report.content.is_err());
     }
 }

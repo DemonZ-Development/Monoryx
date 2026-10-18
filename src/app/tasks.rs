@@ -733,12 +733,15 @@ pub fn scan_instance_updates(
         LoaderKind::Vanilla => "vanilla",
     }
     .to_string();
+    let instance_id = cfg.id.clone();
     state
         .runtime
         .spawn(async move {
             let Ok(_permit) = slots.acquire_owned().await else {
+                tracing::debug!("update scan {instance_id}: metadata slots closed");
                 return;
             };
+            tracing::debug!("update scan {instance_id}: metadata slot acquired");
             let content = crate::modrinth::updates::check_updates(
                 &mr,
                 Some(&cf),
@@ -748,16 +751,35 @@ pub fn scan_instance_updates(
                 &loader_str,
             );
             let loader = compatible_loader_update(&http, &cfg);
-            let (content, loader) = tokio::join!(content, loader);
-            let report = crate::app::updates::InstanceUpdateReport {
-                content: content.map_err(|error| error.user_message()),
-                loader,
+            let joined =
+                tokio::time::timeout(crate::app::updates::UPDATE_CHECK_TASK_TIMEOUT, async move {
+                    tokio::join!(content, loader)
+                })
+                .await;
+            let report = match joined {
+                Ok((content, loader)) => crate::app::updates::InstanceUpdateReport {
+                    content: content.map_err(|error| error.user_message()),
+                    loader,
+                },
+                Err(_) => {
+                    tracing::warn!(
+                        "update scan {instance_id}: timed out after {}s",
+                        crate::app::updates::UPDATE_CHECK_TASK_TIMEOUT.as_secs()
+                    );
+                    crate::app::updates::InstanceUpdateReport {
+                        content: Err(crate::app::updates::UPDATE_CHECK_TIMEOUT_MESSAGE.into()),
+                        loader: Err(crate::app::updates::UPDATE_CHECK_TIMEOUT_MESSAGE.into()),
+                    }
+                }
             };
-            let _ = tx.send(AppEvent::InstanceUpdatesChecked(
-                generation,
-                target,
-                Box::new(report),
-            ));
+            let sent = tx
+                .send(AppEvent::InstanceUpdatesChecked(
+                    generation,
+                    target,
+                    Box::new(report),
+                ))
+                .is_ok();
+            tracing::debug!("update scan {instance_id}: completion event sent={sent}");
             ctx.request_repaint();
         })
         .abort_handle()
