@@ -59,6 +59,7 @@ impl Page {
     pub fn from_page_str(s: &str) -> Self {
         match s {
             "instances" => Self::Instances,
+            "skins" => Self::Skins,
             "worlds" => Self::Worlds,
             "discover" => Self::Discover,
             "library" => Self::Library,
@@ -75,8 +76,8 @@ impl Page {
         match self {
             Self::Onboarding => "onboarding",
             Self::Home => "home",
-            Self::Skins => "skins",
             Self::Instances => "instances",
+            Self::Skins => "skins",
             Self::Worlds => "worlds",
             Self::Discover => "discover",
             Self::Library => "library",

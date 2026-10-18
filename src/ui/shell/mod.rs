@@ -950,8 +950,8 @@ pub(super) fn page_icon(page: Page) -> &'static str {
     match page {
         Page::Onboarding => "✨",
         Page::Home => "🏠",
-        Page::Skins => "👤",
         Page::Instances => "📦",
+        Page::Skins => "👤",
         Page::Worlds => "📁",
         Page::Discover => "🧭",
         Page::Library => "🔖",
