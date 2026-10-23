@@ -434,7 +434,12 @@ pub(crate) async fn apply_cape(
 #[must_use]
 pub fn build_skinsrestorer_command(skin_url: &str, slim: bool) -> String {
     let variant = if slim { "slim" } else { "classic" };
-    format!("/skin url {skin_url} {variant}")
+    let trimmed = skin_url.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        format!("/skin url {trimmed} {variant}")
+    } else {
+        format!("/skin url \"{trimmed}\" {variant}")
+    }
 }
 
 pub async fn upload_offline_skin(
@@ -442,7 +447,7 @@ pub async fn upload_offline_skin(
     endpoint: &str,
     username: &str,
     mut png: Vec<u8>,
-    slim: bool,
+    mut slim: bool,
 ) -> Result<String, String> {
     if png.len() > MAX_TEXTURE_BYTES {
         return Err("Skin file is too large.".into());
@@ -466,6 +471,7 @@ pub async fn upload_offline_skin(
             .write_to(&mut buffer, image::ImageFormat::Png)
             .map_err(|e| e.to_string())?;
         png = buffer.into_inner();
+        slim = false;
     }
 
     let target_url = if endpoint.trim().is_empty() {
@@ -512,14 +518,14 @@ pub async fn upload_offline_skin(
 
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-        if let Some(url) = extract_url_from_json(&json) {
+        if let Some(url) = extract_url_from_json(&json, Some(target_url)) {
             return Ok(url);
         }
     }
 
     let text = String::from_utf8_lossy(&bytes).trim().to_string();
-    if text.starts_with("http://") || text.starts_with("https://") {
-        return Ok(text);
+    if let Some(resolved) = normalize_skin_url(&text, Some(target_url)) {
+        return Ok(resolved);
     }
 
     Err(format!(
@@ -527,32 +533,82 @@ pub async fn upload_offline_skin(
     ))
 }
 
-fn extract_url_from_json(json: &serde_json::Value) -> Option<String> {
-    for key in [
-        "url",
-        "skin_url",
-        "direct_url",
-        "file_url",
-        "download_url",
-        "imageUrl",
-        "image_url",
-    ] {
-        if let Some(val) = json.get(key).and_then(|v| v.as_str()) {
-            if val.starts_with("http://") || val.starts_with("https://") {
-                return Some(val.to_string());
+fn normalize_skin_url(val: &str, base_url: Option<&str>) -> Option<String> {
+    let trimmed = val.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
+    }
+    if let Some(base) = base_url {
+        if let Ok(base_parsed) = reqwest::Url::parse(base) {
+            if let Ok(joined) = base_parsed.join(trimmed) {
+                return Some(joined.to_string());
             }
         }
     }
-
-    for ptr in ["/data/url", "/data/skin_url", "/data/texture/url"] {
-        if let Some(val) = json.pointer(ptr).and_then(|v| v.as_str()) {
-            if val.starts_with("http://") || val.starts_with("https://") {
-                return Some(val.to_string());
-            }
-        }
-    }
-
     None
+}
+
+fn extract_url_from_json(json: &serde_json::Value, base_url: Option<&str>) -> Option<String> {
+    for ptr in [
+        "/url",
+        "/skin_url",
+        "/direct_url",
+        "/file_url",
+        "/download_url",
+        "/imageUrl",
+        "/image_url",
+        "/data/url",
+        "/data/skin_url",
+        "/data/texture/url",
+        "/skin/texture/url",
+        "/skin/url",
+        "/texture/url",
+        "/result/url",
+        "/response/url",
+        "/files/0/url",
+    ] {
+        if let Some(val) = json.pointer(ptr).and_then(|v| v.as_str()) {
+            if let Some(resolved) = normalize_skin_url(val, base_url) {
+                return Some(resolved);
+            }
+        }
+    }
+
+    find_url_in_value(json, base_url)
+}
+
+fn find_url_in_value(value: &serde_json::Value, base_url: Option<&str>) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, val) in map {
+                let lower = key.to_lowercase();
+                if lower.contains("url") || lower.contains("link") {
+                    if let Some(s) = val.as_str() {
+                        if let Some(resolved) = normalize_skin_url(s, base_url) {
+                            return Some(resolved);
+                        }
+                    }
+                }
+                if let Some(found) = find_url_in_value(val, base_url) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                if let Some(found) = find_url_in_value(item, base_url) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        serde_json::Value::String(s) => normalize_skin_url(s, base_url),
+        _ => None,
+    }
 }
 
 pub fn sync_instance_skins(
@@ -569,18 +625,36 @@ pub fn sync_instance_skins(
     let csl_dir = game_dir.join("CustomSkinLoader");
     let csl_local_skins = csl_dir.join("LocalSkin").join("skins");
     let csl_legacy_skins = csl_dir.join("skins");
+    let offlineskins_dir = game_dir.join("config").join("offlineskins");
     let generic_skins = game_dir.join("skins");
     let cached_skins = game_dir.join("cachedImages").join("skins");
+
+    let skin_dirs = [
+        &csl_local_skins,
+        &csl_legacy_skins,
+        &offlineskins_dir,
+        &generic_skins,
+        &cached_skins,
+    ];
+
+    let csl_local_capes = csl_dir.join("LocalSkin").join("capes");
+    let csl_legacy_capes = csl_dir.join("capes");
+    let cached_capes = game_dir.join("cachedImages").join("capes");
+    let offlineskins_capes = offlineskins_dir.join("capes");
+    let generic_capes = game_dir.join("capes");
+
+    let cape_dirs = [
+        &csl_local_capes,
+        &csl_legacy_capes,
+        &cached_capes,
+        &offlineskins_capes,
+        &generic_capes,
+    ];
 
     if source_skin.is_file() {
         let skin_bytes = std::fs::read(&source_skin).map_err(|e| e.to_string())?;
 
-        for dir in [
-            &csl_local_skins,
-            &csl_legacy_skins,
-            &generic_skins,
-            &cached_skins,
-        ] {
+        for dir in skin_dirs {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             let dest = dir.join(format!("{clean_user}.png"));
             let _ = std::fs::write(dest, &skin_bytes);
@@ -589,32 +663,37 @@ pub fn sync_instance_skins(
         let source_cape = skins_dir.join(format!("{clean_user}_cape.png"));
         if source_cape.is_file() {
             if let Ok(cape_bytes) = std::fs::read(&source_cape) {
-                let csl_capes = csl_dir.join("LocalSkin").join("capes");
-                if std::fs::create_dir_all(&csl_capes).is_ok() {
-                    let _ = std::fs::write(csl_capes.join(format!("{clean_user}.png")), cape_bytes);
+                for dir in cape_dirs {
+                    if std::fs::create_dir_all(dir).is_ok() {
+                        let _ = std::fs::write(dir.join(format!("{clean_user}.png")), &cape_bytes);
+                    }
+                }
+                if std::fs::create_dir_all(&offlineskins_dir).is_ok() {
+                    let _ = std::fs::write(
+                        offlineskins_dir.join(format!("{clean_user}_cape.png")),
+                        &cape_bytes,
+                    );
                 }
             }
         }
 
         ensure_custom_skin_loader_config(&csl_dir)?;
     } else {
-        for dir in [
-            &csl_local_skins,
-            &csl_legacy_skins,
-            &generic_skins,
-            &cached_skins,
-        ] {
+        for dir in skin_dirs {
             let target = dir.join(format!("{clean_user}.png"));
             if target.is_file() {
                 let _ = std::fs::remove_file(target);
             }
         }
-        let csl_cape = csl_dir
-            .join("LocalSkin")
-            .join("capes")
-            .join(format!("{clean_user}.png"));
-        if csl_cape.is_file() {
-            let _ = std::fs::remove_file(csl_cape);
+        for dir in cape_dirs {
+            let target = dir.join(format!("{clean_user}.png"));
+            if target.is_file() {
+                let _ = std::fs::remove_file(target);
+            }
+        }
+        let offlineskins_cape_file = offlineskins_dir.join(format!("{clean_user}_cape.png"));
+        if offlineskins_cape_file.is_file() {
+            let _ = std::fs::remove_file(offlineskins_cape_file);
         }
     }
 
@@ -684,11 +763,15 @@ mod tests {
     fn test_skinsrestorer_command_formatting() {
         assert_eq!(
             build_skinsrestorer_command("https://demonz.org/skins/Steve.png", false),
-            "/skin url https://demonz.org/skins/Steve.png classic"
+            "/skin url \"https://demonz.org/skins/Steve.png\" classic"
         );
         assert_eq!(
             build_skinsrestorer_command("https://demonz.org/skins/Alex.png", true),
-            "/skin url https://demonz.org/skins/Alex.png slim"
+            "/skin url \"https://demonz.org/skins/Alex.png\" slim"
+        );
+        assert_eq!(
+            build_skinsrestorer_command("\"https://demonz.org/skins/Quoted.png\"", false),
+            "/skin url \"https://demonz.org/skins/Quoted.png\" classic"
         );
     }
 
@@ -696,13 +779,13 @@ mod tests {
     fn test_extract_url_from_various_json_structures() {
         let v1 = serde_json::json!({ "url": "https://demonz.org/api/skins/download/123.png" });
         assert_eq!(
-            extract_url_from_json(&v1).as_deref(),
+            extract_url_from_json(&v1, None).as_deref(),
             Some("https://demonz.org/api/skins/download/123.png")
         );
 
         let v2 = serde_json::json!({ "direct_url": "https://cdn.demonz.org/skin.png" });
         assert_eq!(
-            extract_url_from_json(&v2).as_deref(),
+            extract_url_from_json(&v2, None).as_deref(),
             Some("https://cdn.demonz.org/skin.png")
         );
 
@@ -714,12 +797,37 @@ mod tests {
             }
         });
         assert_eq!(
-            extract_url_from_json(&v3).as_deref(),
+            extract_url_from_json(&v3, None).as_deref(),
             Some("https://textures.minecraft.net/texture/abc")
         );
 
+        let v4 = serde_json::json!({
+            "skin": {
+                "texture": {
+                    "url": "https://textures.minecraft.net/texture/mskin"
+                }
+            }
+        });
+        assert_eq!(
+            extract_url_from_json(&v4, None).as_deref(),
+            Some("https://textures.minecraft.net/texture/mskin")
+        );
+
+        let v5 = serde_json::json!({ "url": "/api/skins/download/999.png" });
+        assert_eq!(
+            extract_url_from_json(&v5, Some("https://demonz.org/api/skins/upload")).as_deref(),
+            Some("https://demonz.org/api/skins/download/999.png")
+        );
+
         let invalid = serde_json::json!({ "status": "ok" });
-        assert_eq!(extract_url_from_json(&invalid), None);
+        assert_eq!(extract_url_from_json(&invalid, None), None);
+    }
+
+    #[test]
+    fn test_upgrade_legacy_skin_converts_to_64x64() {
+        let legacy = image::RgbaImage::new(64, 32);
+        let upgraded = upgrade_legacy_skin(&legacy);
+        assert_eq!(upgraded.dimensions(), (64, 64));
     }
 
     #[test]
@@ -730,7 +838,9 @@ mod tests {
         std::fs::create_dir_all(&skins_dir).unwrap();
 
         let dummy_skin = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        let dummy_cape = vec![137, 80, 78, 71, 13, 10, 26, 11];
         std::fs::write(skins_dir.join("TestPlayer.png"), &dummy_skin).unwrap();
+        std::fs::write(skins_dir.join("TestPlayer_cape.png"), &dummy_cape).unwrap();
 
         let sync_result = sync_instance_skins(&skins_dir, &game_dir, "TestPlayer");
         assert!(sync_result.is_ok());
@@ -742,6 +852,29 @@ mod tests {
             .join("TestPlayer.png");
         assert!(csl_skin.is_file());
         assert_eq!(std::fs::read(csl_skin).unwrap(), dummy_skin);
+
+        let offlineskins_skin = game_dir
+            .join("config")
+            .join("offlineskins")
+            .join("TestPlayer.png");
+        assert!(offlineskins_skin.is_file());
+        assert_eq!(std::fs::read(offlineskins_skin).unwrap(), dummy_skin);
+
+        let csl_cape = game_dir
+            .join("CustomSkinLoader")
+            .join("LocalSkin")
+            .join("capes")
+            .join("TestPlayer.png");
+        assert!(csl_cape.is_file());
+        assert_eq!(std::fs::read(csl_cape).unwrap(), dummy_cape);
+
+        let offlineskins_cape = game_dir
+            .join("config")
+            .join("offlineskins")
+            .join("capes")
+            .join("TestPlayer.png");
+        assert!(offlineskins_cape.is_file());
+        assert_eq!(std::fs::read(offlineskins_cape).unwrap(), dummy_cape);
 
         let generic_skin = game_dir.join("skins").join("TestPlayer.png");
         assert!(generic_skin.is_file());
@@ -759,12 +892,18 @@ mod tests {
         assert!(remove_result.is_ok());
 
         std::fs::remove_file(skins_dir.join("TestPlayer.png")).unwrap();
+        std::fs::remove_file(skins_dir.join("TestPlayer_cape.png")).unwrap();
         let clean_result = sync_instance_skins(&skins_dir, &game_dir, "TestPlayer");
         assert!(clean_result.is_ok());
         assert!(!game_dir
             .join("CustomSkinLoader")
             .join("LocalSkin")
             .join("skins")
+            .join("TestPlayer.png")
+            .exists());
+        assert!(!game_dir
+            .join("config")
+            .join("offlineskins")
             .join("TestPlayer.png")
             .exists());
         assert!(!game_dir.join("skins").join("TestPlayer.png").exists());
