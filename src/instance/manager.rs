@@ -212,6 +212,24 @@ impl InstanceManager {
         Ok(game)
     }
 
+    pub fn sync_offline_skin(&self, skins_dir: &Path, username: &str, id: &str) -> Result<()> {
+        let game = self.game_dir(id);
+        crate::ui::skins::sync_instance_skins(skins_dir, &game, username)
+            .map_err(MonoryxError::Instance)
+    }
+
+    pub fn sync_offline_skin_all(&self, skins_dir: &Path, username: &str) -> Result<usize> {
+        let instances = self.list()?;
+        let mut count = 0;
+        for instance in &instances {
+            let game = self.game_dir(&instance.id);
+            if crate::ui::skins::sync_instance_skins(skins_dir, &game, username).is_ok() {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     #[must_use]
     pub fn mod_count(&self, id: &str) -> usize {
         let mods = self.mods_dir(id);
@@ -591,5 +609,41 @@ mod tests {
                 "Placeholder 10"
             ]
         );
+    }
+
+    #[test]
+    fn sync_offline_skins_across_instances() {
+        let (d, m) = manager();
+        let inst1 = m
+            .create("Inst1".into(), "1.21".into(), LoaderKind::Fabric, String::new())
+            .unwrap();
+        let inst2 = m
+            .create("Inst2".into(), "1.20".into(), LoaderKind::Forge, String::new())
+            .unwrap();
+
+        let skins_dir = d.path().join("skins");
+        std::fs::create_dir_all(&skins_dir).unwrap();
+        std::fs::write(skins_dir.join("AlexPlayer.png"), b"alex_data").unwrap();
+
+        let count = m.sync_offline_skin_all(&skins_dir, "AlexPlayer").unwrap();
+        assert_eq!(count, 2);
+
+        let csl1 = m
+            .game_dir(&inst1.id)
+            .join("CustomSkinLoader")
+            .join("LocalSkin")
+            .join("skins")
+            .join("AlexPlayer.png");
+        assert!(csl1.is_file());
+        assert_eq!(std::fs::read(csl1).unwrap(), b"alex_data");
+
+        let csl2 = m
+            .game_dir(&inst2.id)
+            .join("CustomSkinLoader")
+            .join("LocalSkin")
+            .join("skins")
+            .join("AlexPlayer.png");
+        assert!(csl2.is_file());
+        assert_eq!(std::fs::read(csl2).unwrap(), b"alex_data");
     }
 }
