@@ -353,11 +353,19 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
             ui.add_space(10.0);
 
-            let (import_clicked, upload_clicked, sync_mods_clicked, reset_clicked, steve_clicked, alex_clicked) = ui
+            let (
+                import_clicked,
+                upload_clicked,
+                sync_mods_clicked,
+                reset_clicked,
+                steve_clicked,
+                alex_clicked,
+            ) = ui
                 .horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
                     let import = content_primary_button(ui, "Import Custom Skin (.png)").clicked();
-                    let upload = content_secondary_button(ui, "Upload to DemonZ Skin Server").clicked();
+                    let upload =
+                        content_secondary_button(ui, "Upload to DemonZ Skin Server").clicked();
                     let sync = compact_secondary_button(ui, "Sync to Mod Loaders").clicked();
                     let reset = page.has_custom_skin
                         && content_secondary_button(ui, "Reset to Default Skin").clicked();
@@ -413,12 +421,19 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         let username = page.active_username.clone();
                         let slim = page.viewer.slim;
 
-                        page.spawn(state, ctx, "Uploading skin to DemonZ skin server...", async move {
-                            match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
-                                Ok(url) => Message::UploadedSkinUrl(url),
-                                Err(err) => Message::Error(err),
-                            }
-                        });
+                        page.spawn(
+                            state,
+                            ctx,
+                            "Uploading skin to DemonZ skin server...",
+                            async move {
+                                match upload_offline_skin(&http, &endpoint, &username, bytes, slim)
+                                    .await
+                                {
+                                    Ok(url) => Message::UploadedSkinUrl(url),
+                                    Err(err) => Message::Error(err),
+                                }
+                            },
+                        );
                     }
                     Err(err) => {
                         page.status = format!("Could not prepare skin for upload: {err}");
@@ -431,7 +446,8 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 let username = page.active_username.clone();
                 match state.instances.sync_offline_skin_all(&skins_dir, &username) {
                     Ok(count) => {
-                        page.status = format!("Synchronized skin to {count} instance(s) for mod loaders.");
+                        page.status =
+                            format!("Synchronized skin to {count} instance(s) for mod loaders.");
                         state.notify(format!("Synced skin to {count} instance(s)"));
                     }
                     Err(err) => {
@@ -443,7 +459,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             if reset_clicked {
                 let skins_dir = state.paths.root().join("skins");
                 remove_offline_skin(&skins_dir, &page.active_username);
-                let _ = state.instances.sync_offline_skin_all(&skins_dir, &page.active_username);
+                let _ = state
+                    .instances
+                    .sync_offline_skin_all(&skins_dir, &page.active_username);
                 page.has_custom_skin = false;
                 page.load(state, ctx);
             }
@@ -878,7 +896,8 @@ impl SkinsPage {
                 }
                 Message::UploadedSkinUrl(url) => {
                     self.uploaded_skin_url = Some(url);
-                    self.status = "Skin uploaded to DemonZ skin server. /skin command ready!".into();
+                    self.status =
+                        "Skin uploaded to DemonZ skin server. /skin command ready!".into();
                 }
                 Message::Applied(message) => {
                     self.status = message;

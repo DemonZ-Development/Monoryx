@@ -505,7 +505,9 @@ pub async fn upload_offline_skin(
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Upload to skin server failed (HTTP {status}): {body}"));
+        return Err(format!(
+            "Upload to skin server failed (HTTP {status}): {body}"
+        ));
     }
 
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
@@ -573,7 +575,12 @@ pub fn sync_instance_skins(
     if source_skin.is_file() {
         let skin_bytes = std::fs::read(&source_skin).map_err(|e| e.to_string())?;
 
-        for dir in [&csl_local_skins, &csl_legacy_skins, &generic_skins, &cached_skins] {
+        for dir in [
+            &csl_local_skins,
+            &csl_legacy_skins,
+            &generic_skins,
+            &cached_skins,
+        ] {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             let dest = dir.join(format!("{clean_user}.png"));
             let _ = std::fs::write(dest, &skin_bytes);
@@ -591,7 +598,12 @@ pub fn sync_instance_skins(
 
         ensure_custom_skin_loader_config(&csl_dir)?;
     } else {
-        for dir in [&csl_local_skins, &csl_legacy_skins, &generic_skins, &cached_skins] {
+        for dir in [
+            &csl_local_skins,
+            &csl_legacy_skins,
+            &generic_skins,
+            &cached_skins,
+        ] {
             let target = dir.join(format!("{clean_user}.png"));
             if target.is_file() {
                 let _ = std::fs::remove_file(target);
@@ -640,9 +652,9 @@ fn ensure_custom_skin_loader_config(csl_dir: &std::path::Path) -> Result<(), Str
     let existing_text = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
     if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&existing_text) {
         if let Some(list) = parsed.get_mut("loadlist").and_then(|v| v.as_array_mut()) {
-            let has_local_skin = list.iter().any(|entry| {
-                entry.get("name").and_then(|n| n.as_str()) == Some("LocalSkin")
-            });
+            let has_local_skin = list
+                .iter()
+                .any(|entry| entry.get("name").and_then(|n| n.as_str()) == Some("LocalSkin"));
             if !has_local_skin {
                 let local_entry = serde_json::json!({
                     "name": "LocalSkin",
@@ -787,8 +799,7 @@ mod tests {
         let res = sync_instance_skins(&skins_dir, &game_dir, "Modder");
         assert!(res.is_ok());
 
-        let updated_text =
-            std::fs::read_to_string(csl_dir.join("CustomSkinLoader.json")).unwrap();
+        let updated_text = std::fs::read_to_string(csl_dir.join("CustomSkinLoader.json")).unwrap();
         let updated: serde_json::Value = serde_json::from_str(&updated_text).unwrap();
         let loadlist = updated.get("loadlist").unwrap().as_array().unwrap();
         assert_eq!(loadlist.len(), 2);
@@ -802,7 +813,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            updated_repeat.get("loadlist").unwrap().as_array().unwrap().len(),
+            updated_repeat
+                .get("loadlist")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
             2
         );
     }

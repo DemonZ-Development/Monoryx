@@ -615,10 +615,20 @@ mod tests {
     fn sync_offline_skins_across_instances() {
         let (d, m) = manager();
         let inst1 = m
-            .create("Inst1".into(), "1.21".into(), LoaderKind::Fabric, String::new())
+            .create(
+                "Inst1".into(),
+                "1.21".into(),
+                LoaderKind::Fabric,
+                String::new(),
+            )
             .unwrap();
         let inst2 = m
-            .create("Inst2".into(), "1.20".into(), LoaderKind::Forge, String::new())
+            .create(
+                "Inst2".into(),
+                "1.20".into(),
+                LoaderKind::Forge,
+                String::new(),
+            )
             .unwrap();
 
         let skins_dir = d.path().join("skins");
