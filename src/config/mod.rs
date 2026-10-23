@@ -414,6 +414,12 @@ pub struct LauncherConfig {
     pub auto_check_instance_updates: bool,
     #[serde(default = "default_true")]
     pub skins_restorer_compat: bool,
+    #[serde(default = "default_true")]
+    pub offline_skin_mod_compat: bool,
+    #[serde(default)]
+    pub skin_server_url: String,
+    #[serde(default)]
+    pub last_uploaded_skin_url: Option<String>,
     #[serde(default)]
     pub curseforge: CurseForgeSettings,
     #[serde(default)]
@@ -476,6 +482,9 @@ impl Default for LauncherConfig {
             auto_check_updates: true,
             auto_check_instance_updates: true,
             skins_restorer_compat: true,
+            offline_skin_mod_compat: true,
+            skin_server_url: String::new(),
+            last_uploaded_skin_url: None,
             curseforge: CurseForgeSettings {
                 api_key: String::new(),
                 custom_endpoint: String::new(),
@@ -507,6 +516,16 @@ impl LauncherConfig {
         self.profile
             .as_ref()
             .map(crate::account::AccountRef::Offline)
+    }
+
+    #[must_use]
+    pub fn effective_skin_server_url(&self) -> &str {
+        let trimmed = self.skin_server_url.trim();
+        if trimmed.is_empty() {
+            crate::utils::links::DEFAULT_SKIN_SERVER_URL
+        } else {
+            trimmed
+        }
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -921,11 +940,25 @@ mod tests {
         assert!(!def.boost_mode);
         assert!(def.auto_check_updates);
         assert!(def.skins_restorer_compat);
+        assert!(def.offline_skin_mod_compat);
+        assert_eq!(def.skin_server_url, "");
+        assert_eq!(def.last_uploaded_skin_url, None);
+        assert_eq!(
+            def.effective_skin_server_url(),
+            crate::utils::links::DEFAULT_SKIN_SERVER_URL
+        );
 
         let parsed: LauncherConfig = toml::from_str("").unwrap();
         assert!(!parsed.boost_mode);
         assert!(parsed.auto_check_updates);
         assert!(parsed.skins_restorer_compat);
+        assert!(parsed.offline_skin_mod_compat);
+        assert_eq!(parsed.skin_server_url, "");
+        assert_eq!(parsed.last_uploaded_skin_url, None);
+        assert_eq!(
+            parsed.effective_skin_server_url(),
+            crate::utils::links::DEFAULT_SKIN_SERVER_URL
+        );
     }
 
     #[test]
