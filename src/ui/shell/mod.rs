@@ -951,7 +951,7 @@ pub(super) fn page_icon(page: Page) -> &'static str {
         Page::Onboarding => "✨",
         Page::Home => "🏠",
         Page::Instances => "📦",
-        Page::Skins => "👤",
+        Page::Skins => "🎨",
         Page::Worlds => "📁",
         Page::Discover => "🧭",
         Page::Library => "🔖",
@@ -968,7 +968,7 @@ pub(super) fn page_tooltip(page: Page) -> &'static str {
     match page {
         Page::Home => "Home · Your selected instance, quick actions, and recent activity",
         Page::Instances => "Instances · Create, configure, and manage Minecraft installations",
-        Page::Skins => "Skin · Preview Minecraft skins and manage your appearance.",
+        Page::Skins => "Skins · Preview Minecraft skins and manage your appearance.",
         Page::Worlds => "Worlds & Files · Browse world saves, resource packs, and instance files",
         Page::Discover => "Discover · Search and install mods, modpacks, and shaders",
         Page::Library => "Library · Installed mods and content across your instances",

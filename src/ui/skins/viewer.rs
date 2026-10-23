@@ -1,9 +1,9 @@
 use egui::{
     epaint::{Mesh, Vertex},
-    Color32, Painter, Pos2, Rect, Response, Shape, TextureHandle, Ui,
+    Color32, Pos2, Rect, Response, Shape, TextureHandle, Ui,
 };
 
-const GRID: usize = 4;
+const GRID: usize = 2;
 const CAMERA_DISTANCE: f32 = 45.0;
 const PERSPECTIVE: f32 = 0.2;
 const CENTER_Z: f32 = 2.0;
@@ -214,6 +214,8 @@ impl SkinViewer {
         faces.sort_by(|a, b| a.depth.total_cmp(&b.depth));
 
         let painter = ui.painter_at(rect);
+        let mut current_id: Option<egui::TextureId> = None;
+        let mut current_mesh = Mesh::default();
 
         for face in &faces {
             let texture = if face.cape {
@@ -222,7 +224,24 @@ impl SkinViewer {
                 skin
             };
 
-            Self::draw_face(&painter, rect, scale, texture, face);
+            let tex_id = texture.id();
+            if let Some(id) = current_id {
+                if id != tex_id {
+                    let prev_mesh =
+                        std::mem::replace(&mut current_mesh, Mesh::with_texture(tex_id));
+                    painter.add(Shape::mesh(prev_mesh));
+                    current_id = Some(tex_id);
+                }
+            } else {
+                current_mesh = Mesh::with_texture(tex_id);
+                current_id = Some(tex_id);
+            }
+
+            Self::append_face(&mut current_mesh, rect, scale, texture, face);
+        }
+
+        if current_id.is_some() && !current_mesh.is_empty() {
+            painter.add(Shape::mesh(current_mesh));
         }
     }
 
@@ -294,7 +313,7 @@ impl SkinViewer {
         )
     }
 
-    fn draw_face(painter: &Painter, rect: Rect, scale: f32, texture: &TextureHandle, face: &Face) {
+    fn append_face(mesh: &mut Mesh, rect: Rect, scale: f32, texture: &TextureHandle, face: &Face) {
         let [width, height] = texture.size();
         let unit = (width / 64).max(1) as f32;
         let steps = GRID as f32;
@@ -304,7 +323,7 @@ impl SkinViewer {
             std::array::from_fn(|axis| lerp(a[axis], b[axis], t))
         };
 
-        let mut mesh = Mesh::with_texture(texture.id());
+        let start_index = mesh.vertices.len() as u32;
 
         for row in 0..=GRID {
             let t = row as f32 / steps;
@@ -331,7 +350,7 @@ impl SkinViewer {
 
         for row in 0..GRID as u32 {
             for column in 0..GRID as u32 {
-                let a = row * stride + column;
+                let a = start_index + row * stride + column;
                 let b = a + 1;
                 let d = a + stride;
                 let c = d + 1;
@@ -340,7 +359,5 @@ impl SkinViewer {
                 mesh.add_triangle(a, c, d);
             }
         }
-
-        painter.add(Shape::mesh(mesh));
     }
 }

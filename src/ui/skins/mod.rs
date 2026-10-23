@@ -5,8 +5,8 @@ use serde::Deserialize;
 pub mod viewer;
 
 const TEXTURE_HOST: &str = "textures.minecraft.net";
-const MAX_TEXTURE_BYTES: usize = 2 * 1024 * 1024;
-const MAX_TEXTURE_SIZE: u32 = 1024;
+const MAX_TEXTURE_BYTES: usize = 256 * 1024;
+const MAX_TEXTURE_SIZE: u32 = 256;
 
 #[derive(Clone, Deserialize)]
 pub struct Cape {
@@ -195,38 +195,7 @@ pub(crate) async fn download_image(
     }
 
     if skin && (width, height) == (64, 32) {
-        const MIRRORS: [[u32; 6]; 12] = [
-            [4, 16, 4, 4, 20, 48],
-            [8, 16, 4, 4, 24, 48],
-            [0, 20, 4, 12, 24, 52],
-            [4, 20, 4, 12, 20, 52],
-            [8, 20, 4, 12, 16, 52],
-            [12, 20, 4, 12, 28, 52],
-            [44, 16, 4, 4, 36, 48],
-            [48, 16, 4, 4, 40, 48],
-            [40, 20, 4, 12, 40, 52],
-            [44, 20, 4, 12, 36, 52],
-            [48, 20, 4, 12, 32, 52],
-            [52, 20, 4, 12, 44, 52],
-        ];
-
-        let mut upgraded = image::RgbaImage::new(64, 64);
-        image::imageops::replace(&mut upgraded, &image, 0, 0);
-
-        for (x, y, pixel) in upgraded.enumerate_pixels_mut() {
-            if y < 32 && (y >= 16 || x < 32) {
-                pixel.0[3] = 255;
-            }
-        }
-
-        for [sx, sy, w, h, dx, dy] in MIRRORS {
-            let patch = image::imageops::crop_imm(&upgraded, sx, sy, w, h).to_image();
-            let mirrored = image::imageops::flip_horizontal(&patch);
-
-            image::imageops::replace(&mut upgraded, &mirrored, i64::from(dx), i64::from(dy));
-        }
-
-        image = upgraded;
+        image = upgrade_legacy_skin(&image);
     }
 
     Ok(ColorImage::from_rgba_unmultiplied(
@@ -235,10 +204,45 @@ pub(crate) async fn download_image(
     ))
 }
 
+pub(crate) fn upgrade_legacy_skin(image: &image::RgbaImage) -> image::RgbaImage {
+    const MIRRORS: [[u32; 6]; 12] = [
+        [4, 16, 4, 4, 20, 48],
+        [8, 16, 4, 4, 24, 48],
+        [0, 20, 4, 12, 24, 52],
+        [4, 20, 4, 12, 20, 52],
+        [8, 20, 4, 12, 16, 52],
+        [12, 20, 4, 12, 28, 52],
+        [44, 16, 4, 4, 36, 48],
+        [48, 16, 4, 4, 40, 48],
+        [40, 20, 4, 12, 40, 52],
+        [44, 20, 4, 12, 36, 52],
+        [48, 20, 4, 12, 32, 52],
+        [52, 20, 4, 12, 44, 52],
+    ];
+
+    let mut upgraded = image::RgbaImage::new(64, 64);
+    image::imageops::replace(&mut upgraded, image, 0, 0);
+
+    for (x, y, pixel) in upgraded.enumerate_pixels_mut() {
+        if y < 32 && (y >= 16 || x < 32) {
+            pixel.0[3] = 255;
+        }
+    }
+
+    for [sx, sy, w, h, dx, dy] in MIRRORS {
+        let patch = image::imageops::crop_imm(&upgraded, sx, sy, w, h).to_image();
+        let mirrored = image::imageops::flip_horizontal(&patch);
+
+        image::imageops::replace(&mut upgraded, &mirrored, i64::from(dx), i64::from(dy));
+    }
+
+    upgraded
+}
+
 pub(crate) async fn upload_skin(
     http: &reqwest::Client,
     token: &str,
-    png: Vec<u8>,
+    mut png: Vec<u8>,
     slim: bool,
 ) -> Result<(), String> {
     if png.len() > MAX_TEXTURE_BYTES {
@@ -253,6 +257,16 @@ pub(crate) async fn upload_skin(
 
     if decoded.width() != 64 || !matches!(decoded.height(), 32 | 64) {
         return Err("Skin must be a 64x64 or 64x32 PNG.".into());
+    }
+
+    if decoded.height() == 32 {
+        let rgba = decoded.to_rgba8();
+        let upgraded = upgrade_legacy_skin(&rgba);
+        let mut buffer = std::io::Cursor::new(Vec::with_capacity(4096));
+        upgraded
+            .write_to(&mut buffer, image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        png = buffer.into_inner();
     }
 
     let part = reqwest::multipart::Part::bytes(png)
@@ -272,6 +286,65 @@ pub(crate) async fn upload_skin(
     send(request).await?;
 
     Ok(())
+}
+
+pub(crate) fn load_local_skin_file(path: &std::path::Path) -> Result<ColorImage, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_TEXTURE_BYTES {
+        return Err("Skin file exceeds size limit.".into());
+    }
+    let mut image = image::load_from_memory(&bytes)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    if width != 64 || !matches!(height, 32 | 64) {
+        return Err("Skin must be a 64x64 or 64x32 PNG.".into());
+    }
+    if height == 32 {
+        image = upgrade_legacy_skin(&image);
+    }
+    Ok(ColorImage::from_rgba_unmultiplied(
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
+    ))
+}
+
+pub(crate) fn save_offline_skin(
+    skins_dir: &std::path::Path,
+    username: &str,
+    source_path: &std::path::Path,
+) -> Result<ColorImage, String> {
+    let bytes = std::fs::read(source_path).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_TEXTURE_BYTES {
+        return Err("Skin file is too large.".into());
+    }
+    let decoded = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+    if decoded.width() != 64 || !matches!(decoded.height(), 32 | 64) {
+        return Err("Skin must be a 64x64 or 64x32 PNG.".into());
+    }
+    let mut image = decoded.to_rgba8();
+    if decoded.height() == 32 {
+        image = upgrade_legacy_skin(&image);
+    }
+    std::fs::create_dir_all(skins_dir).map_err(|e| e.to_string())?;
+    let dest = skins_dir.join(format!("{username}.png"));
+    image.save(&dest).map_err(|e| e.to_string())?;
+
+    Ok(ColorImage::from_rgba_unmultiplied(
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
+    ))
+}
+
+pub(crate) fn remove_offline_skin(skins_dir: &std::path::Path, username: &str) {
+    let path = skins_dir.join(format!("{username}.png"));
+    if path.is_file() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+pub(crate) fn has_offline_skin(skins_dir: &std::path::Path, username: &str) -> bool {
+    skins_dir.join(format!("{username}.png")).is_file()
 }
 
 pub(crate) async fn load_capes(http: &reqwest::Client, token: &str) -> Result<Vec<Cape>, String> {

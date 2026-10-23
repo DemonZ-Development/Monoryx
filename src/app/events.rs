@@ -27,7 +27,7 @@ impl Page {
             Self::Onboarding => "Welcome",
             Self::Home => "Home",
             Self::Instances => "Instances",
-            Self::Skins => "Skin",
+            Self::Skins => "Skins",
             Self::Worlds => "Worlds & Files",
             Self::Discover => "Discover",
             Self::Library => "Library",
