@@ -54,7 +54,9 @@ impl Face {
 
 impl SkinViewer {
     pub fn reset(&mut self) {
-        *self = Self::default();
+        self.yaw = -0.45;
+        self.pitch = 0.15;
+        self.zoom = 1.0;
     }
 
     pub fn render(
@@ -359,5 +361,33 @@ impl SkinViewer {
                 mesh.add_triangle(a, c, d);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_recenters_camera_and_keeps_appearance_options() {
+        let mut viewer = SkinViewer {
+            yaw: 1.2,
+            pitch: -0.8,
+            zoom: 2.4,
+            slim: true,
+            overlay: false,
+            show_cape: false,
+            elytra: true,
+        };
+
+        viewer.reset();
+
+        assert!((viewer.yaw + 0.45).abs() < f32::EPSILON);
+        assert!((viewer.pitch - 0.15).abs() < f32::EPSILON);
+        assert!((viewer.zoom - 1.0).abs() < f32::EPSILON);
+        assert!(viewer.slim);
+        assert!(!viewer.overlay);
+        assert!(!viewer.show_cape);
+        assert!(viewer.elytra);
     }
 }
