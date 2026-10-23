@@ -405,6 +405,10 @@ async fn play_inner(
     }
     let java_exe = crate::java::discovery::prefer_javaw(&rt.path);
     let game_dir = instances.game_dir(instance_id);
+    if config.offline_skin_mod_compat {
+        let skins_dir = paths.root().join("skins");
+        let _ = crate::ui::skins::sync_instance_skins(&skins_dir, &game_dir, account.username());
+    }
     let ts = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S");
     let log_file = instances
         .instance_dir(instance_id)
