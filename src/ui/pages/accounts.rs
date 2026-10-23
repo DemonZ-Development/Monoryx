@@ -258,9 +258,22 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                             "Skin compatibility preference saved".to_string(),
                         );
                     }
+                    ui.add_space(4.0);
+                    if ui
+                        .checkbox(
+                            &mut state.config.offline_skin_mod_compat,
+                            "Auto-sync offline custom skins to mod loaders (CustomSkinLoader / Fabric / Forge)",
+                        )
+                        .changed()
+                    {
+                        save_account_config(
+                            state,
+                            "Mod loader skin sync preference saved".to_string(),
+                        );
+                    }
                     ui.label(
                         RichText::new(
-                            "Tip: On servers running SkinsRestorer, type '/skin <skin_name>' in game chat to change your skin anytime.",
+                            "Tip: Type '/skin <name>' or upload skins to DemonZ on the Skins page for instant '/skin url' commands.",
                         )
                         .size(11.0)
                         .color(MUTED),
