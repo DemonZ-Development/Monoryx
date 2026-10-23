@@ -1273,7 +1273,7 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
         );
         ui.label(
             RichText::new(
-                "Configure offline skin server endpoints (DemonZ / custom) and automatic mod loader skin synchronization.",
+                "Configure offline skin server endpoints and automatic mod loader skin synchronization.",
             )
             .size(12.0)
             .color(TEXT2),
@@ -1326,7 +1326,7 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
         }
         ui.add(
             egui::Label::new(
-                RichText::new("Used on the Skins page to host your local PNG skin and generate multiplayer SkinsRestorer '/skin url' commands. Leave blank for default DemonZ infrastructure.")
+                RichText::new("Used on the Skins page to host your local PNG skin and generate multiplayer SkinsRestorer '/skin url' commands. Leave blank for default skin server.")
                     .size(11.0)
                     .color(MUTED),
             )
