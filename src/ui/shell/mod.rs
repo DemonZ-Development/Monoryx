@@ -186,7 +186,13 @@ pub fn app_update(state: &mut AppState, ctx: &egui::Context, _frame: &mut eframe
                 match state.page {
                     Page::Home => crate::ui::pages::home::show(state, ctx, ui),
                     Page::Instances => crate::ui::pages::instances::show(state, ctx, ui),
-                    Page::Skins => crate::ui::pages::skins::show(state, ctx, ui),
+                    Page::Skins => {
+                        if state.config.is_offline_active() {
+                            crate::ui::pages::skins::show(state, ctx, ui);
+                        } else {
+                            state.set_page(Page::Home);
+                        }
+                    }
                     Page::Worlds => crate::ui::pages::worlds::show(state, ctx, ui),
                     Page::Discover => crate::ui::pages::discover::show(state, ctx, ui),
                     Page::Library => crate::ui::pages::library::show(state, ctx, ui),
