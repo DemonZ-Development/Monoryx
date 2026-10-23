@@ -9,4 +9,5 @@ pub mod nexeu;
 pub mod onboarding;
 pub mod screenshots;
 pub mod settings;
+pub mod skins;
 pub mod worlds;

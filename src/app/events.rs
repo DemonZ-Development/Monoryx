@@ -9,6 +9,7 @@ pub enum Page {
     #[default]
     Home,
     Instances,
+    Skins,
     Worlds,
     Discover,
     Library,
@@ -26,6 +27,7 @@ impl Page {
             Self::Onboarding => "Welcome",
             Self::Home => "Home",
             Self::Instances => "Instances",
+            Self::Skins => "Skin",
             Self::Worlds => "Worlds & Files",
             Self::Discover => "Discover",
             Self::Library => "Library",
@@ -37,10 +39,11 @@ impl Page {
             Self::Logs => "Logs",
         }
     }
-    pub const fn all() -> [Self; 11] {
+    pub const fn all() -> [Self; 12] {
         [
             Self::Home,
             Self::Instances,
+            Self::Skins,
             Self::Worlds,
             Self::Discover,
             Self::Library,
@@ -56,6 +59,7 @@ impl Page {
     pub fn from_page_str(s: &str) -> Self {
         match s {
             "instances" => Self::Instances,
+            "skins" => Self::Skins,
             "worlds" => Self::Worlds,
             "discover" => Self::Discover,
             "library" => Self::Library,
@@ -73,6 +77,7 @@ impl Page {
             Self::Onboarding => "onboarding",
             Self::Home => "home",
             Self::Instances => "instances",
+            Self::Skins => "skins",
             Self::Worlds => "worlds",
             Self::Discover => "discover",
             Self::Library => "library",
