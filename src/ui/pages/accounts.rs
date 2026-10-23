@@ -1,4 +1,5 @@
 use crate::account::offline::OfflineProfile;
+use crate::app::events::Page;
 use crate::app::state::AppState;
 use crate::ui::components::{badge_accent, badge_ok, card_frame, field_label, page_header};
 use crate::ui::theme::{DANGER, MUTED, TEXT, TEXT2, WARNING};
@@ -195,6 +196,11 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     state.save_config();
                     state.notify("Switched active profile to Offline.");
                 }
+                if state.config.profile.is_some() && ui.button("Open Skin Manager").clicked() {
+                    state.config.use_microsoft_auth = false;
+                    state.save_config();
+                    state.set_page(Page::Skins);
+                }
             });
         });
         ctx.data_mut(|data| data.insert_temp(draft_id, draft));
@@ -273,7 +279,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     }
                     ui.label(
                         RichText::new(
-                            "Tip: Type '/skin <name>' or upload skins to DemonZ on the Skins page for instant '/skin url' commands.",
+                            "Tip: Type '/skin <name>' or upload skins on the Skins page for instant '/skin url' commands.",
                         )
                         .size(11.0)
                         .color(MUTED),
