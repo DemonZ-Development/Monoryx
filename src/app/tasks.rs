@@ -405,9 +405,19 @@ async fn play_inner(
     }
     let java_exe = crate::java::discovery::prefer_javaw(&rt.path);
     let game_dir = instances.game_dir(instance_id);
-    if config.offline_skin_mod_compat && account.is_offline() {
-        let skins_dir = paths.root().join("skins");
-        let _ = crate::ui::skins::sync_instance_skins(&skins_dir, &game_dir, account.username());
+    if config.offline_skin_mod_compat {
+        let username = account.username();
+        if account.is_offline() {
+            let skins_dir = paths.root().join("skins");
+            let path = skins_dir.join(format!("{username}.png"));
+            if !path.is_file() {
+                let (_, is_alex) = crate::ui::skins::default_skin_for_player(username);
+                let _ = crate::ui::skins::save_offline_preset(&skins_dir, username, is_alex);
+            }
+            let _ = crate::ui::skins::sync_instance_skins(&skins_dir, &game_dir, username);
+        } else {
+            let _ = crate::ui::skins::clean_instance_skins(&game_dir, username);
+        }
     }
     let ts = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S");
     let log_file = instances
