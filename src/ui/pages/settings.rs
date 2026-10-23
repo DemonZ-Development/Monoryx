@@ -1262,6 +1262,73 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
         });
     });
     });
+
+    ui.add_space(10.0);
+    card_frame(ui, |ui| {
+        ui.label(
+            RichText::new("Offline Skin & Mod Loader Integration")
+                .size(16.0)
+                .strong()
+                .color(TEXT),
+        );
+        ui.label(
+            RichText::new(
+                "Configure offline skin server endpoints (DemonZ / custom) and automatic mod loader skin synchronization.",
+            )
+            .size(12.0)
+            .color(TEXT2),
+        );
+
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut state.config.offline_skin_mod_compat,
+                "Auto-synchronize offline custom skins to instances and CustomSkinLoader",
+            )
+            .changed()
+        {
+            save_settings(
+                state,
+                "Mod loader skin synchronization preference updated.".to_string(),
+            );
+        }
+
+        ui.add_space(6.0);
+        if ui
+            .checkbox(
+                &mut state.config.skins_restorer_compat,
+                "Enable SkinsRestorer compatibility flags for multiplayer",
+            )
+            .changed()
+        {
+            save_settings(
+                state,
+                "SkinsRestorer compatibility preference updated.".to_string(),
+            );
+        }
+
+        ui.add_space(8.0);
+        field_label(ui, "Custom Skin Server Upload Endpoint (Optional)");
+        let mut skin_server = state.config.skin_server_url.clone();
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut skin_server)
+                .margin(egui::vec2(10.0, 8.0))
+                .min_size(egui::vec2(0.0, 34.0))
+                .hint_text("https://demonz.org/api/skins/upload")
+                .desired_width(ui.available_width().min(480.0)),
+        );
+        if resp.changed() {
+            state.config.skin_server_url = skin_server.trim().to_string();
+        }
+        ui.add(
+            egui::Label::new(
+                RichText::new("Used on the Skins page to host your local PNG skin and generate multiplayer SkinsRestorer '/skin url' commands. Leave blank for default DemonZ infrastructure.")
+                    .size(11.0)
+                    .color(MUTED),
+            )
+            .wrap(),
+        );
+    });
 }
 
 fn save_memory_and_defaults(state: &mut AppState) {
@@ -1770,6 +1837,9 @@ fn preferences_signature(state: &AppState) -> u64 {
     state.config.default_jvm_args.hash(&mut hash);
     state.config.default_game_args.hash(&mut hash);
     state.config.jvm_preset.label().hash(&mut hash);
+    state.config.offline_skin_mod_compat.hash(&mut hash);
+    state.config.skins_restorer_compat.hash(&mut hash);
+    state.config.skin_server_url.hash(&mut hash);
     hash.finish()
 }
 
