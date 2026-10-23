@@ -347,6 +347,61 @@ pub(crate) fn has_offline_skin(skins_dir: &std::path::Path, username: &str) -> b
     skins_dir.join(format!("{username}.png")).is_file()
 }
 
+pub(crate) fn default_steve_skin() -> ColorImage {
+    let bytes = include_bytes!("../../../assets/skins/steve.png");
+    let image = image::load_from_memory(bytes)
+        .expect("steve skin")
+        .to_rgba8();
+    ColorImage::from_rgba_unmultiplied(
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
+    )
+}
+
+pub(crate) fn default_alex_skin() -> ColorImage {
+    let bytes = include_bytes!("../../../assets/skins/alex.png");
+    let image = image::load_from_memory(bytes)
+        .expect("alex skin")
+        .to_rgba8();
+    ColorImage::from_rgba_unmultiplied(
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
+    )
+}
+
+pub(crate) fn default_skin_for_player(username: &str) -> (ColorImage, bool) {
+    let hash = username
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+    if (hash & 1) == 1 {
+        (default_alex_skin(), true)
+    } else {
+        (default_steve_skin(), false)
+    }
+}
+
+pub(crate) fn save_offline_preset(
+    skins_dir: &std::path::Path,
+    username: &str,
+    is_alex: bool,
+) -> Result<ColorImage, String> {
+    let bytes: &[u8] = if is_alex {
+        include_bytes!("../../../assets/skins/alex.png")
+    } else {
+        include_bytes!("../../../assets/skins/steve.png")
+    };
+    let decoded = image::load_from_memory(bytes)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    std::fs::create_dir_all(skins_dir).map_err(|e| e.to_string())?;
+    let dest = skins_dir.join(format!("{username}.png"));
+    decoded.save(&dest).map_err(|e| e.to_string())?;
+    Ok(ColorImage::from_rgba_unmultiplied(
+        [decoded.width() as usize, decoded.height() as usize],
+        decoded.as_raw(),
+    ))
+}
+
 pub(crate) async fn load_capes(http: &reqwest::Client, token: &str) -> Result<Vec<Cape>, String> {
     let request = http
         .get("https://api.minecraftservices.com/minecraft/profile")

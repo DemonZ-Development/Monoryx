@@ -1,7 +1,11 @@
 use crate::app::state::AppState;
-use crate::ui::components::{badge, badge_ok, card_frame, page_header};
+use crate::ui::components::{
+    badge, badge_accent, badge_ok, card_frame, compact_secondary_button, content_primary_button,
+    content_secondary_button, page_header, pill_tab_button,
+};
 use crate::ui::skins::{
-    apply_cape, has_offline_skin, load_capes, load_local_skin_file, load_skin, remove_offline_skin,
+    apply_cape, default_alex_skin, default_skin_for_player, default_steve_skin, has_offline_skin,
+    load_capes, load_local_skin_file, load_skin, remove_offline_skin, save_offline_preset,
     save_offline_skin, upload_skin, viewer::SkinViewer, Cape, LoadedSkin,
 };
 use crate::ui::theme::{MUTED, TEXT, TEXT2};
@@ -9,13 +13,21 @@ use egui::{RichText, TextureHandle, TextureOptions};
 use std::future::Future;
 use std::sync::{mpsc, Arc, Mutex};
 
-const PREVIEW_HEIGHT: f32 = 390.0;
+const PREVIEW_HEIGHT: f32 = 410.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SkinPreset {
+    None,
+    Steve,
+    Alex,
+}
 
 struct SkinsPage {
     initialized: bool,
     active_username: String,
     is_offline: bool,
     has_custom_skin: bool,
+    active_preset: SkinPreset,
     viewer: SkinViewer,
     skin: Option<TextureHandle>,
     cape: Option<TextureHandle>,
@@ -32,6 +44,7 @@ struct SkinsPage {
 enum Message {
     Loaded(LoadedSkin),
     LocalSkin(egui::ColorImage, bool),
+    DefaultSkin(egui::ColorImage, bool, SkinPreset),
     Capes(Vec<Cape>),
     Applied(String),
     Error(String),
@@ -46,6 +59,7 @@ impl Default for SkinsPage {
             active_username: String::new(),
             is_offline: false,
             has_custom_skin: false,
+            active_preset: SkinPreset::None,
             viewer: SkinViewer::default(),
             skin: None,
             cape: None,
@@ -85,6 +99,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     }
 
+    if page.skin.is_none() && !page.loading {
+        let (default_img, slim) = default_skin_for_player(&page.active_username);
+        let options = TextureOptions::NEAREST;
+        page.skin = Some(ctx.load_texture("skins-skin", default_img, options));
+        page.viewer.slim = slim;
+        page.active_preset = if slim {
+            SkinPreset::Alex
+        } else {
+            SkinPreset::Steve
+        };
+    }
+
     page_header(
         ui,
         "Skins",
@@ -94,17 +120,37 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     card_frame(ui, |ui| {
-        ui.label(RichText::new("Skin Viewer").size(16.0).strong().color(TEXT));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Skin Viewer").size(16.0).strong().color(TEXT));
 
-        ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if compact_secondary_button(ui, "↺ Reset Angle").clicked() {
+                    page.viewer.reset();
+                }
+
+                if ui
+                    .add_enabled(!page.loading, egui::Button::new("Refresh"))
+                    .clicked()
+                {
+                    if let Some(account) = state.config.active_account_ref() {
+                        page.active_username = account.username().to_string();
+                        page.is_offline = account.is_offline();
+                        page.load(state, ctx);
+                    }
+                }
+            });
+        });
+
+        ui.add_space(4.0);
 
         let active = state.config.active_account_ref();
         match active {
-            Some(account) => {
+            Some(_) => {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Profile:").color(TEXT2));
+                    ui.label(RichText::new("Profile:").size(12.0).color(TEXT2));
                     ui.label(
                         RichText::new(page.active_username.as_str())
+                            .size(13.0)
                             .strong()
                             .color(TEXT),
                     );
@@ -112,31 +158,17 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         badge(ui, "Offline");
                         if page.has_custom_skin {
                             badge_ok(ui, "Custom File");
+                        } else {
+                            badge_accent(ui, "Default Preset");
                         }
                     } else {
                         badge_ok(ui, "Microsoft");
                     }
 
-                    ui.add_space(8.0);
-
-                    if ui
-                        .add_enabled(!page.loading, egui::Button::new("Refresh"))
-                        .clicked()
-                    {
-                        page.active_username = account.username().to_string();
-                        page.is_offline = account.is_offline();
-                        page.load(state, ctx);
-                    }
-                });
-
-                if state.config.profile.is_some() && state.config.microsoft_profile.is_some() {
-                    let current_is_ms = !page.is_offline;
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("View Account:").size(11.5).color(TEXT2));
-                        if ui
-                            .selectable_label(!current_is_ms, "Offline Profile")
-                            .clicked()
+                    if state.config.profile.is_some() && state.config.microsoft_profile.is_some() {
+                        ui.add_space(12.0);
+                        let current_is_ms = !page.is_offline;
+                        if pill_tab_button(ui, "Offline Profile", !current_is_ms).clicked()
                             && current_is_ms
                         {
                             if let Some(prof) = &state.config.profile {
@@ -145,9 +177,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                 page.load(state, ctx);
                             }
                         }
-                        if ui
-                            .selectable_label(current_is_ms, "Microsoft Profile")
-                            .clicked()
+                        if pill_tab_button(ui, "Microsoft Profile", current_is_ms).clicked()
                             && !current_is_ms
                         {
                             if let Some(prof) = &state.config.microsoft_profile {
@@ -156,8 +186,8 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                 page.load(state, ctx);
                             }
                         }
-                    });
-                }
+                    }
+                });
             }
             None => {
                 ui.label(
@@ -171,64 +201,119 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
         ui.add_space(10.0);
 
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut page.viewer.slim, "Slim");
-            ui.checkbox(&mut page.viewer.overlay, "Outer Layer");
-            ui.checkbox(&mut page.viewer.show_cape, "Cape");
-            ui.checkbox(&mut page.viewer.elytra, "Elytra");
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
 
-            if ui.button("Reset View").clicked() {
-                page.viewer.reset();
+            ui.label(RichText::new("Model:").size(11.5).strong().color(TEXT2));
+            if pill_tab_button(ui, "Classic (4px)", !page.viewer.slim).clicked() {
+                page.viewer.slim = false;
+            }
+            if pill_tab_button(ui, "Slim (3px)", page.viewer.slim).clicked() {
+                page.viewer.slim = true;
+            }
+
+            ui.add_space(6.0);
+            ui.label(RichText::new("Layers:").size(11.5).strong().color(TEXT2));
+            if pill_tab_button(ui, "Outer Layer", page.viewer.overlay).clicked() {
+                page.viewer.overlay = !page.viewer.overlay;
+            }
+            if pill_tab_button(ui, "Cape", page.viewer.show_cape).clicked() {
+                page.viewer.show_cape = !page.viewer.show_cape;
+            }
+            if pill_tab_button(ui, "Elytra", page.viewer.elytra).clicked() {
+                page.viewer.elytra = !page.viewer.elytra;
+            }
+
+            ui.add_space(6.0);
+            ui.label(RichText::new("Presets:").size(11.5).strong().color(TEXT2));
+            if pill_tab_button(ui, "Steve", page.active_preset == SkinPreset::Steve).clicked() {
+                let img = default_steve_skin();
+                page.skin = Some(ctx.load_texture("skins-skin", img, TextureOptions::NEAREST));
+                page.viewer.slim = false;
+                page.active_preset = SkinPreset::Steve;
+                page.has_custom_skin = false;
+                page.status = "Preset Steve selected.".into();
+            }
+            if pill_tab_button(ui, "Alex", page.active_preset == SkinPreset::Alex).clicked() {
+                let img = default_alex_skin();
+                page.skin = Some(ctx.load_texture("skins-skin", img, TextureOptions::NEAREST));
+                page.viewer.slim = true;
+                page.active_preset = SkinPreset::Alex;
+                page.has_custom_skin = false;
+                page.status = "Preset Alex selected.".into();
+            }
+            if compact_secondary_button(ui, "🎲 Random").clicked() {
+                if page.active_preset == SkinPreset::Steve {
+                    let img = default_alex_skin();
+                    page.skin = Some(ctx.load_texture("skins-skin", img, TextureOptions::NEAREST));
+                    page.viewer.slim = true;
+                    page.active_preset = SkinPreset::Alex;
+                    page.has_custom_skin = false;
+                    page.status = "Random preset: Alex".into();
+                } else {
+                    let img = default_steve_skin();
+                    page.skin = Some(ctx.load_texture("skins-skin", img, TextureOptions::NEAREST));
+                    page.viewer.slim = false;
+                    page.active_preset = SkinPreset::Steve;
+                    page.has_custom_skin = false;
+                    page.status = "Random preset: Steve".into();
+                }
             }
         });
 
+        ui.add_space(10.0);
+
+        let palette = crate::ui::theme::palette(ctx);
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), PREVIEW_HEIGHT),
             egui::Sense::drag(),
         );
 
-        ui.painter()
-            .rect_filled(rect, 10.0, ui.visuals().extreme_bg_color);
+        ui.painter().rect_filled(rect, 10.0, palette.elevated2);
+        ui.painter().rect_stroke(
+            rect,
+            10.0,
+            egui::Stroke::new(1.0_f32, palette.border),
+            egui::StrokeKind::Inside,
+        );
 
         if let Some(skin) = &page.skin {
             page.viewer
                 .render(ui, rect, &response, skin, page.cape.as_ref());
-        } else {
+        }
+
+        if page.loading {
+            let center = rect.center();
             ui.painter().text(
-                rect.center(),
+                center,
                 egui::Align2::CENTER_CENTER,
-                if page.loading {
-                    "Loading appearance..."
-                } else {
-                    "No skin loaded"
-                },
+                "Loading appearance...",
                 egui::FontId::proportional(14.0),
-                MUTED,
+                palette.accent,
             );
         }
 
-        ui.label(
-            RichText::new("Drag to rotate · Scroll to zoom")
-                .size(11.0)
-                .color(MUTED),
+        let hint_pos = egui::pos2(rect.right() - 12.0, rect.bottom() - 10.0);
+        ui.painter().text(
+            hint_pos,
+            egui::Align2::RIGHT_BOTTOM,
+            "Drag to rotate · Scroll to zoom",
+            egui::FontId::proportional(11.0),
+            MUTED,
         );
 
-        if let Some(url) = &page.skin_url {
+        if page.skin_url.is_some() || page.cape_url.is_some() {
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Skin texture").color(TEXT2));
-
-                if ui.button("Open").clicked() {
-                    let _ = open::that(url);
+                if let Some(url) = &page.skin_url {
+                    if compact_secondary_button(ui, "↗ Open Skin Texture").clicked() {
+                        let _ = open::that(url);
+                    }
                 }
-            });
-        }
-
-        if let Some(url) = &page.cape_url {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Cape texture").color(TEXT2));
-
-                if ui.button("Open").clicked() {
-                    let _ = open::that(url);
+                if let Some(url) = &page.cape_url {
+                    if compact_secondary_button(ui, "↗ Open Cape Texture").clicked() {
+                        let _ = open::that(url);
+                    }
                 }
             });
         }
@@ -245,68 +330,137 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     .color(TEXT),
             );
 
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.label(
                 RichText::new(
-                    "Import a custom PNG for your offline profile or rely on SkinsRestorer on multiplayer servers.",
+                    "Import a custom 64×64 PNG for local play or configure SkinsRestorer on multiplayer servers.",
                 )
-                .size(11.5)
+                .size(12.0)
                 .color(TEXT2),
             );
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
 
-            ui.horizontal(|ui| {
-                let import_clicked = ui
-                    .add_enabled(!page.loading, egui::Button::new("Import Custom Skin (PNG)"))
-                    .clicked();
+            let (import_clicked, reset_clicked, steve_clicked, alex_clicked) = ui
+                .horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                    let import = content_primary_button(ui, "Import Custom Skin (.png)").clicked();
+                    let reset = page.has_custom_skin
+                        && content_secondary_button(ui, "Reset to Default Skin").clicked();
+                    let steve = compact_secondary_button(ui, "Save Steve Preset").clicked();
+                    let alex = compact_secondary_button(ui, "Save Alex Preset").clicked();
+                    (import, reset, steve, alex)
+                })
+                .inner;
 
-                let picked = import_clicked
-                    .then(|| {
-                        rfd::FileDialog::new()
-                            .add_filter("Minecraft skin", &["png"])
-                            .pick_file()
-                    })
-                    .flatten();
+            let picked = import_clicked
+                .then(|| {
+                    rfd::FileDialog::new()
+                        .add_filter("Minecraft skin", &["png"])
+                        .pick_file()
+                })
+                .flatten();
 
-                if let Some(path) = picked {
-                    let skins_dir = state.paths.root().join("skins");
-                    let username = page.active_username.clone();
+            if let Some(path) = picked {
+                let skins_dir = state.paths.root().join("skins");
+                let username = page.active_username.clone();
 
-                    page.spawn(state, ctx, "Importing custom skin...", async move {
-                        match save_offline_skin(&skins_dir, &username, &path) {
-                            Ok(image) => Message::LocalSkin(image, true),
-                            Err(err) => Message::Error(err),
-                        }
-                    });
-                }
+                page.spawn(state, ctx, "Importing custom skin...", async move {
+                    match save_offline_skin(&skins_dir, &username, &path) {
+                        Ok(image) => Message::LocalSkin(image, true),
+                        Err(err) => Message::Error(err),
+                    }
+                });
+            }
 
-                if page.has_custom_skin
-                    && ui
-                        .add_enabled(!page.loading, egui::Button::new("Reset to Mojang Skin"))
-                        .clicked()
-                {
-                    let skins_dir = state.paths.root().join("skins");
-                    remove_offline_skin(&skins_dir, &page.active_username);
-                    page.has_custom_skin = false;
-                    page.load(state, ctx);
-                }
-            });
+            if reset_clicked {
+                let skins_dir = state.paths.root().join("skins");
+                remove_offline_skin(&skins_dir, &page.active_username);
+                page.has_custom_skin = false;
+                page.load(state, ctx);
+            }
+
+            if steve_clicked {
+                let skins_dir = state.paths.root().join("skins");
+                let username = page.active_username.clone();
+                page.spawn(state, ctx, "Saving Steve preset...", async move {
+                    match save_offline_preset(&skins_dir, &username, false) {
+                        Ok(image) => Message::LocalSkin(image, true),
+                        Err(err) => Message::Error(err),
+                    }
+                });
+            }
+
+            if alex_clicked {
+                let skins_dir = state.paths.root().join("skins");
+                let username = page.active_username.clone();
+                page.spawn(state, ctx, "Saving Alex preset...", async move {
+                    match save_offline_preset(&skins_dir, &username, true) {
+                        Ok(image) => Message::LocalSkin(image, true),
+                        Err(err) => Message::Error(err),
+                    }
+                });
+            }
 
             if !page.active_username.is_empty() {
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                let p = crate::ui::theme::palette(ctx);
+                let info_frame = egui::Frame::new()
+                    .fill(p.elevated2)
+                    .stroke(egui::Stroke::new(1.0_f32, p.border))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::same(12));
+
+                info_frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("SkinsRestorer Server Integration")
+                                .size(13.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        badge(ui, "Multiplayer Plugin");
+                    });
+
+                    ui.add_space(4.0);
                     ui.label(
-                        RichText::new("SkinsRestorer Command:")
-                            .size(11.5)
-                            .color(TEXT2),
+                        RichText::new(
+                            "On servers equipped with SkinsRestorer, skins are fetched by username from Mojang or by direct URL via Mineskin:",
+                        )
+                        .size(11.5)
+                        .color(TEXT2),
                     );
-                    let cmd = format!("/skin {}", page.active_username);
-                    ui.label(RichText::new(&cmd).size(11.5).monospace().color(TEXT));
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(cmd);
-                        state.notify("SkinsRestorer command copied to clipboard");
-                    }
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("1. Mojang Skin:").size(11.5).strong().color(TEXT2));
+                        let cmd = format!("/skin {}", page.active_username);
+                        ui.label(RichText::new(&cmd).monospace().size(11.5).color(p.accent));
+                        if compact_secondary_button(ui, "Copy").clicked() {
+                            ui.ctx().copy_text(cmd);
+                            state.notify("Copied '/skin <name>' command");
+                        }
+                    });
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("2. Custom Web Skin:").size(11.5).strong().color(TEXT2));
+                        let url_cmd = "/skin url <png_url> [classic|slim]";
+                        ui.label(RichText::new(url_cmd).monospace().size(11.5).color(TEXT));
+                        if compact_secondary_button(ui, "Copy Template").clicked() {
+                            ui.ctx().copy_text("/skin url ".to_string());
+                            state.notify("Copied '/skin url ' to clipboard");
+                        }
+                    });
+
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "Note: Local files on disk stay on your launcher for singleplayer/local display. To share your skin across multiplayer servers with SkinsRestorer, upload the image to an image host and run the '/skin url' command.",
+                        )
+                        .size(10.5)
+                        .color(MUTED),
+                    );
                 });
             }
         } else {
@@ -317,7 +471,16 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     .color(TEXT),
             );
 
-            ui.add_space(4.0);
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new(
+                    "Upload custom appearances directly to official Mojang servers and manage your active capes.",
+                )
+                .size(12.0)
+                .color(TEXT2),
+            );
+
+            ui.add_space(10.0);
 
             let Some(token) = state
                 .config
@@ -327,20 +490,17 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 .filter(|token| !token.is_empty())
             else {
                 ui.label(
-                    RichText::new("Sign in with Microsoft to upload official skins.").color(MUTED),
+                    RichText::new("Sign in with Microsoft in Accounts to manage official skins.")
+                        .color(MUTED),
                 );
                 return;
             };
 
             let (upload, refresh) = ui
                 .horizontal(|ui| {
-                    let upload = ui
-                        .add_enabled(!page.loading, egui::Button::new("Upload Skin (PNG)"))
-                        .clicked();
-                    let refresh = ui
-                        .add_enabled(!page.loading, egui::Button::new("Load Capes"))
-                        .clicked();
-
+                    let upload =
+                        content_primary_button(ui, "Upload Skin to Mojang (.png)").clicked();
+                    let refresh = content_secondary_button(ui, "Load Official Capes").clicked();
                     (upload, refresh)
                 })
                 .inner;
@@ -385,7 +545,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             }
 
             if !page.capes.is_empty() {
-                ui.add_space(8.0);
+                ui.add_space(10.0);
 
                 let label = |cape: &Cape| {
                     if cape.alias.is_empty() {
@@ -485,6 +645,7 @@ impl SkinsPage {
                     self.cape_url = loaded.cape_url;
                     self.viewer.slim = loaded.slim;
                     self.has_custom_skin = false;
+                    self.active_preset = SkinPreset::None;
                     self.status = "Skin loaded.".into();
                 }
                 Message::LocalSkin(image, is_custom) => {
@@ -495,11 +656,24 @@ impl SkinsPage {
                     self.skin_url = None;
                     self.cape_url = None;
                     self.has_custom_skin = is_custom;
+                    self.active_preset = SkinPreset::None;
                     self.status = if is_custom {
                         "Custom local skin active.".into()
                     } else {
                         "Local skin loaded.".into()
                     };
+                }
+                Message::DefaultSkin(image, slim, preset) => {
+                    let options = TextureOptions::NEAREST;
+
+                    self.skin = Some(ctx.load_texture("skins-skin", image, options));
+                    self.cape = None;
+                    self.skin_url = None;
+                    self.cape_url = None;
+                    self.viewer.slim = slim;
+                    self.has_custom_skin = false;
+                    self.active_preset = preset;
+                    self.status = "Default Minecraft skin loaded.".into();
                 }
                 Message::Capes(capes) => {
                     self.selected_cape = capes
@@ -537,6 +711,7 @@ impl SkinsPage {
                     self.skin_url = None;
                     self.cape_url = None;
                     self.has_custom_skin = true;
+                    self.active_preset = SkinPreset::None;
                     self.status = "Custom local skin active.".into();
                     return;
                 }
@@ -547,11 +722,25 @@ impl SkinsPage {
         }
 
         let http = state.http.clone();
+        let fallback_username = username.clone();
+        let is_offline = self.is_offline;
 
         self.spawn(state, ctx, "Loading skin...", async move {
             match load_skin(&http, &username).await {
                 Ok(loaded) => Message::Loaded(loaded),
-                Err(error) => Message::Error(error),
+                Err(error) => {
+                    if is_offline {
+                        let (default_img, slim) = default_skin_for_player(&fallback_username);
+                        let preset = if slim {
+                            SkinPreset::Alex
+                        } else {
+                            SkinPreset::Steve
+                        };
+                        Message::DefaultSkin(default_img, slim, preset)
+                    } else {
+                        Message::Error(error)
+                    }
+                }
             }
         });
     }
