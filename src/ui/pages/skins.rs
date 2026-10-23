@@ -1,3 +1,4 @@
+use crate::app::events::Page;
 use crate::app::state::AppState;
 use crate::ui::components::{
     badge, badge_accent, badge_ok, card_frame, compact_secondary_button, content_primary_button,
@@ -82,6 +83,10 @@ impl Default for SkinsPage {
 }
 
 pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
+    if !state.config.is_offline_active() {
+        state.set_page(Page::Home);
+        return;
+    }
     let id = egui::Id::new("monoryx-skins-page");
 
     let shared = ctx.data_mut(|data| {
@@ -376,8 +381,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 .horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
                     let import = content_primary_button(ui, "Import Custom Skin (.png)").clicked();
-                    let upload =
-                        content_secondary_button(ui, "Upload to DemonZ Skin Server").clicked();
+                    let upload = content_secondary_button(ui, "Upload to Skin Server").clicked();
                     let sync = compact_secondary_button(ui, "Sync to Mod Loaders").clicked();
                     let reset = page.has_custom_skin
                         && content_secondary_button(ui, "Reset to Default Skin").clicked();
@@ -487,14 +491,14 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         );
                         badge(ui, "Multiplayer Plugin");
                         if page.uploaded_skin_url.is_some() {
-                            badge_ok(ui, "DemonZ Skin Hosted");
+                            badge_ok(ui, "Skin Server Hosted");
                         }
                     });
 
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
-                            "On servers equipped with SkinsRestorer, skins are fetched by username from Mojang or by direct URL via Mineskin and DemonZ:",
+                            "On servers equipped with SkinsRestorer, skins are fetched by username from Mojang or by direct URL via Mineskin or your skin server:",
                         )
                         .size(11.5)
                         .color(TEXT2),
@@ -541,7 +545,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                             ui.label(RichText::new("2. Custom Web Skin:").size(11.5).strong().color(TEXT2));
                             let url_cmd = "/skin url \"<png_url>\" [classic|slim]";
                             ui.label(RichText::new(url_cmd).monospace().size(11.5).color(TEXT));
-                            if compact_secondary_button(ui, "Upload to DemonZ").clicked() {
+                            if compact_secondary_button(ui, "Upload to Skin Server").clicked() {
                                 page.trigger_upload(state, ctx);
                             }
                         });
@@ -829,8 +833,7 @@ impl SkinsPage {
                 }
                 Message::UploadedSkinUrl(url) => {
                     self.uploaded_skin_url = Some(url);
-                    self.status =
-                        "Skin uploaded to DemonZ skin server. /skin command ready!".into();
+                    self.status = "Skin uploaded to skin server. /skin command ready!".into();
                 }
                 Message::Applied(message) => {
                     self.status = message;
@@ -864,17 +867,12 @@ impl SkinsPage {
                 let username = self.active_username.clone();
                 let slim = self.viewer.slim;
 
-                self.spawn(
-                    state,
-                    ctx,
-                    "Uploading skin to DemonZ skin server...",
-                    async move {
-                        match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
-                            Ok(url) => Message::UploadedSkinUrl(url),
-                            Err(err) => Message::Error(err),
-                        }
-                    },
-                );
+                self.spawn(state, ctx, "Uploading skin to skin server...", async move {
+                    match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
+                        Ok(url) => Message::UploadedSkinUrl(url),
+                        Err(err) => Message::Error(err),
+                    }
+                });
             }
             Err(err) => {
                 self.status = format!("Could not prepare skin for upload: {err}");
@@ -1008,5 +1006,24 @@ mod tests {
                 });
             },
         );
+    }
+
+    #[test]
+    fn skins_page_redirects_when_not_offline() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::storage::paths::MonoryxPaths::new(dir.path().to_path_buf());
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, paths);
+        state.config.use_microsoft_auth = true;
+        state.page = Page::Skins;
+
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                show(&mut state, ctx, ui);
+            });
+        });
+
+        assert_eq!(state.page, Page::Home);
     }
 }
