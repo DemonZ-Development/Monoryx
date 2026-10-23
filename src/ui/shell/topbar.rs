@@ -219,6 +219,9 @@ fn nav_tabs(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui, theme:
     let mut budget = ui.available_width() - right_cluster - more_width - spacing;
     let mut hidden: Vec<Page> = Vec::new();
     for page in Page::all() {
+        if page == Page::Skins && !state.config.is_offline_active() {
+            continue;
+        }
         if !hidden.is_empty() {
             hidden.push(page);
             continue;
