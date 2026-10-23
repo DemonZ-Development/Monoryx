@@ -611,6 +611,38 @@ fn find_url_in_value(value: &serde_json::Value, base_url: Option<&str>) -> Optio
     }
 }
 
+pub fn instance_has_skin_mod(game_dir: &std::path::Path) -> bool {
+    has_skin_mod_jar(&game_dir.join("mods"), 2)
+}
+
+fn has_skin_mod_jar(dir: &std::path::Path, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 && has_skin_mod_jar(&path, depth - 1) {
+                return true;
+            }
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let lower = file_name.to_ascii_lowercase();
+        if lower.ends_with(".jar")
+            && (lower.contains("customskinloader") || lower.contains("offlineskins"))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn sync_instance_skins(
     skins_dir: &std::path::Path,
     game_dir: &std::path::Path,
@@ -778,6 +810,26 @@ mod tests {
             build_skinsrestorer_command("\"https://demonz.org/skins/Quoted.png\"", false),
             "/skin url \"https://demonz.org/skins/Quoted.png\" classic"
         );
+    }
+
+    #[test]
+    fn test_detects_skin_mods_in_instance_mod_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!instance_has_skin_mod(dir.path()));
+
+        let mods = dir.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("sodium.jar"), b"jar").unwrap();
+        assert!(!instance_has_skin_mod(dir.path()));
+
+        std::fs::write(mods.join("CustomSkinLoader_Universal-15.0.1.jar"), b"jar").unwrap();
+        assert!(instance_has_skin_mod(dir.path()));
+
+        std::fs::remove_file(mods.join("CustomSkinLoader_Universal-15.0.1.jar")).unwrap();
+        let nested = mods.join("1.20.1");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("OfflineSkins-1.20.1.jar"), b"jar").unwrap();
+        assert!(instance_has_skin_mod(dir.path()));
     }
 
     #[test]
