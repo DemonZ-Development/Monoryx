@@ -4,9 +4,10 @@ use crate::ui::components::{
     content_secondary_button, page_header, pill_tab_button,
 };
 use crate::ui::skins::{
-    apply_cape, default_alex_skin, default_skin_for_player, default_steve_skin, has_offline_skin,
-    load_capes, load_local_skin_file, load_skin, remove_offline_skin, save_offline_preset,
-    save_offline_skin, upload_skin, viewer::SkinViewer, Cape, LoadedSkin,
+    apply_cape, build_skinsrestorer_command, default_alex_skin, default_skin_for_player,
+    default_steve_skin, has_offline_skin, load_capes, load_local_skin_file, load_skin,
+    remove_offline_skin, save_offline_preset, save_offline_skin, upload_offline_skin, upload_skin,
+    viewer::SkinViewer, Cape, LoadedSkin,
 };
 use crate::ui::theme::{MUTED, TEXT, TEXT2};
 use egui::{RichText, TextureHandle, TextureOptions};
@@ -33,6 +34,8 @@ struct SkinsPage {
     cape: Option<TextureHandle>,
     skin_url: Option<String>,
     cape_url: Option<String>,
+    uploaded_skin_url: Option<String>,
+    custom_server_input: String,
     capes: Vec<Cape>,
     selected_cape: Option<String>,
     loading: bool,
@@ -45,6 +48,7 @@ enum Message {
     Loaded(LoadedSkin),
     LocalSkin(egui::ColorImage, bool),
     DefaultSkin(egui::ColorImage, bool, SkinPreset),
+    UploadedSkinUrl(String),
     Capes(Vec<Cape>),
     Applied(String),
     Error(String),
@@ -65,6 +69,8 @@ impl Default for SkinsPage {
             cape: None,
             skin_url: None,
             cape_url: None,
+            uploaded_skin_url: None,
+            custom_server_input: String::new(),
             capes: Vec::new(),
             selected_cape: None,
             loading: false,
@@ -92,6 +98,12 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
     if !page.initialized {
         page.initialized = true;
+        if page.uploaded_skin_url.is_none() {
+            page.uploaded_skin_url = state.config.last_uploaded_skin_url.clone();
+        }
+        if page.custom_server_input.is_empty() {
+            page.custom_server_input = state.config.skin_server_url.clone();
+        }
         if let Some(active) = state.config.active_account_ref() {
             page.active_username = active.username().to_string();
             page.is_offline = active.is_offline();
@@ -341,15 +353,17 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
             ui.add_space(10.0);
 
-            let (import_clicked, reset_clicked, steve_clicked, alex_clicked) = ui
+            let (import_clicked, upload_clicked, sync_mods_clicked, reset_clicked, steve_clicked, alex_clicked) = ui
                 .horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
                     let import = content_primary_button(ui, "Import Custom Skin (.png)").clicked();
+                    let upload = content_secondary_button(ui, "Upload to DemonZ Skin Server").clicked();
+                    let sync = compact_secondary_button(ui, "Sync to Mod Loaders").clicked();
                     let reset = page.has_custom_skin
                         && content_secondary_button(ui, "Reset to Default Skin").clicked();
                     let steve = compact_secondary_button(ui, "Save Steve Preset").clicked();
                     let alex = compact_secondary_button(ui, "Save Alex Preset").clicked();
-                    (import, reset, steve, alex)
+                    (import, upload, sync, reset, steve, alex)
                 })
                 .inner;
 
@@ -363,29 +377,87 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
             if let Some(path) = picked {
                 let skins_dir = state.paths.root().join("skins");
+                let instances = state.instances.clone();
                 let username = page.active_username.clone();
 
                 page.spawn(state, ctx, "Importing custom skin...", async move {
                     match save_offline_skin(&skins_dir, &username, &path) {
-                        Ok(image) => Message::LocalSkin(image, true),
+                        Ok(image) => {
+                            let _ = instances.sync_offline_skin_all(&skins_dir, &username);
+                            Message::LocalSkin(image, true)
+                        }
                         Err(err) => Message::Error(err),
                     }
                 });
             }
 
+            if upload_clicked {
+                let skins_dir = state.paths.root().join("skins");
+                let path = skins_dir.join(format!("{}.png", page.active_username));
+                let bytes_res = if path.is_file() {
+                    std::fs::read(&path).map_err(|e| e.to_string())
+                } else {
+                    let (_, is_alex) = default_skin_for_player(&page.active_username);
+                    let _ = save_offline_preset(&skins_dir, &page.active_username, is_alex);
+                    std::fs::read(&path).map_err(|e| e.to_string())
+                };
+
+                match bytes_res {
+                    Ok(bytes) => {
+                        let http = state.http.clone();
+                        let endpoint = if page.custom_server_input.trim().is_empty() {
+                            state.config.effective_skin_server_url().to_string()
+                        } else {
+                            page.custom_server_input.trim().to_string()
+                        };
+                        let username = page.active_username.clone();
+                        let slim = page.viewer.slim;
+
+                        page.spawn(state, ctx, "Uploading skin to DemonZ skin server...", async move {
+                            match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
+                                Ok(url) => Message::UploadedSkinUrl(url),
+                                Err(err) => Message::Error(err),
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        page.status = format!("Could not prepare skin for upload: {err}");
+                    }
+                }
+            }
+
+            if sync_mods_clicked {
+                let skins_dir = state.paths.root().join("skins");
+                let username = page.active_username.clone();
+                match state.instances.sync_offline_skin_all(&skins_dir, &username) {
+                    Ok(count) => {
+                        page.status = format!("Synchronized skin to {count} instance(s) for mod loaders.");
+                        state.notify(format!("Synced skin to {count} instance(s)"));
+                    }
+                    Err(err) => {
+                        page.status = format!("Sync failed: {err}");
+                    }
+                }
+            }
+
             if reset_clicked {
                 let skins_dir = state.paths.root().join("skins");
                 remove_offline_skin(&skins_dir, &page.active_username);
+                let _ = state.instances.sync_offline_skin_all(&skins_dir, &page.active_username);
                 page.has_custom_skin = false;
                 page.load(state, ctx);
             }
 
             if steve_clicked {
                 let skins_dir = state.paths.root().join("skins");
+                let instances = state.instances.clone();
                 let username = page.active_username.clone();
                 page.spawn(state, ctx, "Saving Steve preset...", async move {
                     match save_offline_preset(&skins_dir, &username, false) {
-                        Ok(image) => Message::LocalSkin(image, true),
+                        Ok(image) => {
+                            let _ = instances.sync_offline_skin_all(&skins_dir, &username);
+                            Message::LocalSkin(image, true)
+                        }
                         Err(err) => Message::Error(err),
                     }
                 });
@@ -393,10 +465,14 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
 
             if alex_clicked {
                 let skins_dir = state.paths.root().join("skins");
+                let instances = state.instances.clone();
                 let username = page.active_username.clone();
                 page.spawn(state, ctx, "Saving Alex preset...", async move {
                     match save_offline_preset(&skins_dir, &username, true) {
-                        Ok(image) => Message::LocalSkin(image, true),
+                        Ok(image) => {
+                            let _ = instances.sync_offline_skin_all(&skins_dir, &username);
+                            Message::LocalSkin(image, true)
+                        }
                         Err(err) => Message::Error(err),
                     }
                 });
@@ -420,12 +496,15 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                                 .color(TEXT),
                         );
                         badge(ui, "Multiplayer Plugin");
+                        if page.uploaded_skin_url.is_some() {
+                            badge_ok(ui, "DemonZ Skin Hosted");
+                        }
                     });
 
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
-                            "On servers equipped with SkinsRestorer, skins are fetched by username from Mojang or by direct URL via Mineskin:",
+                            "On servers equipped with SkinsRestorer, skins are fetched by username from Mojang or by direct URL via Mineskin and DemonZ:",
                         )
                         .size(11.5)
                         .color(TEXT2),
@@ -442,25 +521,138 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                         }
                     });
 
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
+                    if let Some(url) = &page.uploaded_skin_url {
+                        let cmd = build_skinsrestorer_command(url, page.viewer.slim);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("2. Hosted URL:").size(11.5).strong().color(TEXT2));
+                            ui.label(RichText::new(url).monospace().size(11.0).color(TEXT));
+                            if compact_secondary_button(ui, "↗ Open").clicked() {
+                                let _ = open::that(url);
+                            }
+                        });
+
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("3. Multiplayer Command:").size(11.5).strong().color(TEXT2));
+                            ui.label(RichText::new(&cmd).monospace().size(11.5).color(p.accent));
+                            if compact_secondary_button(ui, "Copy Command").clicked() {
+                                ui.ctx().copy_text(cmd);
+                                state.notify("Copied SkinsRestorer '/skin url' command to clipboard");
+                            }
+                            if compact_secondary_button(ui, "Clear").clicked() {
+                                page.uploaded_skin_url = None;
+                                state.config.last_uploaded_skin_url = None;
+                                state.save_config();
+                            }
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("2. Custom Web Skin:").size(11.5).strong().color(TEXT2));
+                            let url_cmd = "/skin url <png_url> [classic|slim]";
+                            ui.label(RichText::new(url_cmd).monospace().size(11.5).color(TEXT));
+                            if compact_secondary_button(ui, "Upload to DemonZ").clicked() {
+                                let skins_dir = state.paths.root().join("skins");
+                                let path = skins_dir.join(format!("{}.png", page.active_username));
+                                let bytes_res = if path.is_file() {
+                                    std::fs::read(&path).map_err(|e| e.to_string())
+                                } else {
+                                    let (_, is_alex) = default_skin_for_player(&page.active_username);
+                                    let _ = save_offline_preset(&skins_dir, &page.active_username, is_alex);
+                                    std::fs::read(&path).map_err(|e| e.to_string())
+                                };
+
+                                match bytes_res {
+                                    Ok(bytes) => {
+                                        let http = state.http.clone();
+                                        let endpoint = if page.custom_server_input.trim().is_empty() {
+                                            state.config.effective_skin_server_url().to_string()
+                                        } else {
+                                            page.custom_server_input.trim().to_string()
+                                        };
+                                        let username = page.active_username.clone();
+                                        let slim = page.viewer.slim;
+
+                                        page.spawn(state, ctx, "Uploading skin to DemonZ skin server...", async move {
+                                            match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
+                                                Ok(url) => Message::UploadedSkinUrl(url),
+                                                Err(err) => Message::Error(err),
+                                            }
+                                        });
+                                    }
+                                    Err(err) => {
+                                        page.status = format!("Could not prepare skin for upload: {err}");
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                    ui.collapsing("Advanced: Custom Skin Server Endpoint", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Upload Endpoint:").size(11.0).color(TEXT2));
+                            let edit = ui.add(
+                                egui::TextEdit::singleline(&mut page.custom_server_input)
+                                    .hint_text(state.config.effective_skin_server_url())
+                                    .desired_width(260.0),
+                            );
+                            if edit.lost_focus() && page.custom_server_input != state.config.skin_server_url {
+                                state.config.skin_server_url = page.custom_server_input.trim().to_string();
+                                state.save_config();
+                            }
+                            if compact_secondary_button(ui, "Reset").clicked() {
+                                page.custom_server_input.clear();
+                                state.config.skin_server_url.clear();
+                                state.save_config();
+                            }
+                        });
+                    });
+                });
+
+                ui.add_space(10.0);
+                let mod_loader_frame = egui::Frame::new()
+                    .fill(p.elevated2)
+                    .stroke(egui::Stroke::new(1.0_f32, p.border))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::same(12));
+
+                mod_loader_frame.show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("2. Custom Web Skin:").size(11.5).strong().color(TEXT2));
-                        let url_cmd = "/skin url <png_url> [classic|slim]";
-                        ui.label(RichText::new(url_cmd).monospace().size(11.5).color(TEXT));
-                        if compact_secondary_button(ui, "Copy Template").clicked() {
-                            ui.ctx().copy_text("/skin url ".to_string());
-                            state.notify("Copied '/skin url ' to clipboard");
-                        }
+                        ui.label(
+                            RichText::new("Mod Loader Skin Integration")
+                                .size(13.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        badge(ui, "Fabric / Forge / NeoForge / Quilt");
+                        badge_accent(ui, "CustomSkinLoader");
                     });
 
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
-                            "Note: Local files on disk stay on your launcher for singleplayer/local display. To share your skin across multiplayer servers with SkinsRestorer, upload the image to an image host and run the '/skin url' command.",
+                            "Offline custom skins are automatically mapped to instance directories (CustomSkinLoader/LocalSkin/skins/{username}.png) with auto-generated CustomSkinLoader.json configuration. Client skin mods display your custom appearance in both singleplayer and multiplayer.",
                         )
-                        .size(10.5)
-                        .color(MUTED),
+                        .size(11.5)
+                        .color(TEXT2),
                     );
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if compact_secondary_button(ui, "Sync All Instances Now").clicked() {
+                            let skins_dir = state.paths.root().join("skins");
+                            match state.instances.sync_offline_skin_all(&skins_dir, &page.active_username) {
+                                Ok(count) => {
+                                    state.notify(format!("Synchronized skin to {count} instance(s)"));
+                                    page.status = format!("Synchronized offline skin to {count} instance(s) for mod loaders.");
+                                }
+                                Err(err) => {
+                                    page.status = format!("Mod loader sync failed: {err}");
+                                }
+                            }
+                        }
+                    });
                 });
             }
         } else {
@@ -684,6 +876,10 @@ impl SkinsPage {
                     self.capes = capes;
                     self.status = "Capes loaded.".into();
                 }
+                Message::UploadedSkinUrl(url) => {
+                    self.uploaded_skin_url = Some(url);
+                    self.status = "Skin uploaded to DemonZ skin server. /skin command ready!".into();
+                }
                 Message::Applied(message) => {
                     self.status = message;
                 }
@@ -743,5 +939,63 @@ impl SkinsPage {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account::offline::OfflineProfile;
+
+    #[test]
+    fn skins_page_renders_offline_profile_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::storage::paths::MonoryxPaths::new(dir.path().to_path_buf());
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, paths);
+        state.config.profile = Some(OfflineProfile::new("Cyrus").unwrap());
+
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    show(&mut state, ctx, ui);
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn skins_page_renders_with_uploaded_skin_url_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::storage::paths::MonoryxPaths::new(dir.path().to_path_buf());
+        let ctx = egui::Context::default();
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut state = AppState::new_for_preview(&cc, paths);
+        state.config.profile = Some(OfflineProfile::new("Cyrus").unwrap());
+        state.config.last_uploaded_skin_url =
+            Some("https://demonz.org/api/skins/download/cyrus.png".to_string());
+
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    show(&mut state, ctx, ui);
+                });
+            },
+        );
     }
 }
