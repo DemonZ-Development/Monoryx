@@ -109,6 +109,18 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             page.is_offline = active.is_offline();
             page.load(state, ctx);
         }
+    } else if let Some(active) = state.config.active_account_ref() {
+        if active.username() != page.active_username || active.is_offline() != page.is_offline {
+            page.active_username = active.username().to_string();
+            page.is_offline = active.is_offline();
+            page.uploaded_skin_url = None;
+            page.load(state, ctx);
+        }
+    }
+
+    if page.uploaded_skin_url != state.config.last_uploaded_skin_url {
+        state.config.last_uploaded_skin_url = page.uploaded_skin_url.clone();
+        state.save_config();
     }
 
     if page.skin.is_none() && !page.loading {
@@ -400,60 +412,11 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
             }
 
             if upload_clicked {
-                let skins_dir = state.paths.root().join("skins");
-                let path = skins_dir.join(format!("{}.png", page.active_username));
-                let bytes_res = if path.is_file() {
-                    std::fs::read(&path).map_err(|e| e.to_string())
-                } else {
-                    let (_, is_alex) = default_skin_for_player(&page.active_username);
-                    let _ = save_offline_preset(&skins_dir, &page.active_username, is_alex);
-                    std::fs::read(&path).map_err(|e| e.to_string())
-                };
-
-                match bytes_res {
-                    Ok(bytes) => {
-                        let http = state.http.clone();
-                        let endpoint = if page.custom_server_input.trim().is_empty() {
-                            state.config.effective_skin_server_url().to_string()
-                        } else {
-                            page.custom_server_input.trim().to_string()
-                        };
-                        let username = page.active_username.clone();
-                        let slim = page.viewer.slim;
-
-                        page.spawn(
-                            state,
-                            ctx,
-                            "Uploading skin to DemonZ skin server...",
-                            async move {
-                                match upload_offline_skin(&http, &endpoint, &username, bytes, slim)
-                                    .await
-                                {
-                                    Ok(url) => Message::UploadedSkinUrl(url),
-                                    Err(err) => Message::Error(err),
-                                }
-                            },
-                        );
-                    }
-                    Err(err) => {
-                        page.status = format!("Could not prepare skin for upload: {err}");
-                    }
-                }
+                page.trigger_upload(state, ctx);
             }
 
             if sync_mods_clicked {
-                let skins_dir = state.paths.root().join("skins");
-                let username = page.active_username.clone();
-                match state.instances.sync_offline_skin_all(&skins_dir, &username) {
-                    Ok(count) => {
-                        page.status =
-                            format!("Synchronized skin to {count} instance(s) for mod loaders.");
-                        state.notify(format!("Synced skin to {count} instance(s)"));
-                    }
-                    Err(err) => {
-                        page.status = format!("Sync failed: {err}");
-                    }
-                }
+                page.trigger_sync_mods(state);
             }
 
             if reset_clicked {
@@ -463,6 +426,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     .instances
                     .sync_offline_skin_all(&skins_dir, &page.active_username);
                 page.has_custom_skin = false;
+                page.uploaded_skin_url = None;
+                state.config.last_uploaded_skin_url = None;
+                state.save_config();
                 page.load(state, ctx);
             }
 
@@ -470,6 +436,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 let skins_dir = state.paths.root().join("skins");
                 let instances = state.instances.clone();
                 let username = page.active_username.clone();
+                page.viewer.slim = false;
+                page.active_preset = SkinPreset::Steve;
+                page.uploaded_skin_url = None;
                 page.spawn(state, ctx, "Saving Steve preset...", async move {
                     match save_offline_preset(&skins_dir, &username, false) {
                         Ok(image) => {
@@ -485,6 +454,9 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                 let skins_dir = state.paths.root().join("skins");
                 let instances = state.instances.clone();
                 let username = page.active_username.clone();
+                page.viewer.slim = true;
+                page.active_preset = SkinPreset::Alex;
+                page.uploaded_skin_url = None;
                 page.spawn(state, ctx, "Saving Alex preset...", async move {
                     match save_offline_preset(&skins_dir, &username, true) {
                         Ok(image) => {
@@ -567,41 +539,10 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     } else {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("2. Custom Web Skin:").size(11.5).strong().color(TEXT2));
-                            let url_cmd = "/skin url <png_url> [classic|slim]";
+                            let url_cmd = "/skin url \"<png_url>\" [classic|slim]";
                             ui.label(RichText::new(url_cmd).monospace().size(11.5).color(TEXT));
                             if compact_secondary_button(ui, "Upload to DemonZ").clicked() {
-                                let skins_dir = state.paths.root().join("skins");
-                                let path = skins_dir.join(format!("{}.png", page.active_username));
-                                let bytes_res = if path.is_file() {
-                                    std::fs::read(&path).map_err(|e| e.to_string())
-                                } else {
-                                    let (_, is_alex) = default_skin_for_player(&page.active_username);
-                                    let _ = save_offline_preset(&skins_dir, &page.active_username, is_alex);
-                                    std::fs::read(&path).map_err(|e| e.to_string())
-                                };
-
-                                match bytes_res {
-                                    Ok(bytes) => {
-                                        let http = state.http.clone();
-                                        let endpoint = if page.custom_server_input.trim().is_empty() {
-                                            state.config.effective_skin_server_url().to_string()
-                                        } else {
-                                            page.custom_server_input.trim().to_string()
-                                        };
-                                        let username = page.active_username.clone();
-                                        let slim = page.viewer.slim;
-
-                                        page.spawn(state, ctx, "Uploading skin to DemonZ skin server...", async move {
-                                            match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
-                                                Ok(url) => Message::UploadedSkinUrl(url),
-                                                Err(err) => Message::Error(err),
-                                            }
-                                        });
-                                    }
-                                    Err(err) => {
-                                        page.status = format!("Could not prepare skin for upload: {err}");
-                                    }
-                                }
+                                page.trigger_upload(state, ctx);
                             }
                         });
                     }
@@ -659,16 +600,7 @@ pub fn show(state: &mut AppState, ctx: &egui::Context, ui: &mut egui::Ui) {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if compact_secondary_button(ui, "Sync All Instances Now").clicked() {
-                            let skins_dir = state.paths.root().join("skins");
-                            match state.instances.sync_offline_skin_all(&skins_dir, &page.active_username) {
-                                Ok(count) => {
-                                    state.notify(format!("Synchronized skin to {count} instance(s)"));
-                                    page.status = format!("Synchronized offline skin to {count} instance(s) for mod loaders.");
-                                }
-                                Err(err) => {
-                                    page.status = format!("Mod loader sync failed: {err}");
-                                }
-                            }
+                            page.trigger_sync_mods(state);
                         }
                     });
                 });
@@ -866,6 +798,7 @@ impl SkinsPage {
                     self.skin_url = None;
                     self.cape_url = None;
                     self.has_custom_skin = is_custom;
+                    self.uploaded_skin_url = None;
                     self.active_preset = SkinPreset::None;
                     self.status = if is_custom {
                         "Custom local skin active.".into()
@@ -905,6 +838,65 @@ impl SkinsPage {
                 Message::Error(error) => {
                     self.status = error;
                 }
+            }
+        }
+    }
+
+    fn trigger_upload(&mut self, state: &AppState, ctx: &egui::Context) {
+        let skins_dir = state.paths.root().join("skins");
+        let path = skins_dir.join(format!("{}.png", self.active_username));
+        let bytes_res = if path.is_file() {
+            std::fs::read(&path).map_err(|e| e.to_string())
+        } else {
+            let (_, is_alex) = default_skin_for_player(&self.active_username);
+            let _ = save_offline_preset(&skins_dir, &self.active_username, is_alex);
+            std::fs::read(&path).map_err(|e| e.to_string())
+        };
+
+        match bytes_res {
+            Ok(bytes) => {
+                let http = state.http.clone();
+                let endpoint = if self.custom_server_input.trim().is_empty() {
+                    state.config.effective_skin_server_url().to_string()
+                } else {
+                    self.custom_server_input.trim().to_string()
+                };
+                let username = self.active_username.clone();
+                let slim = self.viewer.slim;
+
+                self.spawn(
+                    state,
+                    ctx,
+                    "Uploading skin to DemonZ skin server...",
+                    async move {
+                        match upload_offline_skin(&http, &endpoint, &username, bytes, slim).await {
+                            Ok(url) => Message::UploadedSkinUrl(url),
+                            Err(err) => Message::Error(err),
+                        }
+                    },
+                );
+            }
+            Err(err) => {
+                self.status = format!("Could not prepare skin for upload: {err}");
+            }
+        }
+    }
+
+    fn trigger_sync_mods(&mut self, state: &mut AppState) {
+        let skins_dir = state.paths.root().join("skins");
+        let path = skins_dir.join(format!("{}.png", self.active_username));
+        if !path.is_file() {
+            let (_, is_alex) = default_skin_for_player(&self.active_username);
+            let _ = save_offline_preset(&skins_dir, &self.active_username, is_alex);
+        }
+        let username = self.active_username.clone();
+        match state.instances.sync_offline_skin_all(&skins_dir, &username) {
+            Ok(count) => {
+                self.status = format!("Synchronized skin to {count} instance(s) for mod loaders.");
+                state.notify(format!("Synced skin to {count} instance(s)"));
+            }
+            Err(err) => {
+                self.status = format!("Mod loader sync failed: {err}");
             }
         }
     }
