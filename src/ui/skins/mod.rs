@@ -700,6 +700,11 @@ pub fn sync_instance_skins(
     Ok(())
 }
 
+pub fn clean_instance_skins(game_dir: &std::path::Path, username: &str) -> Result<(), String> {
+    let empty_dir = std::path::PathBuf::new();
+    sync_instance_skins(&empty_dir, game_dir, username)
+}
+
 fn ensure_custom_skin_loader_config(csl_dir: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(csl_dir).map_err(|e| e.to_string())?;
     let config_path = csl_dir.join("CustomSkinLoader.json");
@@ -960,5 +965,25 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn test_clean_instance_skins_removes_mod_skins() {
+        let temp = tempfile::tempdir().unwrap();
+        let game_dir = temp.path().join("game");
+        let offlineskins = game_dir.join("config").join("offlineskins");
+        let csl = game_dir
+            .join("CustomSkinLoader")
+            .join("LocalSkin")
+            .join("skins");
+        std::fs::create_dir_all(&offlineskins).unwrap();
+        std::fs::create_dir_all(&csl).unwrap();
+
+        std::fs::write(offlineskins.join("Hero.png"), b"skin").unwrap();
+        std::fs::write(csl.join("Hero.png"), b"skin").unwrap();
+
+        assert!(clean_instance_skins(&game_dir, "Hero").is_ok());
+        assert!(!offlineskins.join("Hero.png").exists());
+        assert!(!csl.join("Hero.png").exists());
     }
 }
