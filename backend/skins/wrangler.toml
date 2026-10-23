@@ -1,0 +1,11 @@
+name = "dzd-skins"
+main = "index.js"
+compatibility_date = "2024-09-01"
+
+routes = [
+  { pattern = "skins.demonz.org", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "SKINS"
+id = "c36623cdb4564dc8b3bf2c1bdcabd935"
