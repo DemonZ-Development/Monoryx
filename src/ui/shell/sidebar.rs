@@ -51,7 +51,7 @@ pub(super) fn show(state: &mut AppState, ctx: &egui::Context, theme: Palette) {
                         .into_iter()
                         .filter(|page| !matches!(page, Page::Accounts | Page::Settings))
                     {
-                        if page == Page::Skins && !state.config.is_offline_active() {
+                        if page == Page::Skins && state.config.active_account_ref().is_none() {
                             continue;
                         }
                         let sel = state.page == page;
