@@ -519,6 +519,12 @@ impl LauncherConfig {
     }
 
     #[must_use]
+    pub fn is_offline_active(&self) -> bool {
+        self.active_account_ref()
+            .is_some_and(|account| account.is_offline())
+    }
+
+    #[must_use]
     pub fn effective_skin_server_url(&self) -> &str {
         let trimmed = self.skin_server_url.trim();
         if trimmed.is_empty() {
@@ -1034,5 +1040,22 @@ mod tests {
             assert!(!preset.label().is_empty());
             assert!(!preset.hint().is_empty());
         }
+    }
+
+    #[test]
+    fn is_offline_active_checks() {
+        let mut cfg = LauncherConfig::default();
+        assert!(!cfg.is_offline_active());
+        cfg.profile = Some(crate::account::offline::OfflineProfile::new("Player").unwrap());
+        assert!(cfg.is_offline_active());
+        cfg.use_microsoft_auth = true;
+        cfg.microsoft_profile = Some(crate::account::microsoft::MicrosoftProfile {
+            username: "PlayerMS".into(),
+            uuid: uuid::Uuid::nil(),
+            access_token: "token".into(),
+            refresh_token: "refresh".into(),
+            expires_at: 0,
+        });
+        assert!(!cfg.is_offline_active());
     }
 }
