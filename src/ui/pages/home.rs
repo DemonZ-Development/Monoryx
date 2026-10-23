@@ -311,6 +311,7 @@ fn selected_instance(state: &mut AppState, cfg: &InstanceConfig, ui: &mut egui::
 fn hero_play_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let p = crate::ui::theme::palette(ui.ctx());
     let corner = CornerRadius::ZERO;
+    let width = ui.available_width();
     ui.scope(|ui| {
         let widgets = &mut ui.style_mut().visuals.widgets;
         widgets.inactive.bg_fill = p.accent;
@@ -328,7 +329,7 @@ fn hero_play_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         ui.add(
             egui::Button::new(RichText::new(text).size(type_scale::BODY).strong())
                 .wrap_mode(egui::TextWrapMode::Extend)
-                .min_size(egui::vec2(130.0, 42.0))
+                .min_size(egui::vec2(width, 42.0))
                 .fill(p.accent)
                 .corner_radius(corner),
         )
