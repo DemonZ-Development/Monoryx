@@ -1314,11 +1314,15 @@ fn minecraft_settings(state: &mut AppState, ui: &mut egui::Ui) {
             egui::TextEdit::singleline(&mut skin_server)
                 .margin(egui::vec2(10.0, 8.0))
                 .min_size(egui::vec2(0.0, 34.0))
-                .hint_text("https://demonz.org/api/skins/upload")
+                .hint_text("https://skins.demonz.org/upload")
                 .desired_width(ui.available_width().min(480.0)),
         );
         if resp.changed() {
-            state.config.skin_server_url = skin_server.trim().to_string();
+            state.config.skin_server_url = skin_server;
+        }
+        if resp.lost_focus() {
+            state.config.skin_server_url = state.config.skin_server_url.trim().to_string();
+            save_settings(state, "Custom skin server endpoint updated.".to_string());
         }
         ui.add(
             egui::Label::new(
