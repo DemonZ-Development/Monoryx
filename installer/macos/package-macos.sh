@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-1.6.0}"
+VERSION="${1:-1.6.2}"
 BIN_DIR="${2:-target/release}"
 OUTPUT_DIR="${3:-dist}"
 
@@ -37,7 +37,7 @@ elif [ -f "$ROOT_DIR/target/release/monoryx-updater" ]; then
     chmod +x "$MACOS_DIR/monoryx-updater"
 fi
 
-sed -e "s/1.4.0/$VERSION/g" "$SCRIPT_DIR/Info.plist" > "$CONTENTS_DIR/Info.plist"
+sed -E "s/<string>[0-9]+\.[0-9]+\.[0-9]+<\/string>/<string>$VERSION<\/string>/g" "$SCRIPT_DIR/Info.plist" > "$CONTENTS_DIR/Info.plist"
 
 ICON_SRC="$ROOT_DIR/assets/icon.png"
 if [ -f "$ICON_SRC" ] && command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
