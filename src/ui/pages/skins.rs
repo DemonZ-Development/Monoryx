@@ -1560,8 +1560,10 @@ fn mod_loader_column(page: &mut SkinsPage, state: &mut AppState, ui: &mut egui::
                     ui,
                     &format!("Skin mod missing in {} instance(s)", missing_mods.len()),
                 );
-                if compact_secondary_button(ui, "Get CustomSkinLoader ↗").clicked() {
-                    let _ = open::that("https://modrinth.com/mod/customskinloader");
+                if compact_secondary_button(ui, "Get CustomSkinLoader").clicked() {
+                    state.search.query = "CustomSkinLoader".to_string();
+                    state.set_page(crate::app::Page::Discover);
+                    state.run_search();
                 }
             });
             ui.add_space(4.0);
