@@ -60,7 +60,7 @@ export default {
     const upstreamHeaders = new Headers(request.headers);
     upstreamHeaders.set("x-api-key", apiKey);
     upstreamHeaders.set("Accept", "application/json");
-    upstreamHeaders.set("User-Agent", "MONORYX-Official-Server/1.6.0");
+    upstreamHeaders.set("User-Agent", "MONORYX-Official-Server/1.6.2");
 
     let upstreamResponse;
     try {
