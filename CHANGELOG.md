@@ -1,3 +1,29 @@
+# MONORYX 1.6.1
+
+Interactive 3D skin viewer, offline skin management with skin server upload, SkinsRestorer command generation, and automatic mod loader skin sync across instances.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Skin System & 3D Viewer
+
+- **Interactive 3D Skin Viewer:** Preview your character model in real time with smooth drag rotation, scroll zoom, camera reset, outer layer toggling, capes, and elytra rendering. Supports both Classic (4px) and Slim (3px) arm models. Contributed by @as7ar in PR #5.
+- **Offline Skin Management:** Offline profiles can now load custom `.png` skins, switch between default character presets, and manage appearance directly in the launcher.
+- **Skin Server Upload & SkinsRestorer Support:** Upload your offline skin to generate a public CDN texture URL and ready-to-use `/skin url` multiplayer commands with a single click.
+- **Mod Loader Synchronization:** Automatically syncs offline skins and capes to `CustomSkinLoader` and `OfflineSkins` directories across Fabric, Forge, NeoForge, and Quilt instances. Pre-launch sync ensures modded clients load your custom skin on boot.
+- **Instance Mod Detection:** The Skins page now inspects installed instance mods and highlights whether skin compatibility mods are present.
+- **Account Separation:** Keeps offline skins isolated from official Microsoft accounts so online Mojang skins and capes remain untouched.
+
+## Interface Improvements
+
+- **Full-Width Play Action:** The launch button on the Home page now spans the full action column width for a cleaner, more responsive layout.
+- **Responsive Skins Layout:** The Skins page adapts between a split two-column view on wide displays and a stacked view on smaller windows.
+
+## Community & Credits
+
+- Huge thanks to **@as7ar** (ASTAR) for contributing the initial 3D skin viewer implementation (PR #5) and helping bring native character previews to MONORYX.
+
+---
+
 # MONORYX 1.6.0
 
 New top bar navigation enabled by default, a refreshed launch flow, and lower memory use while browsing screenshots.
