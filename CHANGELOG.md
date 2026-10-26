@@ -1,3 +1,20 @@
+# MONORYX 1.6.2
+
+Direct in-launcher Discover navigation for CustomSkinLoader installation and macOS application bundle packaging fixes.
+
+> See [INSTALLATION.md](INSTALLATION.md) for platform setup guides and tutorials.
+
+## Discover & Skins Integration
+
+- **In-Launcher Mod Discovery:** Clicking "Get CustomSkinLoader" from the Skins page now opens the in-launcher Discover search directly for `CustomSkinLoader`, so you can browse, select, and install the mod directly into your instances without leaving the launcher.
+
+## Packaging & Platform Fixes
+
+- **macOS Application Versioning:** Fixed a release packaging issue where `Info.plist` retained stale bundle version strings. Automated dynamic semver replacement now ensures accurate version metadata in `.dmg` and `.tar.gz` releases.
+- **Packaging Scripts & Proxies:** Synchronized version fallbacks across local installer scripts and backend service proxies.
+
+---
+
 # MONORYX 1.6.1
 
 Interactive 3D skin viewer, offline skin management with skin server upload, SkinsRestorer command generation, and automatic mod loader skin sync across instances.
